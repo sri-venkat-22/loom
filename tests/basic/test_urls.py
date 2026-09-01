@@ -11,5 +11,7 @@ def test_urls():
     ]
     for attr in url_attributes:
         url = getattr(urls, attr)
+        if not url:  # blanked pending a loom docs site
+            continue
         response = requests.get(url)
         assert response.status_code == 200, f"URL {url} returned status code {response.status_code}"

@@ -8,7 +8,7 @@ import pypandoc
 from loom import __version__, urls, utils
 from loom.dump import dump  # noqa: F401
 
-aider_user_agent = f"Aider/{__version__} +{urls.website}"
+aider_user_agent = f"Loom/{__version__} +{urls.website}"
 
 # Playwright is nice because it has a simple way to install dependencies on most
 # platforms.
