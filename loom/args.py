@@ -38,7 +38,7 @@ def get_parser(default_config_files, git_root):
         add_config_file_help=True,
         default_config_files=default_config_files,
         config_file_parser_class=configargparse.YAMLConfigFileParser,
-        auto_env_var_prefix="AIDER_",
+        auto_env_var_prefix="LOOM_",
     )
     # List of valid edit formats for argparse validation & shtab completion.
     # Dynamically gather them from the registered coder classes so the list
@@ -120,13 +120,13 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--model-settings-file",
         metavar="MODEL_SETTINGS_FILE",
-        default=".aider.model.settings.yml",
+        default=".loom.model.settings.yml",
         help="Specify a file with loom model settings for unknown models",
     ).complete = shtab.FILE
     group.add_argument(
         "--model-metadata-file",
         metavar="MODEL_METADATA_FILE",
-        default=".aider.model.metadata.json",
+        default=".loom.model.metadata.json",
         help="Specify a file with context window and costs for unknown models",
     ).complete = shtab.FILE
     group.add_argument(
@@ -269,10 +269,10 @@ def get_parser(default_config_files, git_root):
     ##########
     group = parser.add_argument_group("History Files")
     default_input_history_file = (
-        os.path.join(git_root, ".aider.input.history") if git_root else ".aider.input.history"
+        os.path.join(git_root, ".loom.input.history") if git_root else ".loom.input.history"
     )
     default_chat_history_file = (
-        os.path.join(git_root, ".aider.chat.history.md") if git_root else ".aider.chat.history.md"
+        os.path.join(git_root, ".loom.chat.history.md") if git_root else ".loom.chat.history.md"
     )
     group.add_argument(
         "--input-history-file",
@@ -296,7 +296,7 @@ def get_parser(default_config_files, git_root):
         "--llm-history-file",
         metavar="LLM_HISTORY_FILE",
         default=None,
-        help="Log the conversation with the LLM to this file (for example, .aider.llm.history)",
+        help="Log the conversation with the LLM to this file (for example, .loom.llm.history)",
     ).complete = shtab.FILE
 
     ##########
@@ -420,15 +420,15 @@ def get_parser(default_config_files, git_root):
         help="Enable/disable the addition of files listed in .gitignore to Loom's editing scope.",
     )
     default_aiderignore_file = (
-        os.path.join(git_root, ".aiderignore") if git_root else ".aiderignore"
+        os.path.join(git_root, ".loomignore") if git_root else ".loomignore"
     )
 
     group.add_argument(
-        "--aiderignore",
-        metavar="AIDERIGNORE",
+        "--loomignore",
+        metavar="LOOMIGNORE",
         type=lambda path_str: resolve_aiderignore_path(path_str, git_root),
         default=default_aiderignore_file,
-        help="Specify the loom ignore file (default: .aiderignore in git root)",
+        help="Specify the loom ignore file (default: .loomignore in git root)",
     ).complete = shtab.FILE
     group.add_argument(
         "--subtree-only",
@@ -791,7 +791,7 @@ def get_parser(default_config_files, git_root):
         is_config_file=True,
         metavar="CONFIG_FILE",
         help=(
-            "Specify the config file (default: search for .aider.conf.yml in git root, cwd"
+            "Specify the config file (default: search for .loom.conf.yml in git root, cwd"
             " or home directory)"
         ),
     ).complete = shtab.FILE

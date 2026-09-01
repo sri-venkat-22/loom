@@ -7,7 +7,7 @@ from pathlib import Path
 
 def collect_model_stats(n_lines=1000):
     """Collect model usage statistics from the analytics file."""
-    analytics_path = Path.home() / ".aider" / "analytics.jsonl"
+    analytics_path = Path.home() / ".loom" / "analytics.jsonl"
     model_stats = defaultdict(int)
 
     with open(analytics_path) as f:

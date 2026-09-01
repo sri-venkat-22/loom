@@ -34,7 +34,7 @@ def load_results(dirname):
     parse_errors = []  # Track which exercises had parse errors for this model
 
     # Look in language subdirectories under exercises/practice
-    for fname in benchmark_dir.glob("*/exercises/practice/*/.aider.results.json"):
+    for fname in benchmark_dir.glob("*/exercises/practice/*/.loom.results.json"):
         error = False
         try:
             results = json.loads(fname.read_text())

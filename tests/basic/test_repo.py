@@ -520,7 +520,7 @@ class TestRepo(unittest.TestCase):
             fname.touch()
             raw_repo.git.add(str(fname))
 
-            aiderignore = Path(".aiderignore")
+            aiderignore = Path(".loomignore")
             git_repo = GitRepo(InputOutput(), None, None, str(aiderignore))
 
             # better be there

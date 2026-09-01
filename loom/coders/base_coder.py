@@ -255,7 +255,7 @@ class Coder:
             lines.append(f"Git repo: {rel_repo_dir} with {num_files:,} files")
             if num_files > 1000:
                 lines.append(
-                    "Warning: For large repos, consider using --subtree-only and .aiderignore"
+                    "Warning: For large repos, consider using --subtree-only and .loomignore"
                 )
                 lines.append(f"See: {urls.large_repos}")
         else:
@@ -1346,7 +1346,7 @@ class Coder:
             return
 
         delay = 5 * 60 - 5
-        delay = float(os.environ.get("AIDER_CACHE_KEEPALIVE_DELAY", delay))
+        delay = float(os.environ.get("LOOM_CACHE_KEEPALIVE_DELAY", delay))
         self.next_cache_warm = time.time() + delay
         self.warming_pings_left = self.num_cache_warming_pings
         self.cache_warming_chunks = chunks

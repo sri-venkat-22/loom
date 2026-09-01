@@ -90,7 +90,7 @@ def get_index():
     )
     from llama_index.core.node_parser import MarkdownNodeParser
 
-    dname = Path.home() / ".aider" / "caches" / ("help." + __version__)
+    dname = Path.home() / ".loom" / "caches" / ("help." + __version__)
 
     index = None
     try:

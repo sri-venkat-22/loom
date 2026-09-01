@@ -9,7 +9,7 @@ import loom
 from loom import utils
 from loom.dump import dump  # noqa: F401
 
-VERSION_CHECK_FNAME = Path.home() / ".aider" / "caches" / "versioncheck"
+VERSION_CHECK_FNAME = Path.home() / ".loom" / "caches" / "versioncheck"
 
 
 def install_from_main_branch(io):
@@ -36,7 +36,7 @@ def install_upgrade(io, latest_version=None):
     else:
         new_ver_text = "Install latest version of loom?"
 
-    docker_image = os.environ.get("AIDER_DOCKER_IMAGE")
+    docker_image = os.environ.get("LOOM_DOCKER_IMAGE")
     if docker_image:
         text = f"""
 {new_ver_text} To upgrade, run:

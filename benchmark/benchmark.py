@@ -30,7 +30,7 @@ from loom.coders import Coder, base_coder
 from loom.dump import dump  # noqa: F401
 from loom.io import InputOutput
 
-BENCHMARK_DNAME = Path(os.environ.get("AIDER_BENCHMARK_DIR", "tmp.benchmarks"))
+BENCHMARK_DNAME = Path(os.environ.get("LOOM_BENCHMARK_DIR", "tmp.benchmarks"))
 
 EXERCISES_DIR_DEFAULT = "polyglot-benchmark"
 
@@ -175,7 +175,7 @@ def main(
     replay: str = typer.Option(
         None,
         "--replay",
-        help="Replay previous .aider.chat.history.md responses from previous benchmark run",
+        help="Replay previous .loom.chat.history.md responses from previous benchmark run",
     ),
     keywords: str = typer.Option(
         None, "--keywords", "-k", help="Only run tests that contain keywords (comma sep)"
@@ -249,7 +249,7 @@ def main(
     assert len(updated_dirnames) == 1, updated_dirnames
     dirname = updated_dirnames[0]
 
-    if "AIDER_DOCKER" not in os.environ:
+    if "LOOM_DOCKER" not in os.environ:
         print("Warning: benchmarking runs unvetted code from GPT, run in a docker container")
         return
 
@@ -435,7 +435,7 @@ def show_diffs(dirnames):
         print()
         print(testcase)
         for outcome, dirname in zip(all_outcomes, dirnames):
-            print(outcome, f"{dirname}/{testcase}/.aider.chat.history.md")
+            print(outcome, f"{dirname}/{testcase}/.loom.chat.history.md")
 
     changed = set(testcases) - unchanged
     print()
@@ -450,9 +450,9 @@ def load_results(dirname, stats_languages=None):
 
     if stats_languages:
         languages = [lang.strip().lower() for lang in stats_languages.split(",")]
-        glob_patterns = [f"{lang}/exercises/practice/*/.aider.results.json" for lang in languages]
+        glob_patterns = [f"{lang}/exercises/practice/*/.loom.results.json" for lang in languages]
     else:
-        glob_patterns = ["*/exercises/practice/*/.aider.results.json"]
+        glob_patterns = ["*/exercises/practice/*/.loom.results.json"]
 
     for pattern in glob_patterns:
         for fname in dirname.glob(pattern):
@@ -652,7 +652,7 @@ def get_replayed_content(replay_dname, test_dname):
     dump(replay_dname, test_dname)
 
     test_name = test_dname.name
-    replay_fname = replay_dname / test_name / ".aider.chat.history.md"
+    replay_fname = replay_dname / test_name / ".loom.chat.history.md"
     dump(replay_fname)
 
     res = replay_fname.read_text()
@@ -672,7 +672,7 @@ def run_test(original_dname, testdir, *args, **kwargs):
         traceback.print_exc()
 
         testdir = Path(testdir)
-        results_fname = testdir / ".aider.results.json"
+        results_fname = testdir / ".loom.results.json"
         results_fname.write_text(json.dumps(dict(exception=traceback.format_exc())))
 
 
@@ -701,9 +701,9 @@ def run_test_real(
 
     testdir = Path(testdir)
 
-    history_fname = testdir / ".aider.chat.history.md"
+    history_fname = testdir / ".loom.chat.history.md"
 
-    results_fname = testdir / ".aider.results.json"
+    results_fname = testdir / ".loom.results.json"
     if results_fname.exists():
         try:
             res = json.loads(results_fname.read_text())
