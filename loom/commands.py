@@ -154,7 +154,7 @@ class Commands:
 
         show_formats = OrderedDict(
             [
-                ("help", "Get help about using aider (usage, config, troubleshoot)."),
+                ("help", "Get help about using loom (usage, config, troubleshoot)."),
                 ("ask", "Ask questions about your code without making any changes."),
                 ("code", "Ask for changes to your code (using the best edit format)."),
                 (
@@ -551,7 +551,7 @@ class Commands:
         self.io.tool_output(f"{cost_pad}{fmt(limit)} tokens max context window size")
 
     def cmd_undo(self, args):
-        "Undo the last git commit if it was done by aider"
+        "Undo the last git commit if it was done by loom"
         try:
             self.raw_cmd_undo(args)
         except ANY_GIT_ERROR as err:
@@ -571,7 +571,7 @@ class Commands:
         last_commit_message = self.coder.repo.get_head_commit_message("(unknown)").strip()
         last_commit_message = (last_commit_message.splitlines() or [""])[0]
         if last_commit_hash not in self.coder.aider_commit_hashes:
-            self.io.tool_error("The last commit was not made by aider in this chat session.")
+            self.io.tool_error("The last commit was not made by loom in this chat session.")
             self.io.tool_output(
                 "You could try `/git reset --hard HEAD^` but be aware that this is a destructive"
                 " command!"
@@ -797,7 +797,7 @@ class Commands:
         return res
 
     def cmd_add(self, args):
-        "Add files to the chat so aider can edit them or review them in detail"
+        "Add files to the chat so loom can edit them or review them in detail"
 
         all_matched_files = set()
 
@@ -1117,7 +1117,7 @@ class Commands:
         self.io.tool_output("Use `/help <question>` to ask questions about how to use aider.")
 
     def cmd_help(self, args):
-        "Ask questions about aider"
+        "Ask questions about loom"
 
         if not args.strip():
             self.basic_help()
@@ -1144,7 +1144,7 @@ class Commands:
         )
         user_msg = self.help.ask(args)
         user_msg += """
-# Announcement lines from when this session of aider was launched:
+# Announcement lines from when this session of loom was launched:
 
 """
         user_msg += "\n".join(self.coder.get_announcements()) + "\n"

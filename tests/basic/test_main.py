@@ -111,7 +111,7 @@ class TestMain(TestCase):
 
         # This will throw a git error on windows if get_tracked_files doesn't
         # properly convert git/posix/paths to git\posix\paths.
-        # Because aider will try and `git add` a file that's already in the repo.
+        # Because loom will try and `git add` a file that's already in the repo.
         main(["--yes", str(fname), "--exit"], input=DummyInput(), output=DummyOutput())
 
     def test_setup_git(self):
@@ -960,7 +960,7 @@ class TestMain(TestCase):
             self.assertEqual(result, 1)
 
     def test_git_config_include(self):
-        # Test that aider respects git config includes for user.name and user.email
+        # Test that loom respects git config includes for user.name and user.email
         with GitTemporaryDirectory() as git_dir:
             git_dir = Path(git_dir)
 
@@ -983,7 +983,7 @@ class TestMain(TestCase):
             git_config_path = git_dir / ".git" / "config"
             git_config_content = git_config_path.read_text()
 
-            # Run aider and verify it doesn't change the git config
+            # Run loom and verify it doesn't change the git config
             main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
 
             # Check that the user settings are still the same using git command
@@ -996,7 +996,7 @@ class TestMain(TestCase):
             self.assertEqual(git_config_content, git_config_content_after)
 
     def test_git_config_include_directive(self):
-        # Test that aider respects the include directive in git config
+        # Test that loom respects the include directive in git config
         with GitTemporaryDirectory() as git_dir:
             git_dir = Path(git_dir)
 
@@ -1024,7 +1024,7 @@ class TestMain(TestCase):
             self.assertEqual(repo.git.config("user.name"), "Directive User")
             self.assertEqual(repo.git.config("user.email"), "directive@example.com")
 
-            # Run aider and verify it doesn't change the git config
+            # Run loom and verify it doesn't change the git config
             main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
 
             # Check that the git config file wasn't modified

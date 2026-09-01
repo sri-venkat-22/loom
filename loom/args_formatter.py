@@ -18,9 +18,9 @@ class DotEnvFormatter(argparse.HelpFormatter):
     def _format_text(self, text):
         return f"""
 ##########################################################
-# Sample aider .env file.
+# Sample loom .env file.
 # Place at the root of your git repo.
-# Or use `aider --env <fname>` to specify.
+# Or use `loom --env <fname>` to specify.
 ##########################################################
 
 #################

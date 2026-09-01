@@ -131,7 +131,7 @@ class Coder:
         summarize_from_coder=True,
         **kwargs,
     ):
-        import aider.coders as coders
+        import loom.coders as coders
 
         if not main_model:
             if from_coder:

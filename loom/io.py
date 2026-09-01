@@ -40,7 +40,7 @@ from .editor import pipe_editor
 from .utils import is_image_file
 
 # Constants
-NOTIFICATION_MESSAGE = "Aider is waiting for your input"
+NOTIFICATION_MESSAGE = "Loom is waiting for your input"
 
 
 def ensure_hash_prefix(color):
@@ -333,7 +333,7 @@ class InputOutput:
         self.dry_run = dry_run
 
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.append_chat_history(f"\n# aider chat started at {current_time}\n\n")
+        self.append_chat_history(f"\n# loom chat started at {current_time}\n\n")
 
         self.prompt_session = None
         self.is_dumb_terminal = is_dumb_terminal()
@@ -1060,17 +1060,17 @@ class InputOutput:
         if system == "Darwin":  # macOS
             # Check for terminal-notifier first
             if shutil.which("terminal-notifier"):
-                return f"terminal-notifier -title 'Aider' -message '{NOTIFICATION_MESSAGE}'"
+                return f"terminal-notifier -title 'Loom' -message '{NOTIFICATION_MESSAGE}'"
             # Fall back to osascript
             return (
-                f'osascript -e \'display notification "{NOTIFICATION_MESSAGE}" with title "Aider"\''
+                f'osascript -e \'display notification "{NOTIFICATION_MESSAGE}" with title "Loom"\''
             )
         elif system == "Linux":
             # Check for common Linux notification tools
             for cmd in ["notify-send", "zenity"]:
                 if shutil.which(cmd):
                     if cmd == "notify-send":
-                        return f"notify-send 'Aider' '{NOTIFICATION_MESSAGE}'"
+                        return f"notify-send 'Loom' '{NOTIFICATION_MESSAGE}'"
                     elif cmd == "zenity":
                         return f"zenity --notification --text='{NOTIFICATION_MESSAGE}'"
             return None  # No known notification tool found
@@ -1080,7 +1080,7 @@ class InputOutput:
                 "powershell -command"
                 " \"[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms');"
                 f" [System.Windows.Forms.MessageBox]::Show('{NOTIFICATION_MESSAGE}',"
-                " 'Aider')\""
+                " 'Loom')\""
             )
 
         return None  # Unknown system

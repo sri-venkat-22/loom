@@ -118,15 +118,15 @@ def test_git_index_version_greater_than_2(mock_browser, create_repo, mock_io):
 
     # Assert that the appropriate error messages were logged
     mock_io.tool_error.assert_called_with(
-        "Aider only works with git repos with version number 1 or 2."
+        "Loom only works with git repos with version number 1 or 2."
     )
     mock_io.tool_error.assert_any_call(
-        "Aider only works with git repos with version number 1 or 2."
+        "Loom only works with git repos with version number 1 or 2."
     )
     mock_io.tool_output.assert_any_call(
         "You may be able to convert your repo: git update-index --index-version=2"
     )
-    mock_io.tool_output.assert_any_call("Or run aider --no-git to proceed without using git.")
+    mock_io.tool_output.assert_any_call("Or run loom --no-git to proceed without using git.")
     mock_io.offer_url.assert_any_call(
         urls.git_index_version,
         "Open documentation url for more info?",

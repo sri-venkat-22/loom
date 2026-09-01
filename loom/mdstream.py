@@ -229,7 +229,7 @@ class MarkdownStream:
 
 
 if __name__ == "__main__":
-    with open("aider/io.py", "r") as f:
+    with open("loom/io.py", "r") as f:
         code = f.read()
     _text = _text_prefix + code + _text_suffix
     _text = _text * 10
