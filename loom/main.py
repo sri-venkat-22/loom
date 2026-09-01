@@ -116,11 +116,11 @@ def setup_git(git_root, io):
             pass
     elif cwd == Path.home():
         io.tool_warning(
-            "You should probably run aider in your project's directory, not your home dir."
+            "You should probably run loom in your project's directory, not your home dir."
         )
         return
     elif cwd and io.confirm_ask(
-        "No git repo found, create one to track aider's changes (recommended)?"
+        "No git repo found, create one to track loom's changes (recommended)?"
     ):
         git_root = str(cwd.resolve())
         repo = make_new_repo(git_root, io)
@@ -209,8 +209,8 @@ def check_streamlit_install(io):
     return utils.check_pip_install_extra(
         io,
         "streamlit",
-        "You need to install the aider browser feature",
-        ["aider-chat[browser]"],
+        "You need to install the loom browser feature",
+        ["loom[browser]"],
     )
 
 
@@ -347,7 +347,7 @@ def register_models(git_root, model_settings_fname, io, verbose=False):
         elif verbose:
             io.tool_output("No model settings files loaded")
     except Exception as e:
-        io.tool_error(f"Error loading aider model settings: {e}")
+        io.tool_error(f"Error loading loom model settings: {e}")
         return 1
 
     if verbose:
@@ -437,9 +437,9 @@ def sanity_check_repo(repo, io):
         bad_ver = True
 
     if bad_ver:
-        io.tool_error("Aider only works with git repos with version number 1 or 2.")
+        io.tool_error("Loom only works with git repos with version number 1 or 2.")
         io.tool_output("You may be able to convert your repo: git update-index --index-version=2")
-        io.tool_output("Or run aider --no-git to proceed without using git.")
+        io.tool_output("Or run loom --no-git to proceed without using git.")
         io.offer_url(urls.git_index_version, "Open documentation url for more info?")
         return False
 
@@ -505,7 +505,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     if args.shell_completions:
         # Ensure parser.prog is set for shtab, though it should be by default
-        parser.prog = "aider"
+        parser.prog = "loom"
         print(shtab.complete(parser, shell=args.shell_completions))
         sys.exit(0)
 
@@ -642,12 +642,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.analytics is not False:
         if analytics.need_to_ask(args.analytics):
             io.tool_output(
-                "Aider respects your privacy and never collects your code, chat messages, keys or"
+                "Loom respects your privacy and never collects your code, chat messages, keys or"
                 " personal info."
             )
             io.tool_output(f"For more info: {urls.analytics}")
             disable = not io.confirm_ask(
-                "Allow collection of anonymous analytics to help improve aider?"
+                "Allow collection of anonymous analytics to help improve loom?"
             )
 
             analytics.asked_opt_in = True
@@ -1234,7 +1234,7 @@ def check_and_load_imports(io, is_first_run, verbose=False):
                 load_slow_imports(swallow=False)
             except Exception as err:
                 io.tool_error(str(err))
-                io.tool_output("Error loading required imports. Did you install aider properly?")
+                io.tool_output("Error loading required imports. Did you install loom properly?")
                 io.offer_url(urls.install_properly, "Open documentation url for more info?")
                 sys.exit(1)
 

@@ -57,12 +57,12 @@ class TestHelp(unittest.TestCase):
         commands = Commands(io, coder)
 
         help_coder_run = MagicMock(return_value="")
-        aider.coders.HelpCoder.run = help_coder_run
+        loom.coders.HelpCoder.run = help_coder_run
 
         def run_help_command():
             try:
                 commands.cmd_help("hi")
-            except aider.commands.SwitchCoder:
+            except loom.commands.SwitchCoder:
                 pass
             else:
                 # If no exception was raised, fail the test
@@ -79,7 +79,7 @@ class TestHelp(unittest.TestCase):
 
     def test_ask_without_mock(self):
         help_instance = Help()
-        question = "What is aider?"
+        question = "What is loom?"
         result = help_instance.ask(question)
 
         self.assertIn(f"# Question: {question}", result)
@@ -88,7 +88,7 @@ class TestHelp(unittest.TestCase):
         self.assertGreater(len(result), 100)  # Ensure we got a substantial response
 
         # Check for some expected content (adjust based on your actual help content)
-        self.assertIn("aider", result.lower())
+        self.assertIn("loom", result.lower())
         self.assertIn("ai", result.lower())
         self.assertIn("chat", result.lower())
 

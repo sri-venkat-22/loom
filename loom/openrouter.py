@@ -48,7 +48,7 @@ class OpenRouterModelManager:
         """
         Return metadata for *model* or an empty ``dict`` when unknown.
 
-        ``model`` should use the aider naming convention, e.g.
+        ``model`` should use the loom naming convention, e.g.
         ``openrouter/nousresearch/deephermes-3-mistral-24b-preview:free``.
         """
         self._ensure_content()

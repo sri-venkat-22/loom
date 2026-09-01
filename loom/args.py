@@ -34,7 +34,7 @@ def default_env_file(git_root):
 
 def get_parser(default_config_files, git_root):
     parser = configargparse.ArgumentParser(
-        description="aider is AI pair programming in your terminal",
+        description="loom is AI pair programming in your terminal",
         add_config_file_help=True,
         default_config_files=default_config_files,
         config_file_parser_class=configargparse.YAMLConfigFileParser,
@@ -121,7 +121,7 @@ def get_parser(default_config_files, git_root):
         "--model-settings-file",
         metavar="MODEL_SETTINGS_FILE",
         default=".aider.model.settings.yml",
-        help="Specify a file with aider model settings for unknown models",
+        help="Specify a file with loom model settings for unknown models",
     ).complete = shtab.FILE
     group.add_argument(
         "--model-metadata-file",
@@ -417,7 +417,7 @@ def get_parser(default_config_files, git_root):
         "--add-gitignore-files",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable/disable the addition of files listed in .gitignore to Aider's editing scope.",
+        help="Enable/disable the addition of files listed in .gitignore to Loom's editing scope.",
     )
     default_aiderignore_file = (
         os.path.join(git_root, ".aiderignore") if git_root else ".aiderignore"
@@ -428,7 +428,7 @@ def get_parser(default_config_files, git_root):
         metavar="AIDERIGNORE",
         type=lambda path_str: resolve_aiderignore_path(path_str, git_root),
         default=default_aiderignore_file,
-        help="Specify the aider ignore file (default: .aiderignore in git root)",
+        help="Specify the loom ignore file (default: .aiderignore in git root)",
     ).complete = shtab.FILE
     group.add_argument(
         "--subtree-only",
@@ -453,7 +453,7 @@ def get_parser(default_config_files, git_root):
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Attribute aider code changes in the git author name (default: True). If explicitly set"
+            "Attribute loom code changes in the git author name (default: True). If explicitly set"
             " to True, overrides --attribute-co-authored-by precedence."
         ),
     )
@@ -462,28 +462,28 @@ def get_parser(default_config_files, git_root):
         action=argparse.BooleanOptionalAction,
         default=None,
         help=(
-            "Attribute aider commits in the git committer name (default: True). If explicitly set"
-            " to True, overrides --attribute-co-authored-by precedence for aider edits."
+            "Attribute loom commits in the git committer name (default: True). If explicitly set"
+            " to True, overrides --attribute-co-authored-by precedence for loom edits."
         ),
     )
     group.add_argument(
         "--attribute-commit-message-author",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix commit messages with 'aider: ' if aider authored the changes (default: False)",
+        help="Prefix commit messages with 'loom: ' if loom authored the changes (default: False)",
     )
     group.add_argument(
         "--attribute-commit-message-committer",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Prefix all commit messages with 'aider: ' (default: False)",
+        help="Prefix all commit messages with 'loom: ' (default: False)",
     )
     group.add_argument(
         "--attribute-co-authored-by",
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Attribute aider edits using the Co-authored-by trailer in the commit message"
+            "Attribute loom edits using the Co-authored-by trailer in the commit message"
             " (default: True). If True, this takes precedence over default --attribute-author and"
             " --attribute-committer behavior unless they are explicitly set to True."
         ),
@@ -604,7 +604,7 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--check-update",
         action=argparse.BooleanOptionalAction,
-        help="Check for new aider versions on launch",
+        help="Check for new loom versions on launch",
         default=True,
     )
     group.add_argument(
@@ -623,7 +623,7 @@ def get_parser(default_config_files, git_root):
         "--upgrade",
         "--update",
         action="store_true",
-        help="Upgrade aider to the latest version from PyPI",
+        help="Upgrade loom to the latest version from PyPI",
         default=False,
     )
     group.add_argument(
@@ -657,14 +657,14 @@ def get_parser(default_config_files, git_root):
         "--gui",
         "--browser",
         action=argparse.BooleanOptionalAction,
-        help="Run aider in your browser (default: False)",
+        help="Run loom in your browser (default: False)",
         default=False,
     )
     group.add_argument(
         "--copy-paste",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Enable automatic copy/paste of chat between aider and web UI (default: False)",
+        help="Enable automatic copy/paste of chat between loom and web UI (default: False)",
     )
     group.add_argument(
         "--apply",
@@ -857,7 +857,7 @@ def get_parser(default_config_files, git_root):
         choices=supported_shells_list,
         help=(
             "Print shell completion script for the specified SHELL and exit. Supported shells:"
-            f" {', '.join(supported_shells_list)}. Example: aider --shell-completions bash"
+            f" {', '.join(supported_shells_list)}. Example: loom --shell-completions bash"
         ),
     )
 
@@ -871,7 +871,7 @@ def get_parser(default_config_files, git_root):
 
 def get_md_help():
     os.environ["COLUMNS"] = "70"
-    sys.argv = ["aider"]
+    sys.argv = ["loom"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values
@@ -884,7 +884,7 @@ def get_md_help():
 
 def get_sample_yaml():
     os.environ["COLUMNS"] = "100"
-    sys.argv = ["aider"]
+    sys.argv = ["loom"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values
@@ -897,7 +897,7 @@ def get_sample_yaml():
 
 def get_sample_dotenv():
     os.environ["COLUMNS"] = "120"
-    sys.argv = ["aider"]
+    sys.argv = ["loom"]
     parser = get_parser([], None)
 
     # This instantiates all the action.env_var values
@@ -928,7 +928,7 @@ def main():
                 print(f"Supported shells are: {', '.join(shtab.SUPPORTED_SHELLS)}", file=sys.stderr)
                 sys.exit(1)
             parser = get_parser([], None)
-            parser.prog = "aider"  # Set the program name on the parser
+            parser.prog = "loom"  # Set the program name on the parser
             print(shtab.complete(parser, shell=shell))
         else:
             print("Error: Please specify a shell for completion.", file=sys.stderr)
