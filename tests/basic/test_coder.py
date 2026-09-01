@@ -6,20 +6,20 @@ from unittest.mock import MagicMock, patch
 
 import git
 
-from aider.coders import Coder
-from aider.coders.base_coder import FinishReasonLength, UnknownEditFormat
-from aider.dump import dump  # noqa: F401
-from aider.io import InputOutput
-from aider.models import Model
-from aider.repo import GitRepo
-from aider.sendchat import sanity_check_messages
-from aider.utils import GitTemporaryDirectory
+from loom.coders import Coder
+from loom.coders.base_coder import FinishReasonLength, UnknownEditFormat
+from loom.dump import dump  # noqa: F401
+from loom.io import InputOutput
+from loom.models import Model
+from loom.repo import GitRepo
+from loom.sendchat import sanity_check_messages
+from loom.utils import GitTemporaryDirectory
 
 
 class TestCoder(unittest.TestCase):
     def setUp(self):
         self.GPT35 = Model("gpt-3.5-turbo")
-        self.webbrowser_patcher = patch("aider.io.webbrowser.open")
+        self.webbrowser_patcher = patch("loom.io.webbrowser.open")
         self.mock_webbrowser = self.webbrowser_patcher.start()
 
     def test_allowed_to_edit(self):
@@ -1227,7 +1227,7 @@ This command will print 'Hello, World!' to the console."""
         self.assertEqual(coder.normalize_language("French"), "French")
 
         # Test common locale codes (fallback map, assuming babel is not installed or fails)
-        with patch("aider.coders.base_coder.Locale", None):
+        with patch("loom.coders.base_coder.Locale", None):
             self.assertEqual(coder.normalize_language("en_US"), "English")
             self.assertEqual(coder.normalize_language("fr_FR"), "French")
             self.assertEqual(coder.normalize_language("es"), "Spanish")
@@ -1245,7 +1245,7 @@ This command will print 'Hello, World!' to the console."""
         mock_locale_instance = MagicMock()
         mock_babel_locale.parse.return_value = mock_locale_instance
 
-        with patch("aider.coders.base_coder.Locale", mock_babel_locale):
+        with patch("loom.coders.base_coder.Locale", mock_babel_locale):
             mock_locale_instance.get_display_name.return_value = "english"  # For en_US
             self.assertEqual(coder.normalize_language("en_US"), "English")
             mock_babel_locale.parse.assert_called_with("en_US")
@@ -1259,7 +1259,7 @@ This command will print 'Hello, World!' to the console."""
         # Test with babel.Locale raising an exception (simulating parse failure)
         mock_babel_locale_error = MagicMock()
         mock_babel_locale_error.parse.side_effect = Exception("Babel parse error")
-        with patch("aider.coders.base_coder.Locale", mock_babel_locale_error):
+        with patch("loom.coders.base_coder.Locale", mock_babel_locale_error):
             self.assertEqual(coder.normalize_language("en_US"), "English")  # Falls back to map
 
     def test_get_user_language(self):
@@ -1333,8 +1333,8 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=True)
 
             # Create an ArchitectCoder with auto_accept_architect=True
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
-                from aider.coders.architect_coder import ArchitectCoder
+            with patch("loom.coders.architect_coder.AskCoder.__init__", return_value=None):
+                from loom.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()
                 coder.io = io
@@ -1349,7 +1349,7 @@ This command will print 'Hello, World!' to the console."""
 
                 # Mock editor_coder creation and execution
                 mock_editor = MagicMock()
-                with patch("aider.coders.architect_coder.Coder.create", return_value=mock_editor):
+                with patch("loom.coders.architect_coder.Coder.create", return_value=mock_editor):
                     # Set partial response content
                     coder.partial_response_content = "Make these changes to the code"
 
@@ -1368,8 +1368,8 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=True)
 
             # Create an ArchitectCoder with auto_accept_architect=False
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
-                from aider.coders.architect_coder import ArchitectCoder
+            with patch("loom.coders.architect_coder.AskCoder.__init__", return_value=None):
+                from loom.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()
                 coder.io = io
@@ -1388,7 +1388,7 @@ This command will print 'Hello, World!' to the console."""
 
                 # Mock editor_coder creation and execution
                 mock_editor = MagicMock()
-                with patch("aider.coders.architect_coder.Coder.create", return_value=mock_editor):
+                with patch("loom.coders.architect_coder.Coder.create", return_value=mock_editor):
                     # Set partial response content
                     coder.partial_response_content = "Make these changes to the code"
 
@@ -1407,8 +1407,8 @@ This command will print 'Hello, World!' to the console."""
             io.confirm_ask = MagicMock(return_value=False)
 
             # Create an ArchitectCoder with auto_accept_architect=False
-            with patch("aider.coders.architect_coder.AskCoder.__init__", return_value=None):
-                from aider.coders.architect_coder import ArchitectCoder
+            with patch("loom.coders.architect_coder.AskCoder.__init__", return_value=None):
+                from loom.coders.architect_coder import ArchitectCoder
 
                 coder = ArchitectCoder()
                 coder.io = io
@@ -1419,7 +1419,7 @@ This command will print 'Hello, World!' to the console."""
 
                 # Mock editor_coder creation and execution
                 mock_editor = MagicMock()
-                with patch("aider.coders.architect_coder.Coder.create", return_value=mock_editor):
+                with patch("loom.coders.architect_coder.Coder.create", return_value=mock_editor):
                     # Set partial response content
                     coder.partial_response_content = "Make these changes to the code"
 

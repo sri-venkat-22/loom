@@ -1,4 +1,4 @@
-from aider.scrape import Scraper
+from loom.scrape import Scraper
 
 
 class DummyIO:
@@ -56,7 +56,7 @@ def test_commands_web_disable_playwright(monkeypatch):
     """
     Test that Commands.cmd_web does not emit a misleading warning when --disable-playwright is set.
     """
-    from aider.commands import Commands
+    from loom.commands import Commands
 
     # Dummy IO to capture outputs and warnings
     class DummyIO:
@@ -111,7 +111,7 @@ def test_commands_web_disable_playwright(monkeypatch):
             pass
 
     # Patch install_playwright to always return False (simulate not available)
-    monkeypatch.setattr("aider.scrape.install_playwright", lambda io: False)
+    monkeypatch.setattr("loom.scrape.install_playwright", lambda io: False)
 
     # Patch Scraper to always use scrape_with_httpx and never warn
     class DummyScraper:
@@ -122,7 +122,7 @@ def test_commands_web_disable_playwright(monkeypatch):
             self.called = True
             return "dummy content"
 
-    monkeypatch.setattr("aider.commands.Scraper", DummyScraper)
+    monkeypatch.setattr("loom.commands.Scraper", DummyScraper)
 
     io = DummyIO()
     coder = DummyCoder()

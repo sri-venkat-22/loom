@@ -1,4 +1,4 @@
-from aider.exceptions import ExInfo, LiteLLMExceptions
+from loom.exceptions import ExInfo, LiteLLMExceptions
 
 
 def test_litellm_exceptions_load():

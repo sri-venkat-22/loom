@@ -5,12 +5,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from aider.coders import Coder
-from aider.coders import editblock_coder as eb
-from aider.dump import dump  # noqa: F401
-from aider.io import InputOutput
-from aider.models import Model
-from aider.utils import ChdirTemporaryDirectory
+from loom.coders import Coder
+from loom.coders import editblock_coder as eb
+from loom.dump import dump  # noqa: F401
+from loom.io import InputOutput
+from loom.models import Model
+from loom.utils import ChdirTemporaryDirectory
 
 
 class TestUtils(unittest.TestCase):

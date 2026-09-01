@@ -105,7 +105,7 @@ def main():
         f"{new_version.major}.{new_version.minor}.{new_version.micro + 1}"
     )
 
-    from aider import __version__ as current_version
+    from loom import __version__ as current_version
 
     if new_version <= version.parse(current_version):
         raise ValueError(

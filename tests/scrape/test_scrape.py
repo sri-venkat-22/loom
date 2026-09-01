@@ -2,9 +2,9 @@ import time
 import unittest
 from unittest.mock import MagicMock
 
-from aider.commands import Commands
-from aider.io import InputOutput
-from aider.scrape import Scraper
+from loom.commands import Commands
+from loom.io import InputOutput
+from loom.scrape import Scraper
 
 
 class TestScrape(unittest.TestCase):
