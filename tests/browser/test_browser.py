@@ -2,11 +2,11 @@ import os
 import unittest
 from unittest.mock import patch
 
-from aider.main import main
+from loom.main import main
 
 
 class TestBrowser(unittest.TestCase):
-    @patch("aider.main.launch_gui")
+    @patch("loom.main.launch_gui")
     def test_browser_flag_imports_streamlit(self, mock_launch_gui):
         os.environ["AIDER_ANALYTICS"] = "false"
 

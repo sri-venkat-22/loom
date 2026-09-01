@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
-from aider.models import (
+from loom.models import (
     ANTHROPIC_BETA_HEADER,
     Model,
     ModelInfoManager,
@@ -14,13 +14,13 @@ from aider.models import (
 class TestModels(unittest.TestCase):
     def setUp(self):
         """Reset MODEL_SETTINGS before each test"""
-        from aider.models import MODEL_SETTINGS
+        from loom.models import MODEL_SETTINGS
 
         self._original_settings = MODEL_SETTINGS.copy()
 
     def tearDown(self):
         """Restore original MODEL_SETTINGS after each test"""
-        from aider.models import MODEL_SETTINGS
+        from loom.models import MODEL_SETTINGS
 
         MODEL_SETTINGS.clear()
         MODEL_SETTINGS.extend(self._original_settings)
@@ -102,7 +102,7 @@ class TestModels(unittest.TestCase):
             any("bogus-model" in msg for msg in warning_messages)
         )  # Check that one of the warnings mentions the bogus model
 
-    @patch("aider.models.check_for_dependencies")
+    @patch("loom.models.check_for_dependencies")
     def test_sanity_check_model_calls_check_dependencies(self, mock_check_deps):
         """Test that sanity_check_model calls check_for_dependencies"""
         mock_io = MagicMock()
@@ -202,15 +202,15 @@ class TestModels(unittest.TestCase):
         model.set_thinking_tokens("0.5M")
         self.assertEqual(model.extra_params["thinking"]["budget_tokens"], 0.5 * 1024 * 1024)
 
-    @patch("aider.models.check_pip_install_extra")
+    @patch("loom.models.check_pip_install_extra")
     def test_check_for_dependencies_bedrock(self, mock_check_pip):
         """Test that check_for_dependencies calls check_pip_install_extra for Bedrock models"""
-        from aider.io import InputOutput
+        from loom.io import InputOutput
 
         io = InputOutput()
 
         # Test with a Bedrock model
-        from aider.models import check_for_dependencies
+        from loom.models import check_for_dependencies
 
         check_for_dependencies(io, "bedrock/anthropic.claude-3-sonnet-20240229-v1:0")
 
@@ -219,15 +219,15 @@ class TestModels(unittest.TestCase):
             io, "boto3", "AWS Bedrock models require the boto3 package.", ["boto3"]
         )
 
-    @patch("aider.models.check_pip_install_extra")
+    @patch("loom.models.check_pip_install_extra")
     def test_check_for_dependencies_vertex_ai(self, mock_check_pip):
         """Test that check_for_dependencies calls check_pip_install_extra for Vertex AI models"""
-        from aider.io import InputOutput
+        from loom.io import InputOutput
 
         io = InputOutput()
 
         # Test with a Vertex AI model
-        from aider.models import check_for_dependencies
+        from loom.models import check_for_dependencies
 
         check_for_dependencies(io, "vertex_ai/gemini-1.5-pro")
 
@@ -239,15 +239,15 @@ class TestModels(unittest.TestCase):
             ["google-cloud-aiplatform"],
         )
 
-    @patch("aider.models.check_pip_install_extra")
+    @patch("loom.models.check_pip_install_extra")
     def test_check_for_dependencies_other_model(self, mock_check_pip):
         """Test that check_for_dependencies doesn't call check_pip_install_extra for other models"""
-        from aider.io import InputOutput
+        from loom.io import InputOutput
 
         io = InputOutput()
 
         # Test with a non-Bedrock, non-Vertex AI model
-        from aider.models import check_for_dependencies
+        from loom.models import check_for_dependencies
 
         check_for_dependencies(io, "gpt-4")
 
@@ -422,7 +422,7 @@ class TestModels(unittest.TestCase):
             except OSError:
                 pass
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     @patch.object(Model, "token_count")
     def test_ollama_num_ctx_set_when_missing(self, mock_token_count, mock_completion):
         mock_token_count.return_value = 1000
@@ -443,7 +443,7 @@ class TestModels(unittest.TestCase):
             timeout=600,
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     def test_ollama_uses_existing_num_ctx(self, mock_completion):
         model = Model("ollama/llama3")
         model.extra_params = {"num_ctx": 4096}
@@ -461,7 +461,7 @@ class TestModels(unittest.TestCase):
             timeout=600,
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     def test_non_ollama_no_num_ctx(self, mock_completion):
         model = Model("gpt-4")
         messages = [{"role": "user", "content": "Hello"}]
@@ -493,7 +493,7 @@ class TestModels(unittest.TestCase):
         model.use_temperature = 0.7
         self.assertEqual(model.use_temperature, 0.7)
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     def test_request_timeout_default(self, mock_completion):
         # Test default timeout is used when not specified in extra_params
         model = Model("gpt-4")
@@ -507,7 +507,7 @@ class TestModels(unittest.TestCase):
             timeout=600,  # Default timeout
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     def test_request_timeout_from_extra_params(self, mock_completion):
         # Test timeout from extra_params overrides default
         model = Model("gpt-4")
@@ -522,7 +522,7 @@ class TestModels(unittest.TestCase):
             timeout=300,  # From extra_params
         )
 
-    @patch("aider.models.litellm.completion")
+    @patch("loom.models.litellm.completion")
     def test_use_temperature_in_send_completion(self, mock_completion):
         # Test use_temperature=True sends temperature=0
         model = Model("gpt-4")

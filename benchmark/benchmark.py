@@ -25,10 +25,10 @@ from dotenv import load_dotenv
 from plots import plot_refactoring
 from rich.console import Console
 
-from aider import models, sendchat
-from aider.coders import Coder, base_coder
-from aider.dump import dump  # noqa: F401
-from aider.io import InputOutput
+from loom import models, sendchat
+from loom.coders import Coder, base_coder
+from loom.dump import dump  # noqa: F401
+from loom.io import InputOutput
 
 BENCHMARK_DNAME = Path(os.environ.get("AIDER_BENCHMARK_DIR", "tmp.benchmarks"))
 
@@ -320,7 +320,7 @@ def main(
 
     test_dnames = sorted(str(d.relative_to(original_dname)) for d in exercise_dirs)
 
-    resource_metadata = importlib_resources.files("aider.resources").joinpath("model-metadata.json")
+    resource_metadata = importlib_resources.files("loom.resources").joinpath("model-metadata.json")
     model_metadata_files_loaded = models.register_litellm_models([resource_metadata])
     dump(model_metadata_files_loaded)
 

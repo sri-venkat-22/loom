@@ -7,11 +7,11 @@ from pathlib import Path
 
 import git
 
-from aider.dump import dump  # noqa: F401
-from aider.io import InputOutput
-from aider.models import Model
-from aider.repomap import RepoMap
-from aider.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
+from loom.dump import dump  # noqa: F401
+from loom.io import InputOutput
+from loom.models import Model
+from loom.repomap import RepoMap
+from loom.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
 
 
 class TestRepoMap(unittest.TestCase):

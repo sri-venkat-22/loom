@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 
 from requests.exceptions import ConnectionError, ReadTimeout
 
-import aider
-from aider.coders import Coder
-from aider.commands import Commands
-from aider.help import Help, fname_to_url
-from aider.io import InputOutput
-from aider.models import Model
+import loom
+from loom.coders import Coder
+from loom.commands import Commands
+from loom.help import Help, fname_to_url
+from loom.io import InputOutput
+from loom.models import Model
 
 
 class TestHelp(unittest.TestCase):

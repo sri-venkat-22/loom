@@ -1,7 +1,7 @@
 
 [project]
-name = "aider-chat"
-description = "Aider is AI pair programming in your terminal"
+name = "loom"
+description = "Loom is AI pair programming in your terminal"
 readme = "README.md"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -21,10 +21,10 @@ requires-python = ">=3.10,<3.15"
 dynamic = ["dependencies", "optional-dependencies", "version"]
 
 [project.urls]
-Homepage = "https://github.com/Aider-AI/aider"
+Homepage = "https://github.com/loom/loom"
 
 [project.scripts]
-aider = "aider.main:main"
+loom = "loom.main:main"
 
 [tool.setuptools.dynamic]
 dependencies = { file = "requirements.txt" }
@@ -39,15 +39,15 @@ playwright = { file = "requirements/requirements-playwright.txt" }
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["aider"]
+include = ["loom"]
 
 [build-system]
 requires = ["setuptools>=68", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools_scm]
-write_to = "aider/_version.py"
+write_to = "loom/_version.py"
 
 [tool.codespell]
-skip = "*.svg,Gemfile.lock,tests/fixtures/*,aider/website/assets/*"
+skip = "*.svg,Gemfile.lock,tests/fixtures/*,loom/website/assets/*"
 write-changes = true

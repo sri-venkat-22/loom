@@ -7,9 +7,9 @@ from prompt_toolkit.completion import CompleteEvent
 from prompt_toolkit.document import Document
 from rich.text import Text
 
-from aider.dump import dump  # noqa: F401
-from aider.io import AutoCompleter, ConfirmGroup, InputOutput
-from aider.utils import ChdirTemporaryDirectory
+from loom.dump import dump  # noqa: F401
+from loom.io import AutoCompleter, ConfirmGroup, InputOutput
+from loom.utils import ChdirTemporaryDirectory
 
 
 class TestInputOutput(unittest.TestCase):
@@ -168,7 +168,7 @@ class TestInputOutput(unittest.TestCase):
         commands = MagicMock()
 
         # Simulate IsADirectoryError
-        with patch("aider.io.open", side_effect=IsADirectoryError):
+        with patch("loom.io.open", side_effect=IsADirectoryError):
             result = io.get_input(root, rel_fnames, addable_rel_fnames, commands)
             self.assertEqual(result, "test input")
             mock_input.assert_called_once()
@@ -425,7 +425,7 @@ class TestInputOutputMultilineMode(unittest.TestCase):
 
     def test_ensure_hash_prefix(self):
         """Test that ensure_hash_prefix correctly adds # to valid hex colors"""
-        from aider.io import ensure_hash_prefix
+        from loom.io import ensure_hash_prefix
 
         # Test valid hex colors without #
         self.assertEqual(ensure_hash_prefix("000"), "#000")
@@ -475,7 +475,7 @@ class TestInputOutputMultilineMode(unittest.TestCase):
             mock_print.assert_called_once()
 
 
-@patch("aider.io.is_dumb_terminal", return_value=False)
+@patch("loom.io.is_dumb_terminal", return_value=False)
 @patch.dict(os.environ, {"NO_COLOR": ""})
 class TestInputOutputFormatFiles(unittest.TestCase):
     def test_format_files_for_input_pretty_false(self, mock_is_dumb_terminal):
@@ -512,7 +512,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
 
         self.assertEqual(normalized_actual_output, expected_output)
 
-    @patch("aider.io.Columns")
+    @patch("loom.io.Columns")
     @patch("os.path.abspath")
     @patch("os.path.join")
     def test_format_files_for_input_pretty_true_no_files(
@@ -522,7 +522,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
         io.format_files_for_input([], [])
         mock_columns.assert_not_called()
 
-    @patch("aider.io.Columns")
+    @patch("loom.io.Columns")
     @patch("os.path.abspath")
     @patch("os.path.join")
     def test_format_files_for_input_pretty_true_editable_only(
@@ -543,7 +543,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
         self.assertIsInstance(renderables[1], Text)
         self.assertEqual(renderables[1].plain, "edit[markup].txt")
 
-    @patch("aider.io.Columns")
+    @patch("loom.io.Columns")
     @patch("os.path.abspath")
     @patch("os.path.join")
     def test_format_files_for_input_pretty_true_readonly_only(
@@ -573,7 +573,7 @@ class TestInputOutputFormatFiles(unittest.TestCase):
         self.assertIsInstance(renderables[2], Text)
         self.assertEqual(renderables[2].plain, "ro[markup].txt")
 
-    @patch("aider.io.Columns")
+    @patch("loom.io.Columns")
     @patch("os.path.abspath")
     @patch("os.path.join")
     def test_format_files_for_input_pretty_true_mixed_files(

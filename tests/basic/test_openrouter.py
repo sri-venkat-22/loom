@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from aider.models import ModelInfoManager
-from aider.openrouter import OpenRouterModelManager
+from loom.models import ModelInfoManager
+from loom.openrouter import OpenRouterModelManager
 
 
 class DummyResponse:
@@ -50,7 +50,7 @@ def test_model_info_manager_uses_openrouter_manager(monkeypatch):
     provides no data for an OpenRouter-prefixed model.
     """
     # Ensure litellm path returns no info so that fallback logic triggers
-    monkeypatch.setattr("aider.models.litellm.get_model_info", lambda *a, **k: {})
+    monkeypatch.setattr("loom.models.litellm.get_model_info", lambda *a, **k: {})
 
     stub_info = {
         "max_input_tokens": 512,
@@ -63,7 +63,7 @@ def test_model_info_manager_uses_openrouter_manager(monkeypatch):
 
     # Force OpenRouterModelManager to return our stub info
     monkeypatch.setattr(
-        "aider.models.OpenRouterModelManager.get_model_info",
+        "loom.models.OpenRouterModelManager.get_model_info",
         lambda self, model: stub_info,
     )
 

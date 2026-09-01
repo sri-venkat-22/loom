@@ -223,9 +223,9 @@ def main():
                     print(line)
             print("\n" + "=" * 40)
 
-            # Ask user if they want to remove the entry from aider's metadata
+            # Ask user if they want to remove the entry from loom's metadata
             response = (
-                input(f"Remove '{key}' from aider/resources/model-metadata.json? (y/N): ")
+                input(f"Remove '{key}' from loom/resources/model-metadata.json? (y/N): ")
                 .strip()
                 .lower()
             )

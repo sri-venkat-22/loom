@@ -11,11 +11,11 @@ import git
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.output import DummyOutput
 
-from aider.coders import Coder
-from aider.dump import dump  # noqa: F401
-from aider.io import InputOutput
-from aider.main import check_gitignore, load_dotenv_files, main, setup_git
-from aider.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory, make_repo
+from loom.coders import Coder
+from loom.dump import dump  # noqa: F401
+from loom.io import InputOutput
+from loom.main import check_gitignore, load_dotenv_files, main, setup_git
+from loom.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory, make_repo
 
 
 class TestMain(TestCase):
@@ -33,7 +33,7 @@ class TestMain(TestCase):
         os.environ["HOME"] = self.homedir_obj.name
         self.input_patcher = patch("builtins.input", return_value=None)
         self.mock_input = self.input_patcher.start()
-        self.webbrowser_patcher = patch("aider.io.webbrowser.open")
+        self.webbrowser_patcher = patch("loom.io.webbrowser.open")
         self.mock_webbrowser = self.webbrowser_patcher.start()
 
     def tearDown(self):
@@ -52,13 +52,13 @@ class TestMain(TestCase):
         main(["foo.txt", "--yes", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
         self.assertTrue(os.path.exists("foo.txt"))
 
-    @patch("aider.repo.GitRepo.get_commit_message", return_value="mock commit message")
+    @patch("loom.repo.GitRepo.get_commit_message", return_value="mock commit message")
     def test_main_with_empty_git_dir_new_file(self, _):
         make_repo()
         main(["--yes", "foo.txt", "--exit"], input=DummyInput(), output=DummyOutput())
         self.assertTrue(os.path.exists("foo.txt"))
 
-    @patch("aider.repo.GitRepo.get_commit_message", return_value="mock commit message")
+    @patch("loom.repo.GitRepo.get_commit_message", return_value="mock commit message")
     def test_main_with_empty_git_dir_new_files(self, _):
         make_repo()
         main(["--yes", "foo.txt", "bar.txt", "--exit"], input=DummyInput(), output=DummyOutput())
@@ -72,7 +72,7 @@ class TestMain(TestCase):
         res = main(["subdir", "foo.txt"], input=DummyInput(), output=DummyOutput())
         self.assertNotEqual(res, None)
 
-    @patch("aider.repo.GitRepo.get_commit_message", return_value="mock commit message")
+    @patch("loom.repo.GitRepo.get_commit_message", return_value="mock commit message")
     def test_main_with_subdir_repo_fnames(self, _):
         subdir = Path("subdir")
         subdir.mkdir()
@@ -89,13 +89,13 @@ class TestMain(TestCase):
         make_repo()
 
         Path(".aider.conf.yml").write_text("auto-commits: false\n")
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--yes"], input=DummyInput(), output=DummyOutput())
             _, kwargs = MockCoder.call_args
             assert kwargs["auto_commits"] is False
 
         Path(".aider.conf.yml").write_text("auto-commits: true\n")
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main([], input=DummyInput(), output=DummyOutput())
             _, kwargs = MockCoder.call_args
             assert kwargs["auto_commits"] is True
@@ -261,30 +261,30 @@ class TestMain(TestCase):
             self.assertNotIn(abs_ignored_file, coder.abs_fnames)
 
     def test_main_args(self):
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             # --yes will just ok the git repo without blocking on input
             # following calls to main will see the new repo already
             main(["--no-auto-commits", "--yes"], input=DummyInput())
             _, kwargs = MockCoder.call_args
             assert kwargs["auto_commits"] is False
 
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--auto-commits"], input=DummyInput())
             _, kwargs = MockCoder.call_args
             assert kwargs["auto_commits"] is True
 
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main([], input=DummyInput())
             _, kwargs = MockCoder.call_args
             assert kwargs["dirty_commits"] is True
             assert kwargs["auto_commits"] is True
 
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--no-dirty-commits"], input=DummyInput())
             _, kwargs = MockCoder.call_args
             assert kwargs["dirty_commits"] is False
 
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--dirty-commits"], input=DummyInput())
             _, kwargs = MockCoder.call_args
             assert kwargs["dirty_commits"] is True
@@ -327,7 +327,7 @@ class TestMain(TestCase):
         with open(message_file_path, "w", encoding="utf-8") as message_file:
             message_file.write(message_file_content)
 
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             MockCoder.return_value.run = MagicMock()
             main(
                 ["--yes", "--message-file", message_file_path],
@@ -342,8 +342,8 @@ class TestMain(TestCase):
         fname = "foo.py"
 
         with GitTemporaryDirectory():
-            with patch("aider.coders.Coder.create") as MockCoder:  # noqa: F841
-                with patch("aider.main.InputOutput") as MockSend:
+            with patch("loom.coders.Coder.create") as MockCoder:  # noqa: F841
+                with patch("loom.main.InputOutput") as MockSend:
 
                     def side_effect(*args, **kwargs):
                         self.assertEqual(kwargs["encoding"], "iso-8859-15")
@@ -356,15 +356,15 @@ class TestMain(TestCase):
     def test_main_exit_calls_version_check(self):
         with GitTemporaryDirectory():
             with (
-                patch("aider.main.check_version") as mock_check_version,
-                patch("aider.main.InputOutput") as mock_input_output,
+                patch("loom.main.check_version") as mock_check_version,
+                patch("loom.main.InputOutput") as mock_input_output,
             ):
                 main(["--exit", "--check-update"], input=DummyInput(), output=DummyOutput())
                 mock_check_version.assert_called_once()
                 mock_input_output.assert_called_once()
 
-    @patch("aider.main.InputOutput")
-    @patch("aider.coders.base_coder.Coder.run")
+    @patch("loom.main.InputOutput")
+    @patch("loom.coders.base_coder.Coder.run")
     def test_main_message_adds_to_input_history(self, mock_run, MockInputOutput):
         test_message = "test message"
         mock_io_instance = MockInputOutput.return_value
@@ -373,8 +373,8 @@ class TestMain(TestCase):
 
         mock_io_instance.add_to_input_history.assert_called_once_with(test_message)
 
-    @patch("aider.main.InputOutput")
-    @patch("aider.coders.base_coder.Coder.run")
+    @patch("loom.main.InputOutput")
+    @patch("loom.coders.base_coder.Coder.run")
     def test_yes(self, mock_run, MockInputOutput):
         test_message = "test message"
 
@@ -382,8 +382,8 @@ class TestMain(TestCase):
         args, kwargs = MockInputOutput.call_args
         self.assertTrue(args[1])
 
-    @patch("aider.main.InputOutput")
-    @patch("aider.coders.base_coder.Coder.run")
+    @patch("loom.main.InputOutput")
+    @patch("loom.coders.base_coder.Coder.run")
     def test_default_yes(self, mock_run, MockInputOutput):
         test_message = "test message"
 
@@ -393,7 +393,7 @@ class TestMain(TestCase):
 
     def test_dark_mode_sets_code_theme(self):
         # Mock InputOutput to capture the configuration
-        with patch("aider.main.InputOutput") as MockInputOutput:
+        with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             main(["--dark-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
             # Ensure InputOutput was called
@@ -404,7 +404,7 @@ class TestMain(TestCase):
 
     def test_light_mode_sets_code_theme(self):
         # Mock InputOutput to capture the configuration
-        with patch("aider.main.InputOutput") as MockInputOutput:
+        with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             main(["--light-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
             # Ensure InputOutput was called
@@ -420,7 +420,7 @@ class TestMain(TestCase):
 
     def test_env_file_flag_sets_automatic_variable(self):
         env_file_path = self.create_env_file(".env.test", "AIDER_DARK_MODE=True")
-        with patch("aider.main.InputOutput") as MockInputOutput:
+        with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
             main(
@@ -435,7 +435,7 @@ class TestMain(TestCase):
 
     def test_default_env_file_sets_automatic_variable(self):
         self.create_env_file(".env", "AIDER_DARK_MODE=True")
-        with patch("aider.main.InputOutput") as MockInputOutput:
+        with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
             main(["--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
@@ -447,7 +447,7 @@ class TestMain(TestCase):
 
     def test_false_vals_in_env_file(self):
         self.create_env_file(".env", "AIDER_SHOW_DIFFS=off")
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--no-git", "--yes"], input=DummyInput(), output=DummyOutput())
             MockCoder.assert_called_once()
             _, kwargs = MockCoder.call_args
@@ -455,7 +455,7 @@ class TestMain(TestCase):
 
     def test_true_vals_in_env_file(self):
         self.create_env_file(".env", "AIDER_SHOW_DIFFS=on")
-        with patch("aider.coders.Coder.create") as MockCoder:
+        with patch("loom.coders.Coder.create") as MockCoder:
             main(["--no-git", "--yes"], input=DummyInput(), output=DummyOutput())
             MockCoder.assert_called_once()
             _, kwargs = MockCoder.call_args
@@ -481,7 +481,7 @@ class TestMain(TestCase):
             os.chdir(subdir)
 
             # Mock the Linter class
-            with patch("aider.linter.Linter.lint") as MockLinter:
+            with patch("loom.linter.Linter.lint") as MockLinter:
                 MockLinter.return_value = ""
 
                 # Run main with --lint option
@@ -540,7 +540,7 @@ class TestMain(TestCase):
 
             with (
                 patch("pathlib.Path.home", return_value=fake_home),
-                patch("aider.coders.Coder.create") as MockCoder,
+                patch("loom.coders.Coder.create") as MockCoder,
             ):
                 # Test loading from specified config file
                 main(
@@ -576,7 +576,7 @@ class TestMain(TestCase):
 
     def test_map_tokens_option(self):
         with GitTemporaryDirectory():
-            with patch("aider.coders.base_coder.RepoMap") as MockRepoMap:
+            with patch("loom.coders.base_coder.RepoMap") as MockRepoMap:
                 MockRepoMap.return_value.max_map_tokens = 0
                 main(
                     ["--model", "gpt-4", "--map-tokens", "0", "--exit", "--yes"],
@@ -587,7 +587,7 @@ class TestMain(TestCase):
 
     def test_map_tokens_option_with_non_zero_value(self):
         with GitTemporaryDirectory():
-            with patch("aider.coders.base_coder.RepoMap") as MockRepoMap:
+            with patch("loom.coders.base_coder.RepoMap") as MockRepoMap:
                 MockRepoMap.return_value.max_map_tokens = 1000
                 main(
                     ["--model", "gpt-4", "--map-tokens", "1000", "--exit", "--yes"],
@@ -631,11 +631,11 @@ class TestMain(TestCase):
 
     def test_model_metadata_file(self):
         # Re-init so we don't have old data lying around from earlier test cases
-        from aider import models
+        from loom import models
 
         models.model_info_manager = models.ModelInfoManager()
 
-        from aider.llm import litellm
+        from loom.llm import litellm
 
         litellm._lazy_module = None
 
@@ -664,7 +664,7 @@ class TestMain(TestCase):
 
     def test_sonnet_and_cache_options(self):
         with GitTemporaryDirectory():
-            with patch("aider.coders.base_coder.RepoMap") as MockRepoMap:
+            with patch("loom.coders.base_coder.RepoMap") as MockRepoMap:
                 mock_repo_map = MagicMock()
                 mock_repo_map.max_map_tokens = 1000  # Set a specific value
                 MockRepoMap.return_value = mock_repo_map
@@ -797,8 +797,8 @@ class TestMain(TestCase):
         with GitTemporaryDirectory():
             # Test model that accepts the thinking_tokens setting
             with (
-                patch("aider.io.InputOutput.tool_warning") as mock_warning,
-                patch("aider.models.Model.set_thinking_tokens") as mock_set_thinking,
+                patch("loom.io.InputOutput.tool_warning") as mock_warning,
+                patch("loom.models.Model.set_thinking_tokens") as mock_set_thinking,
             ):
                 main(
                     [
@@ -820,8 +820,8 @@ class TestMain(TestCase):
 
             # Test model that doesn't have accepts_settings for thinking_tokens
             with (
-                patch("aider.io.InputOutput.tool_warning") as mock_warning,
-                patch("aider.models.Model.set_thinking_tokens") as mock_set_thinking,
+                patch("loom.io.InputOutput.tool_warning") as mock_warning,
+                patch("loom.models.Model.set_thinking_tokens") as mock_set_thinking,
             ):
                 main(
                     [
@@ -847,8 +847,8 @@ class TestMain(TestCase):
 
             # Test model that accepts the reasoning_effort setting
             with (
-                patch("aider.io.InputOutput.tool_warning") as mock_warning,
-                patch("aider.models.Model.set_reasoning_effort") as mock_set_reasoning,
+                patch("loom.io.InputOutput.tool_warning") as mock_warning,
+                patch("loom.models.Model.set_reasoning_effort") as mock_set_reasoning,
             ):
                 main(
                     ["--model", "o1", "--reasoning-effort", "3", "--yes", "--exit"],
@@ -863,8 +863,8 @@ class TestMain(TestCase):
 
             # Test model that doesn't have accepts_settings for reasoning_effort
             with (
-                patch("aider.io.InputOutput.tool_warning") as mock_warning,
-                patch("aider.models.Model.set_reasoning_effort") as mock_set_reasoning,
+                patch("loom.io.InputOutput.tool_warning") as mock_warning,
+                patch("loom.models.Model.set_reasoning_effort") as mock_set_reasoning,
             ):
                 main(
                     ["--model", "gpt-3.5-turbo", "--reasoning-effort", "3", "--yes", "--exit"],
@@ -880,11 +880,11 @@ class TestMain(TestCase):
                 # Method should still be called by default
                 mock_set_reasoning.assert_not_called()
 
-    @patch("aider.models.ModelInfoManager.set_verify_ssl")
+    @patch("loom.models.ModelInfoManager.set_verify_ssl")
     def test_no_verify_ssl_sets_model_info_manager(self, mock_set_verify_ssl):
         with GitTemporaryDirectory():
             # Mock Model class to avoid actual model initialization
-            with patch("aider.models.Model") as mock_model:
+            with patch("loom.models.Model") as mock_model:
                 # Configure the mock to avoid the TypeError
                 mock_model.return_value.info = {}
                 mock_model.return_value.name = "gpt-4"  # Add a string name
@@ -894,7 +894,7 @@ class TestMain(TestCase):
                 }
 
                 # Mock fuzzy_match_models to avoid string operations on MagicMock
-                with patch("aider.models.fuzzy_match_models", return_value=[]):
+                with patch("loom.models.fuzzy_match_models", return_value=[]):
                     main(
                         ["--no-verify-ssl", "--exit", "--yes"],
                         input=DummyInput(),
@@ -1038,7 +1038,7 @@ class TestMain(TestCase):
 
     def test_resolve_aiderignore_path(self):
         # Import the function directly to test it
-        from aider.args import resolve_aiderignore_path
+        from loom.args import resolve_aiderignore_path
 
         # Test with absolute path
         abs_path = os.path.abspath("/tmp/test/.aiderignore")
@@ -1114,7 +1114,7 @@ class TestMain(TestCase):
             del os.environ["GEMINI_API_KEY"]
 
             # Test no API keys - should offer OpenRouter OAuth
-            with patch("aider.onboarding.offer_openrouter_oauth") as mock_offer_oauth:
+            with patch("loom.onboarding.offer_openrouter_oauth") as mock_offer_oauth:
                 mock_offer_oauth.return_value = None  # Simulate user declining or failure
                 result = main(["--exit", "--yes"], input=DummyInput(), output=DummyOutput())
                 self.assertEqual(result, 1)  # Expect failure since no model could be selected
@@ -1264,7 +1264,7 @@ class TestMain(TestCase):
         # Test that --check-model-accepts-settings affects whether settings are applied
         with GitTemporaryDirectory():
             # When flag is on, setting shouldn't be applied to non-supporting model
-            with patch("aider.models.Model.set_thinking_tokens") as mock_set_thinking:
+            with patch("loom.models.Model.set_thinking_tokens") as mock_set_thinking:
                 main(
                     [
                         "--model",
@@ -1303,7 +1303,7 @@ class TestMain(TestCase):
             mock_files = MagicMock()
             mock_files.joinpath.return_value = mock_resource_path
 
-            with patch("aider.main.importlib_resources.files", return_value=mock_files):
+            with patch("loom.main.importlib_resources.files", return_value=mock_files):
                 # Capture stdout to check the output
                 with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
                     main(
@@ -1317,7 +1317,7 @@ class TestMain(TestCase):
                     self.assertIn("resource-provider/special-model", output)
 
             # When flag is off, setting should be applied regardless of support
-            with patch("aider.models.Model.set_reasoning_effort") as mock_set_reasoning:
+            with patch("loom.models.Model.set_reasoning_effort") as mock_set_reasoning:
                 main(
                     [
                         "--model",
@@ -1337,7 +1337,7 @@ class TestMain(TestCase):
     def test_model_accepts_settings_attribute(self):
         with GitTemporaryDirectory():
             # Test with a model where we override the accepts_settings attribute
-            with patch("aider.models.Model") as MockModel:
+            with patch("loom.models.Model") as MockModel:
                 # Setup mock model instance to simulate accepts_settings attribute
                 mock_instance = MockModel.return_value
                 mock_instance.name = "test-model"
@@ -1371,7 +1371,7 @@ class TestMain(TestCase):
                 mock_instance.set_reasoning_effort.assert_called_once_with("3")
                 mock_instance.set_thinking_tokens.assert_not_called()
 
-    @patch("aider.main.InputOutput")
+    @patch("loom.main.InputOutput")
     def test_stream_and_cache_warning(self, MockInputOutput):
         mock_io_instance = MockInputOutput.return_value
         with GitTemporaryDirectory():
@@ -1384,7 +1384,7 @@ class TestMain(TestCase):
             "Cost estimates may be inaccurate when using streaming and caching."
         )
 
-    @patch("aider.main.InputOutput")
+    @patch("loom.main.InputOutput")
     def test_stream_without_cache_no_warning(self, MockInputOutput):
         mock_io_instance = MockInputOutput.return_value
         with GitTemporaryDirectory():
@@ -1470,7 +1470,7 @@ class TestMain(TestCase):
             # Restore CWD
             os.chdir(original_cwd)
 
-    @patch("aider.main.InputOutput")
+    @patch("loom.main.InputOutput")
     def test_cache_without_stream_no_warning(self, MockInputOutput):
         mock_io_instance = MockInputOutput.return_value
         with GitTemporaryDirectory():

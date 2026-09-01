@@ -1,0 +1,2 @@
+[console_scripts]
+loom = loom.main:main
