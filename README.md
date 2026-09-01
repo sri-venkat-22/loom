@@ -1,0 +1,60 @@
+<h1 align="center">Loom</h1>
+
+<p align="center">AI pair programming in your terminal.</p>
+
+<p align="center">
+Loom lets you pair program with LLMs to start a new project or build on your existing codebase, right from the command line.
+</p>
+
+---
+
+## Features
+
+- **Cloud and local LLMs** — works best with Claude Sonnet, GPT-4o/o1/o3, and DeepSeek, but connects to almost any model, including local ones.
+- **Maps your codebase** — builds a map of your whole repo so it works well in larger projects, not just single files.
+- **100+ languages** — Python, JavaScript, Rust, Ruby, Go, C++, PHP, HTML, CSS, and dozens more via tree-sitter.
+- **Git integration** — automatically commits each change with a sensible message; use normal git tools to diff, manage, and undo.
+- **Use from your editor** — add comments to your code describing changes and Loom gets to work (`--watch`).
+- **Images & web pages** — add screenshots, diagrams, and reference docs to the chat for visual context.
+- **Voice-to-code** — describe features, tests, or fixes out loud and let Loom implement them.
+- **Lint & test** — runs your linters and test suite after each change and fixes what breaks.
+
+## Getting started
+
+Loom isn't on PyPI — install it from this repo:
+
+```bash
+pip install git+https://github.com/sri-venkat-22/loom.git
+```
+
+Then point it at a model and your API key:
+
+```bash
+# Change into your codebase
+cd /to/your/project
+
+# Anthropic Claude Sonnet
+loom --model sonnet --api-key anthropic=<key>
+
+# OpenAI
+loom --model gpt-4o --api-key openai=<key>
+
+# DeepSeek
+loom --model deepseek --api-key deepseek=<key>
+```
+
+Run `loom --help` to see all options. Configuration can also live in a `.loom.conf.yml` file or `LOOM_*` environment variables.
+
+## Development
+
+```bash
+git clone https://github.com/sri-venkat-22/loom.git
+cd loom
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+python -m pytest tests/basic
+```
+
+## License
+
+Loom is licensed under the Apache-2.0 license. See [LICENSE.txt](LICENSE.txt).

@@ -1,0 +1,50 @@
+name: Docker Build Test
+
+on:
+  push:
+    paths-ignore:
+      - 'loom/docs/**'
+      - 'README.md'
+      - 'HISTORY.md'
+      - '.github/workflows/*'
+      - '!.github/workflows/docker-build-test.yml'
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - 'loom/docs/**'
+      - 'README.md'
+      - 'HISTORY.md'
+      - '.github/workflows/*'
+      - '!.github/workflows/docker-build-test.yml'
+    branches:
+      - main
+
+jobs:
+  docker_build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    # Build-only check. Images are published by docker-release.yml on version tags.
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile
+        push: false
+        target: loom
+
+    - name: Build Docker full image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ./docker/Dockerfile
+        push: false
+        target: loom-full
