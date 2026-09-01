@@ -120,6 +120,9 @@ MODEL_ALIASES = {
     "gemini-exp": "gemini/gemini-2.5-pro-exp-03-25",
     "grok3": "xai/grok-3-beta",
     "optimus": "openrouter/openrouter/optimus-alpha",
+    "nemotron": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "deepseek-flash": "nvidia_nim/deepseek-ai/deepseek-v4-flash-0731",
+    "gemini-3.1": "gemini/gemini-3.1-pro-preview",
 }
 # Model metadata loaded from resources and user's files.
 

@@ -3126,3 +3126,20 @@
   use_repo_map: true
   use_temperature: false
   accepts_settings: ["reasoning_effort"]
+
+- name: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
+  edit_format: whole
+
+- name: nvidia_nim/deepseek-ai/deepseek-v4-flash-0731
+  edit_format: whole
+  use_temperature: 1.0
+  extra_params:
+    top_p: 0.95
+    max_tokens: 16384
+    extra_body:
+      chat_template_kwargs:
+        thinking: true
+        reasoning_effort: high
+
+- name: gemini/gemini-3.1-pro-preview
+  edit_format: diff
