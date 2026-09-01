@@ -166,7 +166,7 @@ class ModelInfoManager:
     CACHE_TTL = 60 * 60 * 24  # 24 hours
 
     def __init__(self):
-        self.cache_dir = Path.home() / ".aider" / "caches"
+        self.cache_dir = Path.home() / ".loom" / "caches"
         self.cache_file = self.cache_dir / "model_prices_and_context_window.json"
         self.content = None
         self.local_model_metadata = {}
@@ -983,7 +983,7 @@ class Model(ModelSettings):
             os.environ[openai_api_key] = token
 
     def send_completion(self, messages, functions, stream, temperature=None):
-        if os.environ.get("AIDER_SANITY_CHECK_TURNS"):
+        if os.environ.get("LOOM_SANITY_CHECK_TURNS"):
             sanity_check_messages(messages)
 
         if self.is_deepseek_r1():

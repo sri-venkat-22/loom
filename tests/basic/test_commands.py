@@ -1350,7 +1350,7 @@ class TestCommands(TestCase):
             repo.git.add(str(fname2))
             repo.git.commit("-m", "initial")
 
-            aignore = Path(".aiderignore")
+            aignore = Path(".loomignore")
             aignore.write_text(f"{fname1}\n{fname2}\ndir\n")
 
             io = InputOutput(yes=True)

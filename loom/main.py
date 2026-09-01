@@ -160,8 +160,8 @@ def check_gitignore(git_root, io, ask=True):
         repo = git.Repo(git_root)
         patterns_to_add = []
 
-        if not repo.ignored(".aider"):
-            patterns_to_add.append(".aider*")
+        if not repo.ignored(".loom"):
+            patterns_to_add.append(".loom*")
 
         env_path = Path(git_root) / ".env"
         if env_path.exists() and not repo.ignored(".env"):
@@ -334,7 +334,7 @@ def generate_search_path_list(default_file, git_root, command_line_file):
 
 def register_models(git_root, model_settings_fname, io, verbose=False):
     model_settings_files = generate_search_path_list(
-        ".aider.model.settings.yml", git_root, model_settings_fname
+        ".loom.model.settings.yml", git_root, model_settings_fname
     )
 
     try:
@@ -367,7 +367,7 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
     )
 
     # Explicitly add the OAuth keys file to the beginning of the list
-    oauth_keys_file = Path.home() / ".aider" / "oauth-keys.env"
+    oauth_keys_file = Path.home() / ".loom" / "oauth-keys.env"
     if oauth_keys_file.exists():
         # Insert at the beginning so it's loaded first (and potentially overridden)
         dotenv_files.insert(0, str(oauth_keys_file.resolve()))
@@ -395,7 +395,7 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
     model_metadata_files.append(str(resource_metadata))
 
     model_metadata_files += generate_search_path_list(
-        ".aider.model.metadata.json", git_root, model_metadata_fname
+        ".loom.model.metadata.json", git_root, model_metadata_fname
     )
 
     try:
@@ -461,7 +461,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     else:
         git_root = get_git_root()
 
-    conf_fname = Path(".aider.conf.yml")
+    conf_fname = Path(".loom.conf.yml")
 
     default_config_files = []
     try:
@@ -907,7 +907,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                 io,
                 fnames,
                 git_dname,
-                args.aiderignore,
+                args.loomignore,
                 models=main_model.commit_message_models(),
                 attribute_author=args.attribute_author,
                 attribute_committer=args.attribute_committer,
@@ -1022,8 +1022,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     ignores = []
     if git_root:
         ignores.append(str(Path(git_root) / ".gitignore"))
-    if args.aiderignore:
-        ignores.append(args.aiderignore)
+    if args.loomignore:
+        ignores.append(args.loomignore)
 
     if args.watch_files:
         file_watcher = FileWatcher(
@@ -1182,7 +1182,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
 def is_first_run_of_new_version(io, verbose=False):
     """Check if this is the first run of a new version/executable combination"""
-    installs_file = Path.home() / ".aider" / "installs.json"
+    installs_file = Path.home() / ".loom" / "installs.json"
     key = (__version__, sys.executable)
 
     # Never show notes for .dev versions

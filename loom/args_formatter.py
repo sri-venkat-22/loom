@@ -91,7 +91,7 @@ class YamlHelpFormatter(argparse.HelpFormatter):
     def _format_text(self, text):
         return """
 ##########################################################
-# Sample .aider.conf.yml
+# Sample .loom.conf.yml
 # This file lists *all* the valid configuration entries.
 # Place in your home dir, or at the root of your git repo.
 ##########################################################

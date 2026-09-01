@@ -22,13 +22,13 @@ class TestMain(TestCase):
     def setUp(self):
         self.original_env = os.environ.copy()
         os.environ["OPENAI_API_KEY"] = "deadbeef"
-        os.environ["AIDER_CHECK_UPDATE"] = "false"
-        os.environ["AIDER_ANALYTICS"] = "false"
+        os.environ["LOOM_CHECK_UPDATE"] = "false"
+        os.environ["LOOM_ANALYTICS"] = "false"
         self.original_cwd = os.getcwd()
         self.tempdir_obj = IgnorantTemporaryDirectory()
         self.tempdir = self.tempdir_obj.name
         os.chdir(self.tempdir)
-        # Fake home directory prevents tests from using the real ~/.aider.conf.yml file:
+        # Fake home directory prevents tests from using the real ~/.loom.conf.yml file:
         self.homedir_obj = IgnorantTemporaryDirectory()
         os.environ["HOME"] = self.homedir_obj.name
         self.input_patcher = patch("builtins.input", return_value=None)
@@ -88,13 +88,13 @@ class TestMain(TestCase):
     def test_main_with_git_config_yml(self):
         make_repo()
 
-        Path(".aider.conf.yml").write_text("auto-commits: false\n")
+        Path(".loom.conf.yml").write_text("auto-commits: false\n")
         with patch("loom.coders.Coder.create") as MockCoder:
             main(["--yes"], input=DummyInput(), output=DummyOutput())
             _, kwargs = MockCoder.call_args
             assert kwargs["auto_commits"] is False
 
-        Path(".aider.conf.yml").write_text("auto-commits: true\n")
+        Path(".loom.conf.yml").write_text("auto-commits: true\n")
         with patch("loom.coders.Coder.create") as MockCoder:
             main([], input=DummyInput(), output=DummyOutput())
             _, kwargs = MockCoder.call_args
@@ -124,7 +124,7 @@ class TestMain(TestCase):
 
         gitignore = Path.cwd() / ".gitignore"
         self.assertTrue(gitignore.exists())
-        self.assertEqual(".aider*", gitignore.read_text().splitlines()[0])
+        self.assertEqual(".loom*", gitignore.read_text().splitlines()[0])
 
     def test_check_gitignore(self):
         with GitTemporaryDirectory():
@@ -138,18 +138,18 @@ class TestMain(TestCase):
             check_gitignore(cwd, io)
             self.assertTrue(gitignore.exists())
 
-            self.assertEqual(".aider*", gitignore.read_text().splitlines()[0])
+            self.assertEqual(".loom*", gitignore.read_text().splitlines()[0])
 
             # Test without .env file present
             gitignore.write_text("one\ntwo\n")
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.aider*\n", gitignore.read_text())
+            self.assertEqual("one\ntwo\n.loom*\n", gitignore.read_text())
 
             # Test with .env file present
             env_file = cwd / ".env"
             env_file.touch()
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.aider*\n.env\n", gitignore.read_text())
+            self.assertEqual("one\ntwo\n.loom*\n.env\n", gitignore.read_text())
             del os.environ["GIT_CONFIG_GLOBAL"]
 
     def test_command_line_gitignore_files_flag(self):
@@ -419,7 +419,7 @@ class TestMain(TestCase):
         return env_file_path
 
     def test_env_file_flag_sets_automatic_variable(self):
-        env_file_path = self.create_env_file(".env.test", "AIDER_DARK_MODE=True")
+        env_file_path = self.create_env_file(".env.test", "LOOM_DARK_MODE=True")
         with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
@@ -434,7 +434,7 @@ class TestMain(TestCase):
             self.assertEqual(kwargs["code_theme"], "monokai")
 
     def test_default_env_file_sets_automatic_variable(self):
-        self.create_env_file(".env", "AIDER_DARK_MODE=True")
+        self.create_env_file(".env", "LOOM_DARK_MODE=True")
         with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
@@ -446,7 +446,7 @@ class TestMain(TestCase):
             self.assertEqual(kwargs["code_theme"], "monokai")
 
     def test_false_vals_in_env_file(self):
-        self.create_env_file(".env", "AIDER_SHOW_DIFFS=off")
+        self.create_env_file(".env", "LOOM_SHOW_DIFFS=off")
         with patch("loom.coders.Coder.create") as MockCoder:
             main(["--no-git", "--yes"], input=DummyInput(), output=DummyOutput())
             MockCoder.assert_called_once()
@@ -454,7 +454,7 @@ class TestMain(TestCase):
             self.assertEqual(kwargs["show_diffs"], False)
 
     def test_true_vals_in_env_file(self):
-        self.create_env_file(".env", "AIDER_SHOW_DIFFS=on")
+        self.create_env_file(".env", "LOOM_SHOW_DIFFS=on")
         with patch("loom.coders.Coder.create") as MockCoder:
             main(["--no-git", "--yes"], input=DummyInput(), output=DummyOutput())
             MockCoder.assert_called_once()
@@ -495,7 +495,7 @@ class TestMain(TestCase):
                 self.assertFalse(called_arg.endswith(f"subdir{os.path.sep}dirty_file.py"))
 
     def test_verbose_mode_lists_env_vars(self):
-        self.create_env_file(".env", "AIDER_DARK_MODE=on")
+        self.create_env_file(".env", "LOOM_DARK_MODE=on")
         with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
             main(
                 ["--no-git", "--verbose", "--exit", "--yes"],
@@ -506,11 +506,11 @@ class TestMain(TestCase):
             relevant_output = "\n".join(
                 line
                 for line in output.splitlines()
-                if "AIDER_DARK_MODE" in line or "dark_mode" in line
+                if "LOOM_DARK_MODE" in line or "dark_mode" in line
             )  # this bit just helps failing assertions to be easier to read
-            self.assertIn("AIDER_DARK_MODE", relevant_output)
+            self.assertIn("LOOM_DARK_MODE", relevant_output)
             self.assertIn("dark_mode", relevant_output)
-            self.assertRegex(relevant_output, r"AIDER_DARK_MODE:\s+on")
+            self.assertRegex(relevant_output, r"LOOM_DARK_MODE:\s+on")
             self.assertRegex(relevant_output, r"dark_mode:\s+True")
 
     def test_yaml_config_file_loading(self):
@@ -527,11 +527,11 @@ class TestMain(TestCase):
             cwd.mkdir()
             os.chdir(cwd)
 
-            # Create .aider.conf.yml files in different locations
-            home_config = fake_home / ".aider.conf.yml"
-            git_config = git_dir / ".aider.conf.yml"
-            cwd_config = cwd / ".aider.conf.yml"
-            named_config = git_dir / "named.aider.conf.yml"
+            # Create .loom.conf.yml files in different locations
+            home_config = fake_home / ".loom.conf.yml"
+            git_config = git_dir / ".loom.conf.yml"
+            cwd_config = cwd / ".loom.conf.yml"
+            named_config = git_dir / "named.loom.conf.yml"
 
             cwd_config.write_text("model: gpt-4-32k\nmap-tokens: 4096\n")
             git_config.write_text("model: gpt-4\nmap-tokens: 2048\n")
@@ -640,7 +640,7 @@ class TestMain(TestCase):
         litellm._lazy_module = None
 
         with GitTemporaryDirectory():
-            metadata_file = Path(".aider.model.metadata.json")
+            metadata_file = Path(".loom.model.metadata.json")
 
             # must be a fully qualified model name: provider/...
             metadata_content = {"deepseek/deepseek-chat": {"max_input_tokens": 1234}}
@@ -904,7 +904,7 @@ class TestMain(TestCase):
 
     def test_pytest_env_vars(self):
         # Verify that environment variables from pytest.ini are properly set
-        self.assertEqual(os.environ.get("AIDER_ANALYTICS"), "false")
+        self.assertEqual(os.environ.get("LOOM_ANALYTICS"), "false")
 
     def test_set_env_single(self):
         # Test setting a single environment variable
@@ -1041,18 +1041,18 @@ class TestMain(TestCase):
         from loom.args import resolve_aiderignore_path
 
         # Test with absolute path
-        abs_path = os.path.abspath("/tmp/test/.aiderignore")
+        abs_path = os.path.abspath("/tmp/test/.loomignore")
         self.assertEqual(resolve_aiderignore_path(abs_path), abs_path)
 
         # Test with relative path and git root
         git_root = "/path/to/git/root"
-        rel_path = ".aiderignore"
+        rel_path = ".loomignore"
         self.assertEqual(
             resolve_aiderignore_path(rel_path, git_root), str(Path(git_root) / rel_path)
         )
 
         # Test with relative path and no git root
-        rel_path = ".aiderignore"
+        rel_path = ".loomignore"
         self.assertEqual(resolve_aiderignore_path(rel_path), rel_path)
 
     def test_invalid_edit_format(self):
@@ -1190,7 +1190,7 @@ class TestMain(TestCase):
         # Test that models from model-metadata.json appear in list-models output
         with GitTemporaryDirectory():
             # Create a temporary model-metadata.json with test models
-            metadata_file = Path(".aider.model.metadata.json")
+            metadata_file = Path(".loom.model.metadata.json")
             test_models = {
                 "unique-model-name": {
                     "max_input_tokens": 8192,
@@ -1229,7 +1229,7 @@ class TestMain(TestCase):
         # appear in list-models
         with GitTemporaryDirectory():
             # Create a temporary model-metadata.json with test models
-            metadata_file = Path(".aider.model.metadata.json")
+            metadata_file = Path(".loom.model.metadata.json")
             test_models = {
                 "metadata-only-model": {
                     "max_input_tokens": 8192,
@@ -1418,7 +1418,7 @@ class TestMain(TestCase):
             # Create fake home and .aider directory
             fake_home = git_dir / "fake_home"
             fake_home.mkdir()
-            aider_dir = fake_home / ".aider"
+            aider_dir = fake_home / ".loom"
             aider_dir.mkdir()
 
             # Create oauth keys file

@@ -31,7 +31,7 @@ class OpenRouterModelManager:
     CACHE_TTL = 60 * 60 * 24  # 24 h
 
     def __init__(self) -> None:
-        self.cache_dir = Path.home() / ".aider" / "caches"
+        self.cache_dir = Path.home() / ".loom" / "caches"
         self.cache_file = self.cache_dir / "openrouter_models.json"
         self.content: Dict | None = None
         self.verify_ssl: bool = True
