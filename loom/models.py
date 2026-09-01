@@ -1027,7 +1027,7 @@ class Model(ModelSettings):
         if "GITHUB_COPILOT_TOKEN" in os.environ:
             if "extra_headers" not in kwargs:
                 kwargs["extra_headers"] = {
-                    "Editor-Version": f"aider/{__version__}",
+                    "Editor-Version": f"loom/{__version__}",
                     "Copilot-Integration-Id": "vscode-chat",
                 }
 

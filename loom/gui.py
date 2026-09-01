@@ -525,10 +525,10 @@ def gui_main():
     st.set_page_config(
         layout="wide",
         page_title="Loom",
-        page_icon=urls.favicon,
+        page_icon=urls.favicon or None,
         menu_items={
-            "Get Help": urls.website,
-            "Report a bug": "https://github.com/Aider-AI/aider/issues",
+            "Get Help": urls.website or None,
+            "Report a bug": urls.github_issues or None,
             "About": "# Loom\nAI pair programming in your browser.",
         },
     )
