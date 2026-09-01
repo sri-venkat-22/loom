@@ -160,7 +160,7 @@ class GUI:
 
             st.warning(
                 "This browser version of loom is experimental. Please share feedback in [GitHub"
-                " issues](https://github.com/Aider-AI/aider/issues)."
+                " issues](https://github.com/sri-venkat-22/loom/issues)."
             )
 
     def do_settings_tab(self):
@@ -177,7 +177,7 @@ class GUI:
 
             with st.popover("Update your `.gitignore` file"):
                 st.write("It's best to keep loom's internal files out of your git repo.")
-                self.button("Add `.aider*` to `.gitignore`", key=random.random(), help="?")
+                self.button("Add `.loom*` to `.gitignore`", key=random.random(), help="?")
 
     def do_add_to_chat(self):
         # with st.expander("Add to the chat", expanded=True):

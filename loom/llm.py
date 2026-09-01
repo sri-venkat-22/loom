@@ -6,7 +6,7 @@ from loom.dump import dump  # noqa: F401
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-AIDER_SITE_URL = "https://aider.chat"
+AIDER_SITE_URL = "https://github.com/sri-venkat-22/loom"
 AIDER_APP_NAME = "Loom"
 
 os.environ["OR_SITE_URL"] = AIDER_SITE_URL

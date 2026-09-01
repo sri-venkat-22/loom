@@ -21,7 +21,7 @@ def install_from_main_branch(io):
         io,
         None,
         "Install the development version of loom from the main branch?",
-        ["git+https://github.com/Aider-AI/aider.git"],
+        ["git+https://github.com/sri-venkat-22/loom.git"],
         self_update=True,
     )
 

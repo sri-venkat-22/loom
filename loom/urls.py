@@ -1,5 +1,5 @@
 # ponytail: doc deep-links blanked pending a loom docs site; fill in when one exists.
-website = ""
+website = "https://github.com/sri-venkat-22/loom"
 add_all_files = ""
 edit_errors = ""
 git = ""
@@ -9,7 +9,7 @@ model_warnings = ""
 token_limits = ""
 llms = ""
 large_repos = ""
-github_issues = ""  # #1: set to https://github.com/<owner>/<repo>/issues/new
+github_issues = "https://github.com/sri-venkat-22/loom/issues/new"
 git_index_version = ""
 install_properly = ""
 analytics = ""
