@@ -8,7 +8,7 @@
 
 # OpenRouter — NVIDIA Nemotron 3 Ultra (free tier).
 # NOTE: verify the exact slug at openrouter.ai/models (free models end in ":free").
-- name: openrouter/nvidia/nemotron-3-ultra:free
+- name: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
   edit_format: whole
 
 # NVIDIA NIM — deepseek-v4-flash, with the "thinking" chat-template kwargs from the snippet.
@@ -24,5 +24,5 @@
         reasoning_effort: high
 
 # Gemini — pick any Gemini model; 2.5 Pro shown.
-- name: gemini/gemini-2.5-pro
+- name: gemini/gemini-3.1-pro
   edit_format: diff
