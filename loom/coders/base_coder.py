@@ -206,7 +206,7 @@ class Coder:
 
     def get_announcements(self):
         lines = []
-        lines.append(f"Aider v{__version__}")
+        lines.append(f"Loom v{__version__}")
 
         # Model
         main_model = self.main_model
@@ -2406,7 +2406,7 @@ class Coder:
         if not self.commit_before_message:
             return
         if self.commit_before_message[-1] != self.repo.get_head_commit_sha():
-            self.io.tool_output("You can use /undo to undo and discard each aider commit.")
+            self.io.tool_output("You can use /undo to undo and discard each loom commit.")
 
     def dirty_commit(self):
         if not self.need_commit_before_edits:

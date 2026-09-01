@@ -1114,7 +1114,7 @@ class Commands:
             else:
                 self.io.tool_output(f"{cmd} No description available.")
         self.io.tool_output()
-        self.io.tool_output("Use `/help <question>` to ask questions about how to use aider.")
+        self.io.tool_output("Use `/help <question>` to ask questions about how to use loom.")
 
     def cmd_help(self, args):
         "Ask questions about loom"

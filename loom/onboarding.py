@@ -220,7 +220,7 @@ def start_openrouter_oauth_flow(io, analytics):
         io.tool_error("Please ensure a port in this range is free, or configure manually.")
         return None
 
-    callback_url = f"http://localhost:{port}/callback/aider"
+    callback_url = f"http://localhost:{port}/callback/loom"
     auth_code = None
     server_error = None
     server_started = threading.Event()
@@ -230,7 +230,7 @@ def start_openrouter_oauth_flow(io, analytics):
         def do_GET(self):
             nonlocal auth_code, server_error
             parsed_path = urlparse(self.path)
-            if parsed_path.path == "/callback/aider":
+            if parsed_path.path == "/callback/loom":
                 query_params = parse_qs(parsed_path.query)
                 if "code" in query_params:
                     auth_code = query_params["code"][0]
@@ -239,14 +239,14 @@ def start_openrouter_oauth_flow(io, analytics):
                     self.end_headers()
                     self.wfile.write(
                         b"<html><body><h1>Success!</h1>"
-                        b"<p>Aider has received the authentication code. "
+                        b"<p>Loom has received the authentication code. "
                         b"You can close this browser tab.</p></body></html>"
                     )
                     # Signal the main thread to shut down the server
                     # Signal the main thread to shut down the server
                     shutdown_server.set()
                 else:
-                    # Redirect to aider website if 'code' is missing (e.g., user visited manually)
+                    # Redirect to loom website if 'code' is missing (e.g., user visited manually)
                     self.send_response(302)  # Found (temporary redirect)
                     self.send_header("Location", urls.website)
                     self.end_headers()
@@ -308,7 +308,7 @@ def start_openrouter_oauth_flow(io, analytics):
     }
     auth_url = f"{auth_url_base}?{'&'.join(f'{k}={v}' for k, v in auth_params.items())}"
 
-    io.tool_output("\nPlease open this URL in your browser to connect Aider with OpenRouter:")
+    io.tool_output("\nPlease open this URL in your browser to connect Loom with OpenRouter:")
     io.tool_output()
     print(auth_url)
 
@@ -360,13 +360,13 @@ def start_openrouter_oauth_flow(io, analytics):
 
         # Save the key to the oauth-keys.env file
         try:
-            config_dir = os.path.expanduser("~/.aider")
+            config_dir = os.path.expanduser("~/.loom")
             os.makedirs(config_dir, exist_ok=True)
             key_file = os.path.join(config_dir, "oauth-keys.env")
             with open(key_file, "a", encoding="utf-8") as f:
                 f.write(f'OPENROUTER_API_KEY="{api_key}"\n')
 
-            io.tool_warning("Aider will load the OpenRouter key automatically in future sessions.")
+            io.tool_warning("Loom will load the OpenRouter key automatically in future sessions.")
             io.tool_output()
 
             analytics.event("oauth_flow_success", provider="openrouter")
