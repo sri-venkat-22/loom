@@ -300,7 +300,7 @@ class TestRepo(unittest.TestCase):
 
             # check the commit message and author/committer
             commit = raw_repo.head.commit
-            self.assertIn("Co-authored-by: loom (gpt-test) <aider@aider.chat>", commit.message)
+            self.assertIn("Co-authored-by: loom (gpt-test) <sri-venkat-22@users.noreply.github.com>", commit.message)
             self.assertEqual(commit.message.splitlines()[0], "Loom edit")
             # With default (None), co-authored-by takes precedence
             self.assertEqual(
@@ -355,7 +355,7 @@ class TestRepo(unittest.TestCase):
             # check the commit message and author/committer
             commit = raw_repo.head.commit
             self.assertIn(
-                "Co-authored-by: loom (gpt-test-combo) <aider@aider.chat>", commit.message
+                "Co-authored-by: loom (gpt-test-combo) <sri-venkat-22@users.noreply.github.com>", commit.message
             )
             self.assertEqual(commit.message.splitlines()[0], "Loom combo edit")
             # When co-authored-by is true BUT author/committer are explicit True,

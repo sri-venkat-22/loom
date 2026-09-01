@@ -165,7 +165,7 @@ class GitRepo:
         - --attribute-author: Modify Author name to "User Name (loom)".
         - --attribute-committer: Modify Committer name to "User Name (loom)".
         - --attribute-co-authored-by: Add
-          "Co-authored-by: loom (<model>) <aider@aider.chat>" trailer to commit message.
+          "Co-authored-by: loom (<model>) <sri-venkat-22@users.noreply.github.com>" trailer to commit message.
 
         Behavior Summary:
 
@@ -249,7 +249,7 @@ class GitRepo:
             model_name = "unknown-model"
             if coder and hasattr(coder, "main_model") and coder.main_model.name:
                 model_name = coder.main_model.name
-            commit_message_trailer = f"\n\nCo-authored-by: loom ({model_name}) <aider@aider.chat>"
+            commit_message_trailer = f"\n\nCo-authored-by: loom ({model_name}) <sri-venkat-22@users.noreply.github.com>"
 
         # Determine if author/committer names should be modified
         # Author modification applies only to loom edits.

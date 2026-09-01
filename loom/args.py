@@ -411,7 +411,7 @@ def get_parser(default_config_files, git_root):
         "--gitignore",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Enable/disable adding .aider* to .gitignore (default: True)",
+        help="Enable/disable adding .loom* to .gitignore (default: True)",
     )
     group.add_argument(
         "--add-gitignore-files",
