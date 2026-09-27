@@ -34,7 +34,7 @@ ENV HOME=/app
 #########################
 FROM base AS loom-full
 
-ENV LOOM_DOCKER_IMAGE=loom-full
+ENV LOOM_DOCKER_IMAGE=ghcr.io/sri-venkat-22/loom-full
 
 COPY . /tmp/loom
 
@@ -58,7 +58,7 @@ ENTRYPOINT ["/venv/bin/loom"]
 #########################
 FROM base AS loom
 
-ENV LOOM_DOCKER_IMAGE=loom
+ENV LOOM_DOCKER_IMAGE=ghcr.io/sri-venkat-22/loom
 
 COPY . /tmp/loom
 
