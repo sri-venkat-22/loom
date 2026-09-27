@@ -1,20 +1,20 @@
-# This needs to sync with aider/help_pats.py
+# This needs to sync with loom/help_pats.py
 
 global-exclude .DS_Store
 
-recursive-exclude aider/website/examples *
-recursive-exclude aider/website/_posts *
+recursive-exclude loom/website/examples *
+recursive-exclude loom/website/_posts *
 
-exclude aider/website/HISTORY.md
-exclude aider/website/docs/benchmarks*.md
-exclude aider/website/docs/ctags.md
-exclude aider/website/docs/unified-diffs.md
+exclude loom/website/HISTORY.md
+exclude loom/website/docs/benchmarks*.md
+exclude loom/website/docs/ctags.md
+exclude loom/website/docs/unified-diffs.md
 
-exclude aider/website/install.ps1
-exclude aider/website/install.sh
+exclude loom/website/install.ps1
+exclude loom/website/install.sh
 
-recursive-exclude aider/website/docs/leaderboards *
-recursive-exclude aider/website/assets *
-recursive-exclude aider/website *.js
-recursive-exclude aider/website *.html
-recursive-exclude aider/website *.yml
+recursive-exclude loom/website/docs/leaderboards *
+recursive-exclude loom/website/assets *
+recursive-exclude loom/website *.js
+recursive-exclude loom/website *.html
+recursive-exclude loom/website *.yml

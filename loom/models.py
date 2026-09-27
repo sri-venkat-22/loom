@@ -345,7 +345,7 @@ class Model(ModelSettings):
 
         # Find the extra settings
         self.extra_model_settings = next(
-            (ms for ms in MODEL_SETTINGS if ms.name == "aider/extra_params"), None
+            (ms for ms in MODEL_SETTINGS if ms.name == "loom/extra_params"), None
         )
 
         self.info = self.get_model_info(model)
@@ -409,7 +409,7 @@ class Model(ModelSettings):
         if (
             self.extra_model_settings
             and self.extra_model_settings.extra_params
-            and self.extra_model_settings.name == "aider/extra_params"
+            and self.extra_model_settings.name == "loom/extra_params"
         ):
             # Initialize extra_params if it doesn't exist
             if not self.extra_params:

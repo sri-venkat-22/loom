@@ -45,4 +45,4 @@ class ArchitectCoder(AskCoder):
 
         self.move_back_cur_messages("I made those changes to the files.")
         self.total_cost = editor_coder.total_cost
-        self.aider_commit_hashes = editor_coder.aider_commit_hashes
+        self.loom_commit_hashes = editor_coder.loom_commit_hashes

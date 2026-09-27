@@ -797,7 +797,7 @@ two
             diff = saved_diffs[0]
             self.assertIn("file.txt", diff)
 
-    def test_skip_aiderignored_files(self):
+    def test_skip_loomignored_files(self):
         with GitTemporaryDirectory():
             repo = git.Repo()
 
@@ -819,7 +819,7 @@ two
                 io,
                 fnames,
                 None,
-                aider_ignore_file=str(aignore),
+                loom_ignore_file=str(aignore),
             )
 
             coder = Coder.create(

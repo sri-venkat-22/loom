@@ -570,7 +570,7 @@ class Commands:
         last_commit_hash = self.coder.repo.get_head_commit_sha(short=True)
         last_commit_message = self.coder.repo.get_head_commit_message("(unknown)").strip()
         last_commit_message = (last_commit_message.splitlines() or [""])[0]
-        if last_commit_hash not in self.coder.aider_commit_hashes:
+        if last_commit_hash not in self.coder.loom_commit_hashes:
             self.io.tool_error("The last commit was not made by loom in this chat session.")
             self.io.tool_output(
                 "You could try `/git reset --hard HEAD^` but be aware that this is a destructive"
@@ -809,7 +809,7 @@ class Commands:
                 fname = Path(self.coder.root) / word
 
             if self.coder.repo and self.coder.repo.ignored_file(fname):
-                self.io.tool_warning(f"Skipping {fname} due to aiderignore or --subtree-only.")
+                self.io.tool_warning(f"Skipping {fname} due to loomignore or --subtree-only.")
                 continue
 
             if fname.exists():

@@ -1,5 +1,5 @@
 
-# Contributing to the Project
+# Contributing to Loom
 
 We welcome contributions in the form of bug reports, feature requests,
 and pull requests (PRs). This document describes how you can
@@ -13,14 +13,8 @@ enhancements.
 
 ## LLM Benchmark Results
 
-Contributions of
-[LLM benchmark results](https://aider.chat/docs/leaderboards/)
-are welcome!
-See the
-[benchmark README](https://github.com/Aider-AI/aider/blob/main/benchmark/README.md)
-for information on running aider's code editing benchmarks.
-Submit results by opening a PR with edits to the
-[benchmark results data files](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/).
+See the [benchmark README](benchmark/README.md)
+for information on running loom's code editing benchmarks.
 
 
 ## Pull Requests
@@ -33,24 +27,24 @@ ensure that your contributions can be integrated smoothly.
 
 ## Licensing
 
-Before contributing a PR, please review our
-[Individual Contributor License Agreement](https://aider.chat/docs/legal/contributor-agreement.html).
-All contributors will be asked to complete the agreement as part of the PR process.
+Loom is a fork of [Aider](https://github.com/Aider-AI/aider) and is distributed under the
+Apache-2.0 license (see [LICENSE.txt](LICENSE.txt)). By submitting a PR you agree that your
+contribution is licensed under the same terms.
 
 ## Setting up a Development Environment
 
 ### Clone the Repository
 
 ```
-git clone https://github.com/Aider-AI/aider.git
-cd aider
+git clone https://github.com/sri-venkat-22/loom.git
+cd loom
 ```
 
 ### Create a Virtual Environment
 
 It is recommended to create a virtual environment outside of the repository to keep your development environment isolated.
 
-#### Using `venv` (Python 3.9 and later)
+#### Using `venv` (Python 3.10 and later)
 
 ```
 python -m venv /path/to/venv
@@ -104,15 +98,15 @@ pre-commit install
 
 This will automatically run the pre-commit hooks when you commit changes to the repository.
 
-Now you should have a fully functional development environment for the Aider project. You can start making changes, running tests, and contributing to the project.
+Now you should have a fully functional development environment for the Loom project. You can start making changes, running tests, and contributing to the project.
 
 ### Handy Opinionated Setup Commands for MacOS / Linux
 
 Here's an example of following the setup instructions above, for your copy/paste pleasure if your system works the same. Start in the project directory.
 
 ```
-python3 -m venv ../aider_venv \
- && source ../aider_venv/bin/activate \
+python3 -m venv ../loom_venv \
+ && source ../loom_venv/bin/activate \
  && pip3 install -e . \
  && pip3 install -r requirements.txt \
  && pip3 install -r requirements/requirements-dev.txt
@@ -127,35 +121,14 @@ Just run `pytest`.
 The project includes a `Dockerfile` for building a Docker image. You can build the image by running:
 
 ```
-docker build -t aider -f docker/Dockerfile .
+docker build -t loom --target loom -f docker/Dockerfile .
 ```
-
-### Building the Documentation
-
-The project's documentation is built using Jekyll and hosted on GitHub Pages. To build the documentation locally, follow these steps:
-
-1. Install Ruby and Bundler (if not already installed).
-2. Navigate to the `aider/website` directory.
-3. Install the required gems:
-   ```
-   bundle install
-   ```
-4. Build the documentation:
-   ```
-   bundle exec jekyll build
-   ```
-5. Preview the website while editing (optional):
-   ```
-   bundle exec jekyll serve
-   ```
-
-The built documentation will be available in the `aider/website/_site` directory.
 
 ## Coding Standards
 
 ### Python Compatibility
 
-Aider supports Python versions 3.9, 3.10, 3.11, and 3.12. When contributing code, ensure compatibility with these supported Python versions.
+Loom supports Python versions 3.10 through 3.14. When contributing code, ensure compatibility with these supported Python versions.
 
 ### Code Style
 
@@ -167,7 +140,7 @@ The project does not use type hints.
 
 ### Testing
 
-The project uses [pytest](https://docs.pytest.org/en/latest/) for running unit tests. The test files are located in the `aider/tests` directory and follow the naming convention `test_*.py`.
+The project uses [pytest](https://docs.pytest.org/en/latest/) for running unit tests. The test files are located in the `tests/` directory and follow the naming convention `test_*.py`.
 
 #### Running Tests
 
@@ -188,10 +161,10 @@ pytest tests/basic/test_coder.py::TestCoder::test_specific_case
 
 The project uses GitHub Actions for continuous integration. The testing workflows are defined in the following files:
 
-- `.github/workflows/ubuntu-tests.yml`: Runs tests on Ubuntu for Python versions 3.9 through 3.12.
+- `.github/workflows/ubuntu-tests.yml`: Runs tests on Ubuntu for Python versions 3.10 through 3.14.
 - `.github/workflows/windows-tests.yml`: Runs that on Windows
 
-These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to the `aider/website/**` and `README.md` files.
+These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to the `loom/website/**` and `README.md` files.
 
 #### Docker Build and Test
 
@@ -199,16 +172,16 @@ The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker
 
 #### Writing Tests
 
-When contributing new features or making changes to existing code, ensure that you write appropriate tests to maintain code coverage. Follow the existing patterns and naming conventions used in the `aider/tests` directory.
+When contributing new features or making changes to existing code, ensure that you write appropriate tests to maintain code coverage. Follow the existing patterns and naming conventions used in the `tests/` directory.
 
-If you need to mock or create test data, consider adding it to the test files or creating separate fixtures or utility functions within the `aider/tests` directory.
+If you need to mock or create test data, consider adding it to the test files or creating separate fixtures or utility functions within the `tests/` directory.
 
 #### Test Requirements
 
 The project uses `pytest` as the testing framework, which is installed as a development dependency. To install the development dependencies, run the following command:
 
 ```
-pip install -r requirements-dev.txt
+pip install -r requirements/requirements-dev.txt
 ```
 
 ### Managing Dependencies
