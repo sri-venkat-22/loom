@@ -168,7 +168,7 @@ These workflows are triggered on push and pull request events to the `main` bran
 
 #### Docker Build and Test
 
-The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker image for the project on every push or pull request event to the `main` branch. It checks out the code, sets up Docker, logs in to DockerHub, and then builds the Docker image without pushing it to the registry.
+The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker image for the project on every push or pull request event to the `main` branch. It checks out the code, sets up Docker, and builds the Docker images without pushing them to a registry.
 
 #### Documentation
 
@@ -208,6 +208,16 @@ You can also pass one argument to `pip-compile.sh`, which will flow through to `
 ```
 ./scripts/pip-compile.sh --upgrade
 ```
+
+### Releasing
+
+loom uses semantic `MAJOR.MINOR.PATCH` versions, continuing from aider 0.86 (loom's first release is 0.87.0), and is released from GitHub, never PyPI. The version comes from git tags via setuptools_scm; `safe_version` in `loom/__init__.py` is the floor used when no tag is reachable. To release from an up-to-date, clean `main`:
+
+```
+python scripts/versionbump.py 0.87.1
+```
+
+This commits the version, tags `v0.87.1`, then moves `main` on to `0.87.2.dev` and pushes both. The `v0.87.1` tag triggers `.github/workflows/release.yml`, which builds the sdist and wheel and publishes them as a GitHub Release. The update check in `loom/versioncheck.py` compares against the latest GitHub Release. Docker images are published to ghcr.io by running `.github/workflows/docker-release.yml` by hand from the Actions tab.
 
 ### Pre-commit Hooks
 
