@@ -1,4 +1,8 @@
-name: PyPI Release
+name: GitHub Release
+
+# loom is distributed from GitHub, not PyPI (the "loom" name on PyPI is an unrelated
+# project). Pushing a vX.Y.Z tag builds the sdist and wheel and publishes them as a
+# GitHub Release, which is what `loom --check-update` compares against.
 
 on:
   workflow_dispatch:
@@ -6,8 +10,11 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write
+
 jobs:
-  build_and_publish:
+  build_and_release:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
@@ -20,15 +27,22 @@ jobs:
       with:
         python-version: 3.x
 
-    - name: Install dependencies
+    - name: Build
       run: |
         python -m pip install --upgrade pip
-        pip install build setuptools wheel twine importlib-metadata==7.2.1
-
-    - name: Build and publish
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
+        pip install build
         python -m build
-        twine upload dist/*
+
+    - name: Check version matches tag
+      run: |
+        ls dist
+        test -f "dist/loom-${GITHUB_REF_NAME#v}-py3-none-any.whl"
+
+    - name: Create GitHub Release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create "$GITHUB_REF_NAME" dist/* \
+          --title "loom $GITHUB_REF_NAME" \
+          --generate-notes \
+          --verify-tag

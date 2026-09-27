@@ -1,10 +1,13 @@
 name: Docker Release
 
+# Manual for now: run it from the Actions tab (on a vX.Y.Z tag) to publish images to
+# ghcr.io/sri-venkat-22/loom and ghcr.io/sri-venkat-22/loom-full.
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   docker_build_and_push:
@@ -21,11 +24,12 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    - name: Login to DockerHub
+    - name: Login to GitHub Container Registry
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
 
     - name: Build and push Docker images
       uses: docker/build-push-action@v5
@@ -35,8 +39,8 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/loom:${{ github.ref_name }}
-          ${{ secrets.DOCKERHUB_USERNAME }}/loom:latest
+          ghcr.io/sri-venkat-22/loom:${{ github.ref_name }}
+          ghcr.io/sri-venkat-22/loom:latest
         target: loom
 
     - name: Build and push Docker full image
@@ -47,6 +51,6 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: |
-          ${{ secrets.DOCKERHUB_USERNAME }}/loom-full:${{ github.ref_name }}
-          ${{ secrets.DOCKERHUB_USERNAME }}/loom-full:latest
+          ghcr.io/sri-venkat-22/loom-full:${{ github.ref_name }}
+          ghcr.io/sri-venkat-22/loom-full:latest
         target: loom-full

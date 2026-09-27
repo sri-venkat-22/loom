@@ -7,7 +7,7 @@ from requests.exceptions import ConnectionError, ReadTimeout
 import loom
 from loom.coders import Coder
 from loom.commands import Commands
-from loom.help import Help, fname_to_url
+from loom.help import Help, fname_to_url, get_package_files
 from loom.io import InputOutput
 from loom.models import Model
 
@@ -95,52 +95,39 @@ class TestHelp(unittest.TestCase):
         # Assert that there are more than 5 <doc> entries
         self.assertGreater(result.count("<doc"), 5)
 
-    def test_fname_to_url_unix(self):
-        # Test relative Unix-style paths
-        self.assertEqual(fname_to_url("website/docs/index.md"), "https://aider.chat/docs")
-        self.assertEqual(
-            fname_to_url("website/docs/usage.md"), "https://aider.chat/docs/usage.html"
-        )
-        self.assertEqual(fname_to_url("website/_includes/header.md"), "")
+    def test_get_package_files(self):
+        names = {path.name for path in get_package_files()}
+        self.assertIn("index.md", names)
+        self.assertIn("usage.md", names)
+        self.assertIn("commands.md", names)
 
-        # Test absolute Unix-style paths
+    def test_fname_to_url_unix(self):
+        base = "https://github.com/sri-venkat-22/loom/blob/main/loom/docs"
+        self.assertEqual(fname_to_url("loom/docs/index.md"), f"{base}/index.md")
         self.assertEqual(
-            fname_to_url("/home/user/project/website/docs/index.md"), "https://aider.chat/docs"
+            fname_to_url("/home/user/.venv/lib/python3.12/site-packages/loom/docs/usage.md"),
+            f"{base}/usage.md",
         )
+        # Only the last loom/docs pair counts
         self.assertEqual(
-            fname_to_url("/home/user/project/website/docs/usage.md"),
-            "https://aider.chat/docs/usage.html",
+            fname_to_url("/home/user/loom/docs/project/loom/docs/git.md"), f"{base}/git.md"
         )
-        self.assertEqual(fname_to_url("/home/user/project/website/_includes/header.md"), "")
 
     def test_fname_to_url_windows(self):
-        # Test relative Windows-style paths
-        self.assertEqual(fname_to_url(r"website\docs\index.md"), "https://aider.chat/docs")
+        base = "https://github.com/sri-venkat-22/loom/blob/main/loom/docs"
+        self.assertEqual(fname_to_url(r"loom\docs\index.md"), f"{base}/index.md")
         self.assertEqual(
-            fname_to_url(r"website\docs\usage.md"), "https://aider.chat/docs/usage.html"
+            fname_to_url(r"C:\Users\user\venv\Lib\site-packages\loom\docs\usage.md"),
+            f"{base}/usage.md",
         )
-        self.assertEqual(fname_to_url(r"website\_includes\header.md"), "")
-
-        # Test absolute Windows-style paths
-        self.assertEqual(
-            fname_to_url(r"C:\Users\user\project\website\docs\index.md"), "https://aider.chat/docs"
-        )
-        self.assertEqual(
-            fname_to_url(r"C:\Users\user\project\website\docs\usage.md"),
-            "https://aider.chat/docs/usage.html",
-        )
-        self.assertEqual(fname_to_url(r"C:\Users\user\project\website\_includes\header.md"), "")
 
     def test_fname_to_url_edge_cases(self):
-        # Test paths that don't contain 'website'
+        # Paths that aren't loom docs
         self.assertEqual(fname_to_url("/home/user/project/docs/index.md"), "")
         self.assertEqual(fname_to_url(r"C:\Users\user\project\docs\index.md"), "")
-
-        # Test empty path
+        self.assertEqual(fname_to_url("/home/user/loom/docs"), "")
+        self.assertEqual(fname_to_url("/home/user/loom/docs/notes.txt"), "")
         self.assertEqual(fname_to_url(""), "")
-
-        # Test path with 'website' in the wrong place
-        self.assertEqual(fname_to_url("/home/user/website_project/docs/index.md"), "")
 
 
 if __name__ == "__main__":

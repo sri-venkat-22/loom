@@ -134,8 +134,9 @@ It's good practice to commit the repo before starting a benchmark run.
 This way the `model`, `edit_format` and `commit_hash`
 should be enough to reliably reproduce any benchmark run.
 
-You can see examples of the benchmark report yaml in the
-[upstream Aider leaderboard data files](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/).
+You can see examples of the benchmark report yaml in `benchmark/data/`, which holds
+a copy of the [upstream Aider leaderboard data](https://github.com/Aider-AI/aider/blob/main/aider/website/_data/)
+used by `over_time.py` and `problem_stats.py`.
 
 
 ## Limitations, notes

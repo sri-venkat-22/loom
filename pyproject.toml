@@ -49,5 +49,5 @@ build-backend = "setuptools.build_meta"
 write_to = "loom/_version.py"
 
 [tool.codespell]
-skip = "*.svg,Gemfile.lock,tests/fixtures/*,loom/website/assets/*"
+skip = "*.svg,tests/fixtures/*"
 write-changes = true

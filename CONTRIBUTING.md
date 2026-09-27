@@ -164,11 +164,21 @@ The project uses GitHub Actions for continuous integration. The testing workflow
 - `.github/workflows/ubuntu-tests.yml`: Runs tests on Ubuntu for Python versions 3.10 through 3.14.
 - `.github/workflows/windows-tests.yml`: Runs that on Windows
 
-These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to the `loom/website/**` and `README.md` files.
+These workflows are triggered on push and pull request events to the `main` branch, ignoring changes to `README.md` and `HISTORY.md`.
 
 #### Docker Build and Test
 
-The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker image for the project on every push or pull request event to the `main` branch. It checks out the code, sets up Docker, logs in to DockerHub, and then builds the Docker image without pushing it to the registry.
+The `.github/workflows/docker-build-test.yml` workflow is used to build a Docker image for the project on every push or pull request event to the `main` branch. It checks out the code, sets up Docker, and builds the Docker images without pushing them to a registry.
+
+#### Documentation
+
+User docs live in `loom/docs/` as plain markdown. They are what `/help` answers questions from, and they are linked from loom's error messages (`loom/urls.py`), so keep headings stable or update those links too.
+
+`options.md`, `commands.md` and `model-aliases.md` are generated from the code. After changing command line options, in-chat commands or model aliases, regenerate them:
+
+```
+python scripts/gen_docs.py
+```
 
 #### Writing Tests
 
@@ -198,6 +208,16 @@ You can also pass one argument to `pip-compile.sh`, which will flow through to `
 ```
 ./scripts/pip-compile.sh --upgrade
 ```
+
+### Releasing
+
+loom uses semantic `MAJOR.MINOR.PATCH` versions, continuing from aider 0.86 (loom's first release is 0.87.0), and is released from GitHub, never PyPI. The version comes from git tags via setuptools_scm; `safe_version` in `loom/__init__.py` is the floor used when no tag is reachable. To release from an up-to-date, clean `main`:
+
+```
+python scripts/versionbump.py 0.87.1
+```
+
+This commits the version, tags `v0.87.1`, then moves `main` on to `0.87.2.dev` and pushes both. The `v0.87.1` tag triggers `.github/workflows/release.yml`, which builds the sdist and wheel and publishes them as a GitHub Release. The update check in `loom/versioncheck.py` compares against the latest GitHub Release. Docker images are published to ghcr.io by running `.github/workflows/docker-release.yml` by hand from the Actions tab.
 
 ### Pre-commit Hooks
 

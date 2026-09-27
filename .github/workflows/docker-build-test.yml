@@ -3,7 +3,7 @@ name: Docker Build Test
 on:
   push:
     paths-ignore:
-      - 'loom/website/**'
+      - 'loom/docs/**'
       - 'README.md'
       - 'HISTORY.md'
       - '.github/workflows/*'
@@ -12,7 +12,7 @@ on:
       - main
   pull_request:
     paths-ignore:
-      - 'loom/website/**'
+      - 'loom/docs/**'
       - 'README.md'
       - 'HISTORY.md'
       - '.github/workflows/*'
