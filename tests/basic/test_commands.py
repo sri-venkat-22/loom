@@ -1197,7 +1197,7 @@ class TestCommands(TestCase):
 
             # Store the commit hash
             last_commit_hash = repo.head.commit.hexsha[:7]
-            coder.aider_commit_hashes.add(last_commit_hash)
+            coder.loom_commit_hashes.add(last_commit_hash)
 
             file_path.write_text("dirty content")
 
@@ -1244,7 +1244,7 @@ class TestCommands(TestCase):
 
             # Store the commit hash
             last_commit_hash = repo.head.commit.hexsha[:7]
-            coder.aider_commit_hashes.add(last_commit_hash)
+            coder.loom_commit_hashes.add(last_commit_hash)
 
             # Attempt to undo the last commit, should refuse
             commands.cmd_undo("")
@@ -1273,7 +1273,7 @@ class TestCommands(TestCase):
 
             # Store the commit hash
             last_commit_hash = repo.head.commit.hexsha[:7]
-            coder.aider_commit_hashes.add(last_commit_hash)
+            coder.loom_commit_hashes.add(last_commit_hash)
 
             # Attempt to undo the last commit
             commands.cmd_undo("")
@@ -1338,7 +1338,7 @@ class TestCommands(TestCase):
             commands.cmd_think_tokens("")
             mock_tool_output.assert_any_call(mock.ANY)  # Just verify it calls tool_output
 
-    def test_cmd_add_aiderignored_file(self):
+    def test_cmd_add_loomignored_file(self):
         with GitTemporaryDirectory():
             repo = git.Repo()
 
@@ -1360,7 +1360,7 @@ class TestCommands(TestCase):
                 io,
                 fnames,
                 None,
-                aider_ignore_file=str(aignore),
+                loom_ignore_file=str(aignore),
             )
 
             coder = Coder.create(

@@ -32,8 +32,20 @@ def test_analytics_initialization(temp_data_dir):
     assert analytics.user_id is not None
 
 
-def test_analytics_enable_disable(temp_data_dir):
+BACKEND = dict(posthog_host="https://posthog.example", posthog_project_api_key="phc_test")
+
+
+def test_analytics_no_backend_stays_off(temp_data_dir):
     analytics = Analytics()
+    analytics.asked_opt_in = True
+    analytics.enable()
+    assert analytics.ph is None
+    assert analytics.need_to_ask(True) is False
+    assert analytics.need_to_ask(None) is False
+
+
+def test_analytics_enable_disable(temp_data_dir):
+    analytics = Analytics(**BACKEND)
     analytics.asked_opt_in = True
 
     analytics.enable()
@@ -58,7 +70,7 @@ def test_analytics_data_persistence(temp_data_dir):
 
 
 def test_analytics_event_logging(temp_analytics_file, temp_data_dir):
-    analytics = Analytics(logfile=temp_analytics_file)
+    analytics = Analytics(logfile=temp_analytics_file, **BACKEND)
     analytics.asked_opt_in = True
     analytics.enable()
 
@@ -90,7 +102,7 @@ def test_system_info(temp_data_dir):
 
 
 def test_need_to_ask(temp_data_dir):
-    analytics = Analytics()
+    analytics = Analytics(**BACKEND)
     assert analytics.need_to_ask(True) is True
     assert analytics.need_to_ask(False) is False
 

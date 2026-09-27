@@ -89,8 +89,8 @@ class Coder:
     abs_fnames = None
     abs_read_only_fnames = None
     repo = None
-    last_aider_commit_hash = None
-    aider_edited_files = None
+    last_loom_commit_hash = None
+    loom_edited_files = None
     last_asked_for_commit_time = 0
     repo_map = None
     functions = None
@@ -173,7 +173,7 @@ class Coder:
                 read_only_fnames=list(from_coder.abs_read_only_fnames),  # Copy read-only files
                 done_messages=done_messages,
                 cur_messages=from_coder.cur_messages,
-                aider_commit_hashes=from_coder.aider_commit_hashes,
+                loom_commit_hashes=from_coder.loom_commit_hashes,
                 commands=from_coder.commands.clone(),
                 total_cost=from_coder.total_cost,
                 ignore_mentions=from_coder.ignore_mentions,
@@ -319,7 +319,7 @@ class Coder:
         auto_test=False,
         lint_cmds=None,
         test_cmd=None,
-        aider_commit_hashes=None,
+        loom_commit_hashes=None,
         map_mul_no_files=8,
         commands=None,
         summarizer=None,
@@ -346,7 +346,7 @@ class Coder:
         self.chat_language = chat_language
         self.commit_language = commit_language
         self.commit_before_message = []
-        self.aider_commit_hashes = set()
+        self.loom_commit_hashes = set()
         self.rejected_urls = set()
         self.abs_root_path_cache = {}
 
@@ -372,10 +372,10 @@ class Coder:
         if io is None:
             io = InputOutput()
 
-        if aider_commit_hashes:
-            self.aider_commit_hashes = aider_commit_hashes
+        if loom_commit_hashes:
+            self.loom_commit_hashes = loom_commit_hashes
         else:
-            self.aider_commit_hashes = set()
+            self.loom_commit_hashes = set()
 
         self.chat_completion_call_hashes = []
         self.chat_completion_response_hashes = []
@@ -453,7 +453,7 @@ class Coder:
                 continue
 
             if self.repo and self.repo.ignored_file(fname):
-                self.io.tool_warning(f"Skipping {fname} that matches aiderignore spec.")
+                self.io.tool_warning(f"Skipping {fname} that matches loomignore spec.")
                 continue
 
             if not fname.exists():
@@ -862,7 +862,7 @@ class Coder:
         yield from self.send_message(user_message)
 
     def init_before_message(self):
-        self.aider_edited_files = set()
+        self.loom_edited_files = set()
         self.reflected_message = None
         self.num_reflections = 0
         self.lint_outcome = None
@@ -1585,7 +1585,7 @@ class Coder:
         edited = self.apply_updates()
 
         if edited:
-            self.aider_edited_files.update(edited)
+            self.loom_edited_files.update(edited)
             saved_message = self.auto_commit(edited)
 
             if not saved_message and hasattr(self.gpt_prompts, "files_content_gpt_edits_no_repo"):
@@ -2380,7 +2380,7 @@ class Coder:
             context = self.get_context_from_history(self.cur_messages)
 
         try:
-            res = self.repo.commit(fnames=edited, context=context, aider_edits=True, coder=self)
+            res = self.repo.commit(fnames=edited, context=context, loom_edits=True, coder=self)
             if res:
                 self.show_auto_commit_outcome(res)
                 commit_hash, commit_message = res
@@ -2396,9 +2396,9 @@ class Coder:
 
     def show_auto_commit_outcome(self, res):
         commit_hash, commit_message = res
-        self.last_aider_commit_hash = commit_hash
-        self.aider_commit_hashes.add(commit_hash)
-        self.last_aider_commit_message = commit_message
+        self.last_loom_commit_hash = commit_hash
+        self.loom_commit_hashes.add(commit_hash)
+        self.last_loom_commit_message = commit_message
         if self.show_diffs:
             self.commands.cmd_diff()
 

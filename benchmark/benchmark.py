@@ -186,7 +186,7 @@ def main(
     cont: bool = typer.Option(False, "--cont", help="Continue the (single) matching testdir"),
     make_new: bool = typer.Option(False, "--new", help="Make a new dated testdir"),
     no_unit_tests: bool = typer.Option(False, "--no-unit-tests", help="Do not run unit tests"),
-    no_aider: bool = typer.Option(False, "--no-aider", help="Do not run aider"),
+    no_loom: bool = typer.Option(False, "--no-loom", help="Do not run loom"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     stats_only: bool = typer.Option(
         False, "--stats", "-s", help="Do not run tests, just collect stats on completed tests"
@@ -204,7 +204,7 @@ def main(
         None, "--num-ctx", help="Override model context window size"
     ),
     read_model_settings: str = typer.Option(
-        None, "--read-model-settings", help="Load aider model settings from YAML file"
+        None, "--read-model-settings", help="Load loom model settings from YAML file"
     ),
     reasoning_effort: Optional[str] = typer.Option(
         None, "--reasoning-effort", help="Set reasoning effort for models that support it"
@@ -360,7 +360,7 @@ def main(
                 edit_format,
                 tries,
                 no_unit_tests,
-                no_aider,
+                no_loom,
                 verbose,
                 commit_hash,
                 replay,
@@ -386,7 +386,7 @@ def main(
                 edit_format,
                 tries,
                 no_unit_tests,
-                no_aider,
+                no_loom,
                 verbose,
                 commit_hash,
                 replay,
@@ -602,7 +602,7 @@ def summarize_results(dirname, stats_languages=None):
 
     if variants["model"]:
         a_model = set(variants["model"]).pop()
-        command = f"aider --model {a_model}"
+        command = f"loom --model {a_model}"
         print(f"  command: {command}")
 
     print(f"  date: {date}")
@@ -637,7 +637,7 @@ def get_versions(commit_hashes):
         hsh = hsh.split("-")[0]
         try:
             version = subprocess.check_output(
-                ["git", "show", f"{hsh}:aider/__init__.py"], universal_newlines=True
+                ["git", "show", f"{hsh}:loom/__init__.py"], universal_newlines=True
             )
             version = re.search(r'__version__ = "(.*)"', version).group(1)
             versions.add(version)
@@ -683,7 +683,7 @@ def run_test_real(
     edit_format,
     tries,
     no_unit_tests,
-    no_aider,
+    no_loom,
     verbose,
     commit_hash,
     replay,
@@ -848,7 +848,7 @@ def run_test_real(
     for i in range(tries):
         start = time.time()
 
-        if no_aider:
+        if no_loom:
             pass
         elif replay:
             response = get_replayed_content(replay, testdir)
@@ -864,7 +864,7 @@ def run_test_real(
 
         dur += time.time() - start
 
-        if not no_aider:
+        if not no_loom:
             pat = r"^[+]? *[#].* [.][.][.] "
             # Count the number of lines that match pat in response
             dump(response)
@@ -986,8 +986,8 @@ def run_unit_tests(original_dname, testdir, history_fname, test_files):
         ".py": ["pytest"],
         ".rs": ["cargo", "test", "--", "--include-ignored"],
         ".go": ["go", "test", "./..."],
-        ".js": ["/aider/benchmark/npm-test.sh"],
-        ".cpp": ["/aider/benchmark/cpp-test.sh"],
+        ".js": ["/loom/benchmark/npm-test.sh"],
+        ".cpp": ["/loom/benchmark/cpp-test.sh"],
         ".java": ["./gradlew", "test"],
     }
 

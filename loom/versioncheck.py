@@ -10,6 +10,7 @@ from loom import utils
 from loom.dump import dump  # noqa: F401
 
 VERSION_CHECK_FNAME = Path.home() / ".loom" / "caches" / "versioncheck"
+RELEASES_URL = "https://api.github.com/repos/sri-venkat-22/loom/releases/latest"
 
 
 def install_from_main_branch(io):
@@ -21,14 +22,14 @@ def install_from_main_branch(io):
         io,
         None,
         "Install the development version of loom from the main branch?",
-        ["git+https://github.com/sri-venkat-22/loom.git"],
+        [utils.LOOM_GIT_URL],
         self_update=True,
     )
 
 
 def install_upgrade(io, latest_version=None):
     """
-    Install the latest version of loom from PyPI.
+    Install the latest tagged release of loom from GitHub.
     """
 
     if latest_version:
@@ -50,7 +51,7 @@ def install_upgrade(io, latest_version=None):
         io,
         None,
         new_ver_text,
-        ["loom"],
+        [f"{utils.LOOM_GIT_URL}@v{latest_version}" if latest_version else utils.LOOM_GIT_URL],
         self_update=True,
     )
 
@@ -75,9 +76,13 @@ def check_version(io, just_check=False, verbose=False):
     import requests
 
     try:
-        response = requests.get("https://pypi.org/pypi/loom/json")
-        data = response.json()
-        latest_version = data["info"]["version"]
+        # loom is released as GitHub tags (vX.Y.Z), not on PyPI.
+        response = requests.get(RELEASES_URL, timeout=10)
+        if response.status_code == 404:
+            latest_version = "0"  # no releases published yet
+        else:
+            response.raise_for_status()
+            latest_version = response.json()["tag_name"].lstrip("v")
         current_version = loom.__version__
 
         if just_check or verbose:
@@ -88,7 +93,7 @@ def check_version(io, just_check=False, verbose=False):
             current_version
         )
     except Exception as err:
-        io.tool_error(f"Error checking pypi for new version: {err}")
+        io.tool_error(f"Error checking GitHub for new version: {err}")
         return False
     finally:
         VERSION_CHECK_FNAME.parent.mkdir(parents=True, exist_ok=True)

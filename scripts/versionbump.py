@@ -112,18 +112,18 @@ def main():
             f"New version {new_version} must be greater than the current version {current_version}"
         )
 
-    with open("aider/__init__.py", "r") as f:
+    with open("loom/__init__.py", "r") as f:
         content = f.read()
     updated_content = re.sub(r'__version__ = ".+?"', f'__version__ = "{new_version}"', content)
 
-    print("Updating aider/__init__.py with new version:")
+    print("Updating loom/__init__.py with new version:")
     print(updated_content)
     if not dry_run:
-        with open("aider/__init__.py", "w") as f:
+        with open("loom/__init__.py", "w") as f:
             f.write(updated_content)
 
     git_commands = [
-        ["git", "add", "aider/__init__.py"],
+        ["git", "add", "loom/__init__.py"],
         ["git", "commit", "-m", f"version bump to {new_version}"],
         ["git", "tag", f"v{new_version}"],
         ["git", "push", "origin", "--no-verify"],
@@ -144,14 +144,14 @@ def main():
     )
 
     print()
-    print("Updating aider/__init__.py with new dev version:")
+    print("Updating loom/__init__.py with new dev version:")
     print(updated_dev_content)
     if not dry_run:
-        with open("aider/__init__.py", "w") as f:
+        with open("loom/__init__.py", "w") as f:
             f.write(updated_dev_content)
 
     git_commands_dev = [
-        ["git", "add", "aider/__init__.py"],
+        ["git", "add", "loom/__init__.py"],
         ["git", "commit", "-m", f"set version to {new_dev_version}"],
         ["git", "tag", f"v{new_dev_version}"],
         ["git", "push", "origin", "--no-verify"],
@@ -163,8 +163,8 @@ def main():
         if not dry_run:
             subprocess.run(cmd, check=True)
 
-    # Remove aider/_version.py if it exists
-    version_file = "aider/_version.py"
+    # Remove loom/_version.py if it exists
+    version_file = "loom/_version.py"
     if os.path.exists(version_file):
         print(f"Removing {version_file}")
         if not dry_run:
