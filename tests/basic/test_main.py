@@ -1028,32 +1028,32 @@ class TestMain(TestCase):
             main(["--yes", "--exit"], input=DummyInput(), output=DummyOutput())
 
             # Check that the git config file wasn't modified
-            config_after_aider = git_config.read_text()
-            self.assertEqual(modified_config_content, config_after_aider)
+            config_after_loom = git_config.read_text()
+            self.assertEqual(modified_config_content, config_after_loom)
 
             # Check that the user settings are still the same using git command
             repo = git.Repo(git_dir)  # Re-open repo to ensure we get fresh config
             self.assertEqual(repo.git.config("user.name"), "Directive User")
             self.assertEqual(repo.git.config("user.email"), "directive@example.com")
 
-    def test_resolve_aiderignore_path(self):
+    def test_resolve_loomignore_path(self):
         # Import the function directly to test it
-        from loom.args import resolve_aiderignore_path
+        from loom.args import resolve_loomignore_path
 
         # Test with absolute path
         abs_path = os.path.abspath("/tmp/test/.loomignore")
-        self.assertEqual(resolve_aiderignore_path(abs_path), abs_path)
+        self.assertEqual(resolve_loomignore_path(abs_path), abs_path)
 
         # Test with relative path and git root
         git_root = "/path/to/git/root"
         rel_path = ".loomignore"
         self.assertEqual(
-            resolve_aiderignore_path(rel_path, git_root), str(Path(git_root) / rel_path)
+            resolve_loomignore_path(rel_path, git_root), str(Path(git_root) / rel_path)
         )
 
         # Test with relative path and no git root
         rel_path = ".loomignore"
-        self.assertEqual(resolve_aiderignore_path(rel_path), rel_path)
+        self.assertEqual(resolve_loomignore_path(rel_path), rel_path)
 
     def test_invalid_edit_format(self):
         with GitTemporaryDirectory():
@@ -1415,14 +1415,14 @@ class TestMain(TestCase):
         with GitTemporaryDirectory() as git_dir:
             git_dir = Path(git_dir)
 
-            # Create fake home and .aider directory
+            # Create fake home and .loom directory
             fake_home = git_dir / "fake_home"
             fake_home.mkdir()
-            aider_dir = fake_home / ".loom"
-            aider_dir.mkdir()
+            loom_dir = fake_home / ".loom"
+            loom_dir.mkdir()
 
             # Create oauth keys file
-            oauth_keys_file = aider_dir / "oauth-keys.env"
+            oauth_keys_file = loom_dir / "oauth-keys.env"
             oauth_keys_file.write_text("OAUTH_VAR=oauth_val\nSHARED_VAR=oauth_shared\n")
 
             # Create git root .env file

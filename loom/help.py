@@ -17,7 +17,7 @@ warnings.simplefilter("ignore", category=FutureWarning)
 
 def install_help_extra(io):
     pip_install_cmd = [
-        "loom[help]",
+        *utils.loom_extra("help"),
         "--extra-index-url",
         "https://download.pytorch.org/whl/cpu",
     ]

@@ -210,7 +210,7 @@ def check_streamlit_install(io):
         io,
         "streamlit",
         "You need to install the loom browser feature",
-        ["loom[browser]"],
+        utils.loom_extra("browser"),
     )
 
 

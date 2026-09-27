@@ -6,11 +6,11 @@ from loom.dump import dump  # noqa: F401
 
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
-AIDER_SITE_URL = "https://github.com/sri-venkat-22/loom"
-AIDER_APP_NAME = "Loom"
+LOOM_SITE_URL = "https://github.com/sri-venkat-22/loom"
+LOOM_APP_NAME = "Loom"
 
-os.environ["OR_SITE_URL"] = AIDER_SITE_URL
-os.environ["OR_APP_NAME"] = AIDER_APP_NAME
+os.environ["OR_SITE_URL"] = LOOM_SITE_URL
+os.environ["OR_APP_NAME"] = LOOM_APP_NAME
 os.environ["LITELLM_MODE"] = "PRODUCTION"
 
 # `import litellm` takes 1.5 seconds, defer it!

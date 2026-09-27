@@ -207,9 +207,9 @@ class TestRepo(unittest.TestCase):
             # Initialize GitRepo with default None values for attributes
             git_repo = GitRepo(io, None, None, attribute_author=None, attribute_committer=None)
 
-            # commit a change with aider_edits=True (using default attributes)
+            # commit a change with loom_edits=True (using default attributes)
             fname.write_text("new content")
-            commit_result = git_repo.commit(fnames=[str(fname)], aider_edits=True)
+            commit_result = git_repo.commit(fnames=[str(fname)], loom_edits=True)
             self.assertIsNotNone(commit_result)
 
             # check the committer name (defaults interpreted as True)
@@ -217,9 +217,9 @@ class TestRepo(unittest.TestCase):
             self.assertEqual(commit.author.name, "Test User (loom)")
             self.assertEqual(commit.committer.name, "Test User (loom)")
 
-            # commit a change without aider_edits (using default attributes)
+            # commit a change without loom_edits (using default attributes)
             fname.write_text("new content again!")
-            commit_result = git_repo.commit(fnames=[str(fname)], aider_edits=False)
+            commit_result = git_repo.commit(fnames=[str(fname)], loom_edits=False)
             self.assertIsNotNone(commit_result)
 
             # check the committer name (author not modified, committer still modified by default)
@@ -232,7 +232,7 @@ class TestRepo(unittest.TestCase):
                 io, None, None, attribute_author=False, attribute_committer=False
             )
             fname.write_text("explicit false content")
-            commit_result = git_repo_explicit_false.commit(fnames=[str(fname)], aider_edits=True)
+            commit_result = git_repo_explicit_false.commit(fnames=[str(fname)], loom_edits=True)
             self.assertIsNotNone(commit_result)
             commit = raw_repo.head.commit
             self.assertEqual(commit.author.name, "Test User")  # Explicit False
@@ -247,9 +247,7 @@ class TestRepo(unittest.TestCase):
             # Test user commit with explicit no-committer attribution
             git_repo_user_no_committer = GitRepo(io, None, None, attribute_committer=False)
             fname.write_text("user no committer content")
-            commit_result = git_repo_user_no_committer.commit(
-                fnames=[str(fname)], aider_edits=False
-            )
+            commit_result = git_repo_user_no_committer.commit(fnames=[str(fname)], loom_edits=False)
             self.assertIsNotNone(commit_result)
             commit = raw_repo.head.commit
             self.assertEqual(
@@ -291,16 +289,19 @@ class TestRepo(unittest.TestCase):
             io = InputOutput()
             git_repo = GitRepo(io, None, None)
 
-            # commit a change with aider_edits=True and co-authored-by flag
+            # commit a change with loom_edits=True and co-authored-by flag
             fname.write_text("new content")
             commit_result = git_repo.commit(
-                fnames=[str(fname)], aider_edits=True, coder=mock_coder, message="Loom edit"
+                fnames=[str(fname)], loom_edits=True, coder=mock_coder, message="Loom edit"
             )
             self.assertIsNotNone(commit_result)
 
             # check the commit message and author/committer
             commit = raw_repo.head.commit
-            self.assertIn("Co-authored-by: loom (gpt-test) <sri-venkat-22@users.noreply.github.com>", commit.message)
+            self.assertIn(
+                "Co-authored-by: loom (gpt-test) <sri-venkat-22@users.noreply.github.com>",
+                commit.message,
+            )
             self.assertEqual(commit.message.splitlines()[0], "Loom edit")
             # With default (None), co-authored-by takes precedence
             self.assertEqual(
@@ -345,17 +346,18 @@ class TestRepo(unittest.TestCase):
             io = InputOutput()
             git_repo = GitRepo(io, None, None)
 
-            # commit a change with aider_edits=True and combo flags
+            # commit a change with loom_edits=True and combo flags
             fname.write_text("new content combo")
             commit_result = git_repo.commit(
-                fnames=[str(fname)], aider_edits=True, coder=mock_coder, message="Loom combo edit"
+                fnames=[str(fname)], loom_edits=True, coder=mock_coder, message="Loom combo edit"
             )
             self.assertIsNotNone(commit_result)
 
             # check the commit message and author/committer
             commit = raw_repo.head.commit
             self.assertIn(
-                "Co-authored-by: loom (gpt-test-combo) <sri-venkat-22@users.noreply.github.com>", commit.message
+                "Co-authored-by: loom (gpt-test-combo) <sri-venkat-22@users.noreply.github.com>",
+                commit.message,
             )
             self.assertEqual(commit.message.splitlines()[0], "Loom combo edit")
             # When co-authored-by is true BUT author/committer are explicit True,
@@ -373,7 +375,7 @@ class TestRepo(unittest.TestCase):
 
     @unittest.skipIf(platform.system() == "Windows", "Git env var behavior differs on Windows")
     def test_commit_ai_edits_no_coauthor_explicit_false(self):
-        # Test AI edits (aider_edits=True) when co-authored-by is False,
+        # Test AI edits (loom_edits=True) when co-authored-by is False,
         # but author or committer attribution is explicitly disabled.
         with GitTemporaryDirectory():
             # Setup repo
@@ -401,7 +403,7 @@ class TestRepo(unittest.TestCase):
             fname.write_text("no author content")
             commit_result = git_repo_no_author.commit(
                 fnames=[str(fname)],
-                aider_edits=True,
+                loom_edits=True,
                 coder=mock_coder_no_author,
                 message="Loom no author",
             )
@@ -425,7 +427,7 @@ class TestRepo(unittest.TestCase):
             fname.write_text("no committer content")
             commit_result = git_repo_no_committer.commit(
                 fnames=[str(fname)],
-                aider_edits=True,
+                loom_edits=True,
                 coder=mock_coder_no_committer,
                 message="Loom no committer",
             )
@@ -510,7 +512,7 @@ class TestRepo(unittest.TestCase):
             self.assertIn(str(fname), fnames)
             self.assertIn(str(fname2), fnames)
 
-    def test_get_tracked_files_with_aiderignore(self):
+    def test_get_tracked_files_with_loomignore(self):
         with GitTemporaryDirectory():
             # new repo
             raw_repo = git.Repo()
@@ -520,8 +522,8 @@ class TestRepo(unittest.TestCase):
             fname.touch()
             raw_repo.git.add(str(fname))
 
-            aiderignore = Path(".loomignore")
-            git_repo = GitRepo(InputOutput(), None, None, str(aiderignore))
+            loomignore = Path(".loomignore")
+            git_repo = GitRepo(InputOutput(), None, None, str(loomignore))
 
             # better be there
             fnames = git_repo.get_tracked_files()
@@ -542,7 +544,7 @@ class TestRepo(unittest.TestCase):
             self.assertIn(str(fname), fnames)
             self.assertIn(str(fname2), fnames)
 
-            aiderignore.write_text("new.txt\n")
+            loomignore.write_text("new.txt\n")
             time.sleep(2)
 
             # new.txt should be gone!
@@ -554,7 +556,7 @@ class TestRepo(unittest.TestCase):
             # The mtime doesn't change, even if I time.sleep(1)
             # Before doing this write_text()!?
             #
-            # aiderignore.write_text("new2.txt\n")
+            # loomignore.write_text("new2.txt\n")
             # new2.txt should be gone!
             # fnames = git_repo.get_tracked_files()
             # self.assertIn(str(fname), fnames)

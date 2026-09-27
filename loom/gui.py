@@ -116,7 +116,7 @@ class GUI:
         res = ""
         if commit_hash:
             res += f"Commit `{commit_hash}`: {commit_message}  \n"
-            if commit_hash == self.coder.last_aider_commit_hash:
+            if commit_hash == self.coder.last_loom_commit_hash:
                 show_undo = True
 
         if fnames:
@@ -332,7 +332,7 @@ class GUI:
         ]
 
         self.state.init("messages", messages)
-        self.state.init("last_aider_commit_hash", self.coder.last_aider_commit_hash)
+        self.state.init("last_loom_commit_hash", self.coder.last_loom_commit_hash)
         self.state.init("last_undone_commit_hash")
         self.state.init("recent_msgs_num", 0)
         self.state.init("web_content_num", 0)
@@ -433,19 +433,19 @@ class GUI:
         with self.messages:
             edit = dict(
                 role="edit",
-                fnames=self.coder.aider_edited_files,
+                fnames=self.coder.loom_edited_files,
             )
-            if self.state.last_aider_commit_hash != self.coder.last_aider_commit_hash:
-                edit["commit_hash"] = self.coder.last_aider_commit_hash
-                edit["commit_message"] = self.coder.last_aider_commit_message
-                commits = f"{self.coder.last_aider_commit_hash}~1"
+            if self.state.last_loom_commit_hash != self.coder.last_loom_commit_hash:
+                edit["commit_hash"] = self.coder.last_loom_commit_hash
+                edit["commit_message"] = self.coder.last_loom_commit_message
+                commits = f"{self.coder.last_loom_commit_hash}~1"
                 diff = self.coder.repo.diff_commits(
                     self.coder.pretty,
                     commits,
-                    self.coder.last_aider_commit_hash,
+                    self.coder.last_loom_commit_hash,
                 )
                 edit["diff"] = diff
-                self.state.last_aider_commit_hash = self.coder.last_aider_commit_hash
+                self.state.last_loom_commit_hash = self.coder.last_loom_commit_hash
 
             self.state.messages.append(edit)
             self.show_edit_info(edit)
@@ -499,8 +499,8 @@ class GUI:
         self.last_undo_empty.empty()
 
         if (
-            self.state.last_aider_commit_hash != commit_hash
-            or self.coder.last_aider_commit_hash != commit_hash
+            self.state.last_loom_commit_hash != commit_hash
+            or self.coder.last_loom_commit_hash != commit_hash
         ):
             self.info(f"Commit `{commit_hash}` is not the latest commit.")
             return

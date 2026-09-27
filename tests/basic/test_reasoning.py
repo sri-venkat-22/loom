@@ -5,11 +5,7 @@ from loom.coders.base_coder import Coder
 from loom.dump import dump  # noqa
 from loom.io import InputOutput
 from loom.models import Model
-from loom.reasoning_tags import (
-    REASONING_END,
-    REASONING_START,
-    remove_reasoning_content,
-)
+from loom.reasoning_tags import REASONING_END, REASONING_START, remove_reasoning_content
 
 
 class TestReasoning(unittest.TestCase):
