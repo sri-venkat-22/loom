@@ -19,7 +19,7 @@ from loom.deprecated import add_deprecated_model_args
 from .dump import dump  # noqa: F401
 
 
-def resolve_aiderignore_path(path_str, git_root=None):
+def resolve_loomignore_path(path_str, git_root=None):
     path = Path(path_str)
     if path.is_absolute():
         return str(path)
@@ -43,12 +43,12 @@ def get_parser(default_config_files, git_root):
     # List of valid edit formats for argparse validation & shtab completion.
     # Dynamically gather them from the registered coder classes so the list
     # stays in sync if new formats are added.
-    from loom import coders as _aider_coders
+    from loom import coders as _loom_coders
 
     edit_format_choices = sorted(
         {
             c.edit_format
-            for c in _aider_coders.__all__
+            for c in _loom_coders.__all__
             if hasattr(c, "edit_format") and c.edit_format is not None
         }
     )
@@ -419,15 +419,13 @@ def get_parser(default_config_files, git_root):
         default=False,
         help="Enable/disable the addition of files listed in .gitignore to Loom's editing scope.",
     )
-    default_aiderignore_file = (
-        os.path.join(git_root, ".loomignore") if git_root else ".loomignore"
-    )
+    default_loomignore_file = os.path.join(git_root, ".loomignore") if git_root else ".loomignore"
 
     group.add_argument(
         "--loomignore",
         metavar="LOOMIGNORE",
-        type=lambda path_str: resolve_aiderignore_path(path_str, git_root),
-        default=default_aiderignore_file,
+        type=lambda path_str: resolve_loomignore_path(path_str, git_root),
+        default=default_loomignore_file,
         help="Specify the loom ignore file (default: .loomignore in git root)",
     ).complete = shtab.FILE
     group.add_argument(

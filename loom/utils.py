@@ -196,6 +196,38 @@ def split_chat_history_markdown(text, include_tool=False):
     return messages
 
 
+LOOM_GIT_URL = "git+https://github.com/sri-venkat-22/loom.git"
+
+
+def loom_extra(extra):
+    """
+    Pip requirements for one of loom's optional extras (help, browser, playwright).
+
+    loom is not published on PyPI (the "loom" name there is an unrelated project), so
+    `pip install loom[extra]` must never be used. Install the extra's own dependencies,
+    read from the installed package metadata, instead.
+    """
+    from importlib.metadata import PackageNotFoundError, requires
+
+    from packaging.requirements import Requirement
+
+    try:
+        reqs = requires("loom") or []
+    except PackageNotFoundError:
+        return [f"loom[{extra}] @ {LOOM_GIT_URL}"]
+
+    pkgs = []
+    for line in reqs:
+        req = Requirement(line)
+        if not req.marker:
+            continue
+        if not req.marker.evaluate({"extra": extra}) or req.marker.evaluate({"extra": ""}):
+            continue
+        extras = f"[{','.join(sorted(req.extras))}]" if req.extras else ""
+        pkgs.append(f"{req.name}{extras}{req.specifier}")
+    return pkgs
+
+
 def get_pip_install(args):
     cmd = [
         sys.executable,

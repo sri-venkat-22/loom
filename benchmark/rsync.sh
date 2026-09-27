@@ -17,16 +17,16 @@ EXCLUDE_FILE=$(mktemp)
 git -C "$REPO_ROOT" ls-files --exclude-standard --others --ignored --directory > "$EXCLUDE_FILE"
 
 # Create remote directory if needed
-ssh "$DEST" "mkdir -p ~/aider"
+ssh "$DEST" "mkdir -p ~/loom"
 
 sync_repo() {
     # Sync the repository
     rsync -avz --delete \
           --exclude-from="$EXCLUDE_FILE" \
           "$REPO_ROOT/" \
-          "$DEST:~/aider/" || sleep 0.1
+          "$DEST:~/loom/" || sleep 0.1
     
-    rsync -av .env .gitignore .loom.model.settings.yml "$DEST:~/aider/." || sleep 0.1
+    rsync -av .env .gitignore .loom.model.settings.yml "$DEST:~/loom/." || sleep 0.1
 
     echo Done syncing, waiting.
 }

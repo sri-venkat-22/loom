@@ -52,9 +52,8 @@ def is_uuid_in_percentage(uuid_str, percent):
     return uuid_str[:6] <= threshold
 
 
-mixpanel_project_token = "6da9a43058a5d1b9f3353153921fb04d"
-posthog_project_api_key = "phc_99T7muzafUMMZX15H8XePbMSreEUzahHbtWjy3l5Qbv"
-posthog_host = "https://us.i.posthog.com"
+# Loom ships with no analytics backend. Events are only sent when a PostHog
+# project is configured via --analytics-posthog-host/--analytics-posthog-project-api-key.
 
 
 class Analytics:
@@ -85,7 +84,14 @@ class Analytics:
         if self.permanently_disable or permanently_disable or not self.asked_opt_in:
             self.disable(permanently_disable)
 
+    def has_backend(self):
+        return bool(self.custom_posthog_project_api_key and self.custom_posthog_host)
+
     def enable(self):
+        if not self.has_backend():
+            self.disable(False)
+            return
+
         if not self.user_id:
             self.disable(False)
             return
@@ -100,8 +106,8 @@ class Analytics:
 
         # self.mp = Mixpanel(mixpanel_project_token)
         self.ph = Posthog(
-            project_api_key=self.custom_posthog_project_api_key or posthog_project_api_key,
-            host=self.custom_posthog_host or posthog_host,
+            project_api_key=self.custom_posthog_project_api_key,
+            host=self.custom_posthog_host,
             on_error=self.posthog_error,
             enable_exception_autocapture=True,
             super_properties=self.get_system_info(),  # Add system info to all events
@@ -117,7 +123,7 @@ class Analytics:
             self.save_data()
 
     def need_to_ask(self, args_analytics):
-        if args_analytics is False:
+        if args_analytics is False or not self.has_backend():
             return False
 
         could_ask = not self.asked_opt_in and not self.permanently_disable
@@ -189,7 +195,7 @@ class Analytics:
             "os_platform": platform.system(),
             "os_release": platform.release(),
             "machine": platform.machine(),
-            "aider_version": __version__,
+            "loom_version": __version__,
         }
 
     def _redact_model_name(self, model):

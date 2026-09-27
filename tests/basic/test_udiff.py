@@ -72,22 +72,22 @@ Some text...
         content = """
 To implement the `--check-update` option, I will make the following changes:
 
-1. Add the `--check-update` argument to the argument parser in `aider/main.py`.
-2. Modify the `check_version` function in `aider/versioncheck.py` to return a boolean indicating whether an update is available.
-3. Use the returned value from `check_version` in `aider/main.py` to set the exit status code when `--check-update` is used.
+1. Add the `--check-update` argument to the argument parser in `loom/main.py`.
+2. Modify the `check_version` function in `loom/versioncheck.py` to return a boolean indicating whether an update is available.
+3. Use the returned value from `check_version` in `loom/main.py` to set the exit status code when `--check-update` is used.
 
 Here are the diffs for those changes:
 
 ```diff
---- aider/versioncheck.py
-+++ aider/versioncheck.py
+--- loom/versioncheck.py
++++ loom/versioncheck.py
 @@ ... @@
      except Exception as err:
          print_cmd(f"Error checking pypi for new version: {err}")
 +        return False
 
---- aider/main.py
-+++ aider/main.py
+--- loom/main.py
++++ loom/main.py
 @@ ... @@
      other_group.add_argument(
          "--version",

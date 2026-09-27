@@ -120,9 +120,7 @@ def test_git_index_version_greater_than_2(mock_browser, create_repo, mock_io):
     mock_io.tool_error.assert_called_with(
         "Loom only works with git repos with version number 1 or 2."
     )
-    mock_io.tool_error.assert_any_call(
-        "Loom only works with git repos with version number 1 or 2."
-    )
+    mock_io.tool_error.assert_any_call("Loom only works with git repos with version number 1 or 2.")
     mock_io.tool_output.assert_any_call(
         "You may be able to convert your repo: git update-index --index-version=2"
     )
