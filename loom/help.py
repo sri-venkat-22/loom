@@ -8,9 +8,8 @@ from pathlib import Path
 
 import importlib_resources
 
-from loom import __version__, utils
+from loom import __version__, urls, utils
 from loom.dump import dump  # noqa: F401
-from loom.help_pats import exclude_website_pats
 
 warnings.simplefilter("ignore", category=FutureWarning)
 
@@ -31,54 +30,24 @@ def install_help_extra(io):
 
 
 def get_package_files():
-    for path in importlib_resources.files("loom.website").iterdir():
-        if path.is_file():
+    for path in importlib_resources.files("loom.docs").iterdir():
+        if path.is_file() and path.name.endswith(".md"):
             yield path
-        elif path.is_dir():
-            for subpath in path.rglob("*.md"):
-                yield subpath
 
 
 def fname_to_url(filepath):
-    website = "website"
-    index = "index.md"
-    md = ".md"
+    """Map a file under loom/docs/ to its page on GitHub, or "" if it isn't a doc."""
+    parts = [p for p in filepath.replace("\\", "/").split("/") if p]
 
-    # Convert backslashes to forward slashes for consistency
-    filepath = filepath.replace("\\", "/")
+    # Use the last loom/docs pair, in case "loom" or "docs" also appear higher up the path
+    for i in range(len(parts) - 2, -1, -1):
+        if parts[i].lower() == "loom" and parts[i + 1].lower() == "docs":
+            rel = parts[i + 2 :]
+            if rel and rel[-1].lower().endswith(".md"):
+                return f"{urls.docs}/" + "/".join(rel)
+            return ""
 
-    # Convert to Path object for easier manipulation
-    path = Path(filepath)
-
-    # Split the path into parts
-    parts = path.parts
-
-    # Find the 'website' part in the path
-    try:
-        website_index = [p.lower() for p in parts].index(website.lower())
-    except ValueError:
-        return ""  # 'website' not found in the path
-
-    # Extract the part of the path starting from 'website'
-    relevant_parts = parts[website_index + 1 :]
-
-    # Handle _includes directory
-    if relevant_parts and relevant_parts[0].lower() == "_includes":
-        return ""
-
-    # Join the remaining parts
-    url_path = "/".join(relevant_parts)
-
-    # Handle index.md and other .md files
-    if url_path.lower().endswith(index.lower()):
-        url_path = url_path[: -len(index)]
-    elif url_path.lower().endswith(md.lower()):
-        url_path = url_path[: -len(md)] + ".html"
-
-    # Ensure the URL starts and ends with '/'
-    url_path = url_path.strip("/")
-
-    return f"https://aider.chat/{url_path}"
+    return ""
 
 
 def get_index():
@@ -107,14 +76,8 @@ def get_index():
 
         nodes = []
         for fname in get_package_files():
-            fname = Path(fname)
-            if any(fname.match(pat) for pat in exclude_website_pats):
-                continue
-
             doc = Document(
-                text=importlib_resources.files("loom.website")
-                .joinpath(fname)
-                .read_text(encoding="utf-8"),
+                text=fname.read_text(encoding="utf-8"),
                 metadata=dict(
                     filename=fname.name,
                     extension=fname.suffix,

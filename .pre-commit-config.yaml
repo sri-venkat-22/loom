@@ -18,6 +18,5 @@ repos:
     rev: v2.2.6
     hooks:
       - id: codespell
-        args: ["--skip", "loom/website/docs/languages.md"]
         additional_dependencies:
           - tomli

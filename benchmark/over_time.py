@@ -141,8 +141,8 @@ class BenchmarkPlotter:
         plt.tight_layout(pad=1.0)
 
     def save_and_display(self, fig: plt.Figure):
-        plt.savefig("loom/website/assets/models-over-time.png")
-        plt.savefig("loom/website/assets/models-over-time.svg")
+        plt.savefig("benchmark/models-over-time.png")
+        plt.savefig("benchmark/models-over-time.svg")
         imgcat(fig)
 
     def plot(self, yaml_file: str):
@@ -155,13 +155,13 @@ class BenchmarkPlotter:
 
 def main():
     plotter = BenchmarkPlotter()
-    models = plotter.load_data("loom/website/_data/edit_leaderboard.yml")
+    models = plotter.load_data("benchmark/data/edit_leaderboard.yml")
 
     # Print release dates and model names
     for model in sorted(models, key=lambda x: x.release_date):
         print(f"{model.release_date}: {model.name}")
 
-    plotter.plot("loom/website/_data/edit_leaderboard.yml")
+    plotter.plot("benchmark/data/edit_leaderboard.yml")
 
 
 if __name__ == "__main__":
