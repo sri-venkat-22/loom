@@ -1,0 +1,225 @@
+# The agent
+
+By default loom works as an agent. You describe what you want, and the model explores
+the project, edits files and runs commands itself, in a loop, until the job is done:
+
+```
+agent> fix the failing test
+● Bash(python -m pytest -q)
+Run this command? (Y)es/(N)o/(A)lways: always allow this command (saved to .loom.permissions.json) [Yes]: a
+  ⎿  FAILED tests/test_stats.py::test_mean - assert 2.0 == 2.5
+     1 failed, 1 passed in 0.02s
+     Exit code: 1
+● Read(tests/test_stats.py)
+  ⎿  Read 14 lines
+● Read(mathutils/stats.py)
+  ⎿  Read 9 lines
+● Update(mathutils/stats.py)
+     3   def mean(values):
+     4 -     return sum(values) / (len(values) + 1)
+     4 +     return sum(values) / len(values)
+Edit mathutils/stats.py? (Y)es/(N)o/(A)lways: accept all edits this session [Yes]: y
+  ⎿  Updated mathutils/stats.py with 1 addition and 1 removal
+● Bash(python -m pytest -q)
+  ⎿  2 passed in 0.01s
+The mean divided by len(values) + 1; it now divides by len(values) and the tests pass.
+```
+
+There's no need to `/add` files: the agent finds and reads what it needs. Files you do
+add are shown to it in full, and files added with `/read-only` can't be edited.
+
+When the request is done, loom commits the agent's changes to git (see
+[git.md](git.md)), so `/undo` reverts them. If a file had uncommitted changes of your
+own, loom commits those first, so `/undo` only takes back the agent's work.
+
+The agent is used when the model supports tool calling, which most current models do.
+Otherwise loom falls back to the model's edit format. `--no-agent` turns the agent off,
+and `/code` sends one message (or switches) to the classic edit mode described in
+[usage.md](usage.md#chat-modes). `/agent` switches back.
+
+If the provider turns out to reject tool calling, loom switches to the model's edit
+format by itself and sends your request again. If the model writes a tool call as text
+instead of making it, loom asks it once to use tool calling, then suggests
+`/chat-mode diff`. [models.md](models.md#models-in-agent-mode) lists the models checked
+with the agent, and how to check another.
+
+## Tools
+
+The model can call these tools, several at once when they don't depend on each other:
+
+| Tool | What it does |
+|---|---|
+| `read_file` | Read a file, with line numbers. Long files are read in pages. |
+| `list_dir` | List a directory. |
+| `glob` | Find files by name, like `**/*.py`. Skips git-ignored files. |
+| `grep` | Search file contents with a regular expression. Skips git-ignored files. |
+| `edit_file` | Replace an exact, unique piece of text in a file. |
+| `write_file` | Create a file, or replace one completely. |
+| `bash` | Run a shell command in the project root and read its output. |
+| `todo_write` | Keep a to-do list for the request, which you see as it changes. |
+
+Tools from [MCP servers](mcp.md) you connect are added to these.
+
+Commands run without stdin and time out after 2 minutes (the model can ask for up to 10),
+so interactive programs and servers don't hang the agent. After each edit loom lints the
+file (see [lint-test.md](lint-test.md)) and shows any errors to the model.
+
+## Watching it work
+
+Each tool call is one line, `● Tool(what)`, with its outcome indented under it: how
+many lines it read, how many files matched, the end of a command's output (and its exit
+code if it failed). Every edit shows its diff once, with line numbers: in the question
+when loom asks, or under the call when it doesn't. The model gets the full results.
+
+While the model thinks, the spinner shows what it's working on and for how long.
+
+Press **Esc** to interrupt: the model stops replying, a running command is killed, and
+loom returns to the prompt so you can say what to do instead. The edits made so far are
+kept and committed. ^C does the same; pressed twice it exits loom. Anything you type
+while the agent works is kept and waits for you at the next prompt.
+
+The agent stops after 100 steps; say "continue" to let it go on.
+
+### The to-do list
+
+For work with several steps, the model writes a to-do list with the `todo_write` tool
+and ticks items off as it goes:
+
+```
+● Update Todos
+  ⎿  ☒ Find where the mean is computed
+     ◼ Fix the off-by-one in mean()
+     ☐ Run the tests
+```
+
+The spinner shows the item in progress, and `/todos` shows the list at any time. The
+list belongs to the conversation, so it's saved with it (see [sessions.md](sessions.md)).
+
+### Long tasks
+
+Every step resends the whole request so far, so a long task can fill the model's context
+window. When the conversation passes 80% of the window, loom compacts it before the next
+step, doing as little as it needs to:
+
+1. shorten the output of old tool calls, keeping its start and end, which usually say
+   the most (like a test run's summary);
+2. summarize the earlier requests of the chat;
+3. summarize this request's older steps with the weak model, keeping the most recent
+   ones as they are.
+
+The output of the latest step, which the model hasn't seen yet, is only shortened if the
+conversation would still be too long without that. The model is told when output was
+shortened, so it runs the tool again rather than guessing.
+
+```
+● Compacted the conversation
+  ⎿  163k → 92k tokens: shortened 14 old tool results, summarized 22 earlier steps
+```
+
+If the model still says the request is too long, loom compacts further and retries.
+`--no-auto-compact` turns this off, and `/compact` summarizes the chat history whenever
+you like (see [sessions.md](sessions.md)).
+
+Each step resends the conversation so far, so loom turns on prompt caching for the agent;
+see [models.md](models.md#prompt-caching). Models that think (`--thinking-tokens`) keep
+thinking while they use tools.
+
+## Permissions
+
+Reading and searching inside the project never asks. Edits and shell commands ask first,
+showing the diff or the command:
+
+```
+Run this command? (Y)es/(N)o/(A)lways: always allow this command [Yes]:
+```
+
+- **Yes** runs it once.
+- **No** refuses it and stops the agent, so you can tell it what to do instead.
+- **Always** for a command allows that exact command from now on, saved in
+  `.loom.permissions.json` in the project root (git-ignored along with the other
+  `.loom*` files). For an edit it switches to accept-edits mode for the session.
+
+Reading files outside the project also asks, and edits outside the project ask even in
+accept-edits mode.
+
+### Modes
+
+Pick a mode with `--permission-mode`, switch with `/permissions <mode>`, or press
+Shift-Tab at the prompt to cycle through them. The prompt shows the mode, like
+`agent plan>`.
+
+- **ask** (default): edits and commands ask first.
+- **accept-edits**: edits inside the project are applied without asking. Commands still
+  ask.
+- **plan**: read-only. Edits and commands are refused, and the agent is told to research
+  and reply with a plan instead. Switch to another mode to carry the plan out.
+
+### Allow rules
+
+Rules let matching actions run without asking. Give them with `--allow` (any number of
+times), in `.loom.conf.yml`, or in the chat with `/permissions allow RULE`, which also
+saves the rule to `.loom.permissions.json`:
+
+```yaml
+# .loom.conf.yml
+allow:
+  - bash(python -m pytest*)
+  - bash(git status)
+  - edit(tests/**)
+```
+
+- `bash(PATTERN)` matches commands, where `*` matches anything. A command joined with
+  `&&`, `;`, `|` and the like is allowed only when every part matches a rule, and one
+  that uses `$(...)`, backticks or redirection (other than `2>&1` and `>/dev/null`)
+  always asks. `bash` alone allows every command.
+- `edit(GLOB)` matches files relative to the project root: `*` stays within a
+  directory, `**` crosses directories. `edit` alone allows every edit.
+- `read(GLOB)` allows reading matching files outside the project.
+- `mcp(SERVER)` allows every tool of an [MCP server](mcp.md), and
+  `mcp(SERVER__TOOL)` one tool (with `*` wildcards).
+
+`/permissions` lists the mode and every rule with where it came from.
+
+Allowing a command lets the agent run code it wrote: an allowed test command runs
+whatever tests the agent adds. Allow what you'd be comfortable running unreviewed.
+
+### Protected files
+
+Edits to git's internals (`.git/`, where a hook runs on the next commit) and to loom's
+config (`.loom*` files, the `.loom/` directory with [hooks](hooks.md) and
+[custom commands](custom-commands.md), and `.env`, which can grant rules) always ask,
+whatever the mode, rules or hooks.
+
+### Scripting
+
+With `--yes-always`, edits are approved without asking, but shell commands, MCP tools
+and edits to protected files are not: they need an allow rule. So a script that lets the
+agent run the tests looks like:
+
+```bash
+loom --message "fix the failing test" --yes-always --allow "bash(python -m pytest*)"
+```
+
+## Project memory: LOOM.md
+
+Put standing instructions for a project in a `LOOM.md` file at the root of the repo,
+and loom adds them to the system prompt of every request, in every chat mode. Use it
+for the things you would otherwise repeat: how to run the tests, coding conventions,
+parts of the code to leave alone.
+
+```markdown
+# Project rules
+- Run the tests with `python -m pytest -q`.
+- Use type hints on new functions.
+- Never edit files under vendor/.
+```
+
+Loom reads, in this order:
+
+1. `~/.loom/LOOM.md`, your own rules for every project;
+2. `LOOM.md` in the project root;
+3. `LOOM.md` in each directory between the root and the directory you started loom in.
+
+The files in use are listed when loom starts (`Project memory: LOOM.md`). They are
+re-read for every message, so edits apply right away. `--no-project-memory` turns them
+off.

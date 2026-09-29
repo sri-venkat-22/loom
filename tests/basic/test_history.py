@@ -118,3 +118,37 @@ class TestChatSummary(TestCase):
                 }
             ],
         )
+
+    def test_transcripts_are_wrapped_and_carrying_on_is_rejected(self):
+        # A model that carries on the conversation instead of summarizing it is skipped
+        carries_on = mock.Mock(spec=Model)
+        carries_on.name = "carries-on"
+        carries_on.simple_send_with_retries = mock.Mock(
+            return_value='(Called read_file with {"path": "b.py"})\n# TOOL RESULT\nmore'
+        )
+        summarizes = mock.Mock(spec=Model)
+        summarizes.name = "summarizes"
+        summarizes.simple_send_with_retries = mock.Mock(return_value="You read a.py.")
+        for model in (carries_on, summarizes):
+            model.info = {"max_input_tokens": 4096}
+            model.token_count = lambda msg: len(msg["content"].split())
+
+        chat_summary = ChatSummary([carries_on, summarizes], max_tokens=100)
+        messages = [
+            {"role": "user", "content": "read a.py"},
+            {"role": "tool", "tool_call_id": "1", "content": "x" * 5000 + "THE END"},
+        ]
+        summary = chat_summary.summarize_all(messages, prompt="Summarize.", prefix="")
+        self.assertEqual(summary, [{"role": "user", "content": "You read a.py."}])
+
+        sent = carries_on.simple_send_with_retries.call_args[0][0]
+        self.assertEqual(sent[0], {"role": "system", "content": "Summarize."})
+        self.assertTrue(sent[1]["content"].startswith("<transcript>\n# USER\nread a.py"))
+        self.assertIn("</transcript>", sent[1]["content"])
+        # Long tool results keep their end
+        self.assertIn("THE END", sent[1]["content"])
+        self.assertLess(len(sent[1]["content"]), 2000)
+
+        summarizes.simple_send_with_retries.return_value = "# ASSISTANT\nOk"
+        with self.assertRaises(ValueError):
+            chat_summary.summarize_all(messages)

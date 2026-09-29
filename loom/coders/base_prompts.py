@@ -42,6 +42,8 @@ Don't include files that might contain relevant context, just files that will ne
         " stop and wait for your approval."
     )
 
+    repo_content_assistant_reply = "Ok, I won't try and edit those files without asking first."
+
     repo_content_prefix = """Here are summaries of some files present in my git repository.
 Do not propose changes to these files, treat them as *read-only*.
 If you need to edit any of these files, ask me to *add them to the chat* first.

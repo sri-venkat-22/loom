@@ -28,7 +28,7 @@ from typing import List
 
 from rich.console import Console
 
-from loom import __version__, models, prompts, urls, utils
+from loom import __version__, models, prompts, tools, urls, utils
 from loom.analytics import Analytics
 from loom.commands import Commands
 from loom.exceptions import LiteLLMExceptions
@@ -37,6 +37,7 @@ from loom.io import ConfirmGroup, InputOutput
 from loom.linter import Linter
 from loom.llm import litellm
 from loom.models import RETRY_TIMEOUT
+from loom.permissions import Permissions
 from loom.reasoning_tags import (
     REASONING_TAG,
     format_reasoning_content,
@@ -46,6 +47,7 @@ from loom.reasoning_tags import (
 from loom.repo import ANY_GIT_ERROR, GitRepo
 from loom.repomap import RepoMap
 from loom.run_cmd import run_cmd
+from loom.sessions import Session
 from loom.utils import format_content, format_messages, format_tokens, is_image_file
 from loom.waiting import WaitingSpinner
 
@@ -68,6 +70,20 @@ class MissingAPIKeyError(ValueError):
 
 class FinishReasonLength(Exception):
     pass
+
+
+def get_reasoning_details(message):
+    """OpenRouter's reasoning_details from a message or delta, wherever litellm put them."""
+    if message is None:
+        return []
+    details = getattr(message, "reasoning_details", None)
+    if not details:
+        fields = getattr(message, "provider_specific_fields", None) or {}
+        details = fields.get("reasoning_details")
+    return details if isinstance(details, list) else []
+
+
+PROJECT_MEMORY_FNAME = "LOOM.md"
 
 
 def wrap_fence(name):
@@ -94,6 +110,7 @@ class Coder:
     last_asked_for_commit_time = 0
     repo_map = None
     functions = None
+    tools = None
     num_exhausted_context_windows = 0
     num_malformed_responses = 0
     last_keyboard_interrupt = None
@@ -180,6 +197,10 @@ class Coder:
                 total_tokens_sent=from_coder.total_tokens_sent,
                 total_tokens_received=from_coder.total_tokens_received,
                 file_watcher=from_coder.file_watcher,
+                permissions=from_coder.permissions,
+                session=from_coder.session,
+                mcp=from_coder.mcp,
+                hooks=from_coder.hooks,
             )
             use_kwargs.update(update)  # override to complete the switch
             use_kwargs.update(kwargs)  # override passed kwargs
@@ -278,6 +299,9 @@ class Coder:
         else:
             lines.append("Repo-map: disabled")
 
+        for fname in self.get_project_memory_files():
+            lines.append(f"Project memory: {self.get_project_memory_name(fname)}")
+
         # Files
         for fname in self.get_inchat_relative_files():
             lines.append(f"Added {fname} to the chat.")
@@ -287,7 +311,11 @@ class Coder:
             lines.append(f"Added {rel_fname} to the chat (read-only).")
 
         if self.done_messages:
-            lines.append("Restored previous conversation history.")
+            if self.session.messages:
+                updated = self.session.data.get("updated", "")[:16].replace("T", " ")
+                lines.append(f"Continuing conversation {self.session.id} from {updated}.")
+            else:
+                lines.append("Restored previous conversation history.")
 
         if self.io.multiline_mode:
             lines.append("Multiline mode: Enabled. Enter inserts newline, Alt-Enter submits text")
@@ -338,6 +366,12 @@ class Coder:
         file_watcher=None,
         auto_copy_context=False,
         auto_accept_architect=True,
+        permissions=None,
+        project_memory=True,
+        session=None,
+        mcp=None,
+        hooks=None,
+        auto_compact=True,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -352,6 +386,7 @@ class Coder:
 
         self.auto_copy_context = auto_copy_context
         self.auto_accept_architect = auto_accept_architect
+        self.project_memory = project_memory
 
         self.ignore_mentions = ignore_mentions
         if not self.ignore_mentions:
@@ -386,6 +421,8 @@ class Coder:
         self.total_tokens_received = total_tokens_received
         self.message_tokens_sent = 0
         self.message_tokens_received = 0
+        self.message_cache_hit_tokens = 0
+        self.message_cache_write_tokens = 0
 
         self.verbose = verbose
         self.abs_fnames = set()
@@ -403,6 +440,18 @@ class Coder:
             self.done_messages = []
 
         self.io = io
+
+        if permissions is None:
+            permissions = Permissions(io)
+        self.permissions = permissions
+
+        # The saved conversation, and state that outlives this coder like the to-do list
+        self.session = session or Session()
+        # Connected MCP servers, whose tools the agent can use
+        self.mcp = mcp
+        # Shell commands to run before and after the agent's tool calls
+        self.hooks = hooks
+        self.auto_compact = auto_compact
 
         self.shell_commands = []
 
@@ -672,7 +721,8 @@ class Coder:
     def get_cur_message_text(self):
         text = ""
         for msg in self.cur_messages:
-            text += msg["content"] + "\n"
+            if isinstance(msg.get("content"), str):
+                text += msg["content"] + "\n"
         return text
 
     def get_ident_mentions(self, text):
@@ -755,7 +805,7 @@ class Coder:
                 dict(role="user", content=repo_content),
                 dict(
                     role="assistant",
-                    content="Ok, I won't try and edit those files without asking first.",
+                    content=self.gpt_prompts.repo_content_assistant_reply,
                 ),
             ]
         return repo_messages
@@ -899,15 +949,24 @@ class Coder:
         inchat_files = self.get_inchat_relative_files()
         read_only_files = [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]
         all_files = sorted(set(inchat_files + read_only_files))
-        edit_format = "" if self.edit_format == self.main_model.edit_format else self.edit_format
         return self.io.get_input(
             self.root,
             all_files,
             self.get_addable_relative_files(),
             self.commands,
             self.abs_read_only_fnames,
-            edit_format=edit_format,
+            edit_format=self.get_prompt_label(),
+            cycle_mode=self.get_mode_cycler(),
         )
+
+    def get_prompt_label(self):
+        """Shown before the > of the input prompt."""
+        return "" if self.edit_format == self.main_model.edit_format else self.edit_format
+
+    def get_mode_cycler(self):
+        """A function for Shift-Tab to call, which switches mode and returns the new prompt
+        label, or None if this coder has no modes to cycle through."""
+        return None
 
     def preproc_user_input(self, inp):
         if not inp:
@@ -929,19 +988,84 @@ class Coder:
         else:
             message = user_message
 
-        while message:
-            self.reflected_message = None
-            list(self.send_message(message))
+        try:
+            while message:
+                self.reflected_message = None
+                list(self.send_message(message))
 
-            if not self.reflected_message:
-                break
+                if not self.reflected_message:
+                    break
 
-            if self.num_reflections >= self.max_reflections:
-                self.io.tool_warning(f"Only {self.max_reflections} reflections allowed, stopping.")
-                return
+                if self.num_reflections >= self.max_reflections:
+                    self.io.tool_warning(
+                        f"Only {self.max_reflections} reflections allowed, stopping."
+                    )
+                    return
 
-            self.num_reflections += 1
-            message = self.reflected_message
+                self.num_reflections += 1
+                message = self.reflected_message
+        finally:
+            if message:
+                self.save_session()
+
+    def show_session_recap(self, num_requests=2, max_tool_calls=5):
+        """Show the end of a resumed conversation: its last few requests, the tools used and
+        the replies."""
+        messages = self.done_messages
+        starts = [
+            num
+            for num, msg in enumerate(messages)
+            if msg["role"] == "user"
+            and isinstance(msg.get("content"), str)
+            and not msg["content"].startswith(prompts.summary_prefix)
+        ]
+        if not starts:
+            return
+        first = starts[-num_requests:][0]
+        self.io.tool_output()
+        if first:
+            self.io.tool_output(f"… {first} earlier messages")
+
+        num_calls = 0
+        for msg in messages[first:]:
+            content = msg.get("content")
+            if msg["role"] == "user" and isinstance(content, str):
+                num_calls = 0
+                self.io.display_user_input("> " + content.strip())
+            elif msg["role"] == "assistant":
+                for call in msg.get("tool_calls") or []:
+                    num_calls += 1
+                    if num_calls <= max_tool_calls:
+                        function = call["function"]
+                        try:
+                            args = json.loads(function["arguments"] or "{}")
+                        except ValueError:
+                            args = {}
+                        detail = ""
+                        if isinstance(args, dict):
+                            detail = next(
+                                (v for v in args.values() if isinstance(v, str) and v.strip()), ""
+                            )
+                        self.io.tool_call(tools.display_name(function["name"]), detail)
+                    elif num_calls == max_tool_calls + 1:
+                        self.io.tool_output("  … more tool calls")
+                if isinstance(content, str) and content.strip():
+                    self.io.assistant_output(content, pretty=self.show_pretty())
+        self.io.tool_output()
+
+    @property
+    def todos(self):
+        """The agent's to-do list for the conversation."""
+        return self.session.todos
+
+    def save_session(self):
+        """Save the conversation, so `loom --continue` can resume it."""
+        try:
+            self.session.save(self)
+        except OSError as err:
+            self.io.tool_warning(f"Unable to save the session to {self.session.path}: {err}")
+            # Keep going without saving
+            self.session.directory = None
 
     def check_and_open_urls(self, exc, friendly_msg=None):
         """Check exception for URLs, offer to open in a browser, with user-friendly error msgs."""
@@ -983,9 +1107,19 @@ class Coder:
 
         return inp
 
+    def get_spinner_text(self):
+        """Shown next to the spinner while waiting for the model: a string, or a function
+        returning one."""
+        return "Waiting for " + self.main_model.name
+
     def keyboard_interrupt(self):
         # Ensure cursor is visible on exit
         Console().show_cursor(True)
+
+        if self.io.consume_esc():
+            # Esc stops the current work, and never counts towards exiting
+            self.io.tool_warning("Interrupted. Tell loom what to do instead.")
+            return
 
         now = time.time()
 
@@ -1008,7 +1142,8 @@ class Coder:
         if self.verbose:
             self.io.tool_output("Starting to summarize chat history.")
 
-        self.summarizer_thread = threading.Thread(target=self.summarize_worker)
+        # A daemon, so exiting loom (like after --message) doesn't wait for it or fail it
+        self.summarizer_thread = threading.Thread(target=self.summarize_worker, daemon=True)
         self.summarizer_thread.start()
 
     def summarize_worker(self):
@@ -1171,6 +1306,53 @@ class Coder:
 
         return platform_text
 
+    def get_project_memory_files(self):
+        """LOOM.md files that apply here: ~/.loom/LOOM.md, then one in each directory from the
+        project root down to the current directory, most general first."""
+        if not self.project_memory:
+            return []
+
+        root = Path(self.root).resolve()
+        dirs = [root]
+        try:
+            for part in Path.cwd().resolve().relative_to(root).parts:
+                dirs.append(dirs[-1] / part)
+        except (ValueError, OSError):
+            pass
+
+        candidates = [Path.home() / ".loom" / PROJECT_MEMORY_FNAME]
+        candidates += [dname / PROJECT_MEMORY_FNAME for dname in dirs]
+
+        res = []
+        for fname in candidates:
+            if fname not in res and fname.is_file():
+                res.append(fname)
+        return res
+
+    def get_project_memory_name(self, fname):
+        roots = [(Path(self.root).resolve(), "")]
+        roots += [(home, "~/") for home in (Path.home(), Path.home().resolve())]
+        for root, prefix in roots:
+            try:
+                return prefix + fname.relative_to(root).as_posix()
+            except ValueError:
+                pass
+        return str(fname)
+
+    def get_project_memory(self):
+        """The LOOM.md instructions for the system prompt. Re-read every time, so edits to the
+        files apply to the next message."""
+        sections = []
+        for fname in self.get_project_memory_files():
+            content = self.io.read_text(fname, silent=True)
+            if content and content.strip():
+                name = self.get_project_memory_name(fname)
+                sections.append(f"## {name}\n\n{content.strip()}")
+
+        if not sections:
+            return ""
+        return prompts.project_memory_prefix + "\n\n".join(sections)
+
     def fmt_system_prompt(self, prompt):
         final_reminders = []
         if self.main_model.lazy:
@@ -1258,6 +1440,10 @@ class Coder:
                     dict(role="assistant", content="Ok."),
                 ]
 
+        project_memory = self.get_project_memory()
+        if project_memory:
+            main_sys += "\n\n" + project_memory + "\n"
+
         if self.gpt_prompts.system_reminder:
             main_sys += "\n" + self.fmt_system_prompt(self.gpt_prompts.system_reminder)
 
@@ -1276,7 +1462,10 @@ class Coder:
         chunks.examples = example_messages
 
         self.summarize_end()
-        chunks.done = self.done_messages
+        if self.tools:
+            chunks.done = self.done_messages
+        else:
+            chunks.done = utils.flatten_tool_messages(self.done_messages)
 
         chunks.repo = self.get_repo_messages()
         chunks.readonly_files = self.get_readonly_files_messages()
@@ -1422,9 +1611,11 @@ class Coder:
         # Notify IO that LLM processing is starting
         self.io.llm_started()
 
-        self.cur_messages += [
-            dict(role="user", content=inp),
-        ]
+        # inp is None when the agent sends tool results back to the model
+        if inp is not None:
+            self.cur_messages += [
+                dict(role="user", content=inp),
+            ]
 
         chunks = self.format_messages()
         messages = chunks.all_messages()
@@ -1437,7 +1628,7 @@ class Coder:
 
         self.multi_response_content = ""
         if self.show_pretty():
-            self.waiting_spinner = WaitingSpinner("Waiting for " + self.main_model.name)
+            self.waiting_spinner = WaitingSpinner(self.get_spinner_text())
             self.waiting_spinner.start()
             if self.stream:
                 self.mdstream = self.io.get_assistant_mdstream()
@@ -1462,6 +1653,9 @@ class Coder:
                     ex_info = litellm_ex.get_ex_info(err)
 
                     if ex_info.name == "ContextWindowExceededError":
+                        if self.compact_after_overflow():
+                            messages = self.format_messages().all_messages()
+                            continue
                         exhausted = True
                         break
 
@@ -1624,6 +1818,11 @@ class Coder:
 
     def reply_completed(self):
         pass
+
+    def compact_after_overflow(self):
+        """Called when the model rejects the messages as too long for its context window.
+        Return True after shrinking them, to send them again."""
+        return False
 
     def show_exhausted_error(self):
         output_tokens = 0
@@ -1789,6 +1988,11 @@ class Coder:
 
         self.partial_response_content = ""
         self.partial_response_function_call = dict()
+        self.partial_response_tool_calls = []
+        # The model's thinking, which Anthropic needs back alongside its tool calls
+        self.partial_response_thinking_blocks = []
+        self.partial_response_reasoning_details = []
+        self.stream_usage = None
 
         self.io.log_llm_history("TO LLM", format_messages(messages))
 
@@ -1799,6 +2003,7 @@ class Coder:
                 functions,
                 self.stream,
                 self.temperature,
+                tools=self.tools,
             )
             self.chat_completion_call_hashes.append(hash_object.hexdigest())
 
@@ -1807,7 +2012,10 @@ class Coder:
             else:
                 self.show_send_output(completion)
 
-            # Calculate costs for successful responses
+            # Calculate costs for successful responses. A stream reports its usage, including
+            # cached tokens, in its last chunk.
+            if self.stream and self.stream_usage is not None:
+                completion = litellm.ModelResponse(model=model.name, usage=self.stream_usage)
             self.calculate_and_show_tokens_and_cost(messages, completion)
 
         except LiteLLMExceptions().exceptions_tuple() as err:
@@ -1824,6 +2032,11 @@ class Coder:
                 "LLM RESPONSE",
                 format_content("ASSISTANT", self.partial_response_content),
             )
+            for call in self.partial_response_tool_calls:
+                function = call["function"]
+                self.io.log_llm_history(
+                    "LLM TOOL CALL", f"{function['name']} {function['arguments']}"
+                )
 
             if self.partial_response_content:
                 self.io.ai_output(self.partial_response_content)
@@ -1847,12 +2060,20 @@ class Coder:
         show_func_err = None
         show_content_err = None
         try:
-            if completion.choices[0].message.tool_calls:
-                self.partial_response_function_call = (
-                    completion.choices[0].message.tool_calls[0].function
-                )
+            tool_calls = completion.choices[0].message.tool_calls
+            if tool_calls and self.tools:
+                for index, tool_call in enumerate(tool_calls):
+                    self.add_tool_call_delta(tool_call, index)
+            elif tool_calls:
+                self.partial_response_function_call = tool_calls[0].function
         except AttributeError as func_err:
             show_func_err = func_err
+
+        message = getattr(completion.choices[0], "message", None)
+        for block in getattr(message, "thinking_blocks", None) or []:
+            self.add_thinking_block_delta(block)
+        for detail in get_reasoning_details(message):
+            self.add_reasoning_detail_delta(detail)
 
         try:
             reasoning_content = completion.choices[0].message.reasoning_content
@@ -1889,7 +2110,8 @@ class Coder:
 
         show_resp = replace_reasoning_tags(show_resp, self.reasoning_tag_name)
 
-        self.io.assistant_output(show_resp, pretty=self.show_pretty())
+        if show_resp or not self.partial_response_tool_calls:
+            self.io.assistant_output(show_resp, pretty=self.show_pretty())
 
         if (
             hasattr(completion.choices[0], "finish_reason")
@@ -1901,6 +2123,10 @@ class Coder:
         received_content = False
 
         for chunk in completion:
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                self.stream_usage = usage
+
             if len(chunk.choices) == 0:
                 continue
 
@@ -1921,6 +2147,17 @@ class Coder:
                 received_content = True
             except AttributeError:
                 pass
+
+            tool_calls = getattr(chunk.choices[0].delta, "tool_calls", None)
+            if tool_calls:
+                for tool_call in tool_calls:
+                    self.add_tool_call_delta(tool_call)
+                received_content = True
+
+            for block in getattr(chunk.choices[0].delta, "thinking_blocks", None) or []:
+                self.add_thinking_block_delta(block)
+            for detail in get_reasoning_details(chunk.choices[0].delta):
+                self.add_reasoning_detail_delta(detail)
 
             text = ""
 
@@ -1974,6 +2211,107 @@ class Coder:
         if not received_content:
             self.io.tool_warning("Empty response received from LLM. Check your provider account?")
 
+    def add_tool_call_delta(self, tool_call, index=None):
+        """Merge one streamed piece of a tool call (or a whole non-streamed call) into
+        partial_response_tool_calls. A reply can hold any number of tool calls."""
+        calls = self.partial_response_tool_calls
+        call_id = getattr(tool_call, "id", None)
+        if index is None:
+            index = getattr(tool_call, "index", None)
+
+        entry = None
+        if call_id:
+            entry = next((c for c in calls if c["id"] == call_id), None)
+        if entry is None and index is not None:
+            entry = next((c for c in calls if c["index"] == index), None)
+        if entry is None and not call_id and index is None and calls:
+            entry = calls[-1]
+        if entry is None:
+            entry = dict(
+                index=index if index is not None else len(calls),
+                id=call_id or "",
+                type="function",
+                function=dict(name="", arguments=""),
+            )
+            calls.append(entry)
+
+        if call_id and not entry["id"]:
+            entry["id"] = call_id
+        function = getattr(tool_call, "function", None)
+        name = getattr(function, "name", None)
+        arguments = getattr(function, "arguments", None)
+        if name and name != entry["function"]["name"]:
+            entry["function"]["name"] += name
+        if arguments:
+            entry["function"]["arguments"] += arguments
+
+    def add_thinking_block_delta(self, block):
+        """Merge a streamed piece of an Anthropic thinking block (or a whole block)."""
+        block = dict(block)
+        blocks = self.partial_response_thinking_blocks
+        if block.get("type") != "thinking":
+            # redacted_thinking blocks arrive whole
+            blocks.append(block)
+            return
+
+        last = blocks[-1] if blocks else None
+        if not (last and last.get("type") == "thinking" and not last.get("signature")):
+            last = dict(type="thinking", thinking="", signature="")
+            blocks.append(last)
+        last["thinking"] += block.get("thinking") or ""
+        if block.get("signature"):
+            last["signature"] = block["signature"]
+
+    def add_reasoning_detail_delta(self, detail):
+        """Merge a streamed piece of an OpenRouter reasoning_details entry."""
+        detail = dict(detail)
+        details = self.partial_response_reasoning_details
+        index = detail.get("index")
+        entry = next((d for d in details if index is not None and d.get("index") == index), None)
+        if entry is None:
+            details.append(detail)
+            return
+        for key, value in detail.items():
+            if value is None:
+                continue
+            if key in ("text", "summary", "data") and isinstance(value, str):
+                entry[key] = (entry.get(key) or "") + value
+            else:
+                entry[key] = value
+
+    def get_thinking(self):
+        """The last reply's thinking, as fields for its assistant message. Anthropic rejects a
+        tool-use continuation whose assistant message has lost its signed thinking."""
+        res = {}
+        blocks = [
+            block
+            for block in self.partial_response_thinking_blocks
+            if block.get("type") != "thinking" or block.get("signature")
+        ]
+        if blocks:
+            res["thinking_blocks"] = blocks
+        if self.partial_response_reasoning_details:
+            res["reasoning_details"] = self.partial_response_reasoning_details
+        return res
+
+    def get_tool_calls(self):
+        """The tool calls of the last reply, in the shape the chat API expects back."""
+        res = []
+        for num, call in enumerate(self.partial_response_tool_calls):
+            if not call["function"]["name"]:
+                continue
+            res.append(
+                dict(
+                    id=call["id"] or f"call_{len(self.cur_messages)}_{num}",
+                    type="function",
+                    function=dict(
+                        name=call["function"]["name"],
+                        arguments=call["function"]["arguments"] or "{}",
+                    ),
+                )
+            )
+        return res
+
     def live_incremental_response(self, final):
         show_resp = self.render_incremental_response(final)
         # Apply any reasoning tag formatting
@@ -1985,11 +2323,16 @@ class Coder:
 
     def remove_reasoning_content(self):
         """Remove reasoning content from the model's response."""
+        content = self.partial_response_content
+        # A reply that ends while still reasoning (it went on to call tools, or was
+        # interrupted) never got its closing tag
+        closing = f"</{self.reasoning_tag_name}>"
+        for tag in (REASONING_TAG, self.reasoning_tag_name):
+            if f"<{tag}>" in content and closing not in content:
+                content += f"\n\n{closing}\n\n"
+                break
 
-        self.partial_response_content = remove_reasoning_content(
-            self.partial_response_content,
-            self.reasoning_tag_name,
-        )
+        self.partial_response_content = remove_reasoning_content(content, self.reasoning_tag_name)
 
     def calculate_and_show_tokens_and_cost(self, messages, completion=None):
         prompt_tokens = 0
@@ -2003,15 +2346,14 @@ class Coder:
             cache_hit_tokens = getattr(completion.usage, "prompt_cache_hit_tokens", 0) or getattr(
                 completion.usage, "cache_read_input_tokens", 0
             )
-            cache_write_tokens = getattr(completion.usage, "cache_creation_input_tokens", 0)
+            if not cache_hit_tokens:
+                # OpenAI and OpenRouter report cache hits here
+                details = getattr(completion.usage, "prompt_tokens_details", None)
+                cache_hit_tokens = getattr(details, "cached_tokens", 0) or 0
+            cache_write_tokens = getattr(completion.usage, "cache_creation_input_tokens", 0) or 0
 
-            if hasattr(completion.usage, "cache_read_input_tokens") or hasattr(
-                completion.usage, "cache_creation_input_tokens"
-            ):
-                self.message_tokens_sent += prompt_tokens
-                self.message_tokens_sent += cache_write_tokens
-            else:
-                self.message_tokens_sent += prompt_tokens
+            # litellm's prompt_tokens already counts the cache writes and hits
+            self.message_tokens_sent += prompt_tokens
 
         else:
             prompt_tokens = self.main_model.token_count(messages)
@@ -2019,13 +2361,16 @@ class Coder:
             self.message_tokens_sent += prompt_tokens
 
         self.message_tokens_received += completion_tokens
+        # Totals over every request the message took, like the agent's steps
+        self.message_cache_hit_tokens += cache_hit_tokens
+        self.message_cache_write_tokens += cache_write_tokens
 
         tokens_report = f"Tokens: {format_tokens(self.message_tokens_sent)} sent"
 
-        if cache_write_tokens:
-            tokens_report += f", {format_tokens(cache_write_tokens)} cache write"
-        if cache_hit_tokens:
-            tokens_report += f", {format_tokens(cache_hit_tokens)} cache hit"
+        if self.message_cache_write_tokens:
+            tokens_report += f", {format_tokens(self.message_cache_write_tokens)} cache write"
+        if self.message_cache_hit_tokens:
+            tokens_report += f", {format_tokens(self.message_cache_hit_tokens)} cache hit"
         tokens_report += f", {format_tokens(self.message_tokens_received)} received."
 
         if not self.main_model.info.get("input_cost_per_token"):
@@ -2060,7 +2405,7 @@ class Coder:
             f" ${format_cost(self.total_cost)} session."
         )
 
-        if cache_hit_tokens and cache_write_tokens:
+        if self.message_cache_hit_tokens and self.message_cache_write_tokens:
             sep = "\n"
         else:
             sep = " "
@@ -2124,6 +2469,8 @@ class Coder:
         self.message_cost = 0.0
         self.message_tokens_sent = 0
         self.message_tokens_received = 0
+        self.message_cache_hit_tokens = 0
+        self.message_cache_write_tokens = 0
 
     def get_multi_response_content_in_progress(self, final=False):
         cur = self.multi_response_content or ""
@@ -2368,7 +2715,8 @@ class Coder:
         context = ""
         if history:
             for msg in history:
-                context += "\n" + msg["role"].upper() + ": " + msg["content"] + "\n"
+                if isinstance(msg.get("content"), str):
+                    context += "\n" + msg["role"].upper() + ": " + msg["content"] + "\n"
 
         return context
 

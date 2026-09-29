@@ -110,4 +110,9 @@ class LiteLLMExceptions:
                 )
             # Fall through to default APIError handling if not the specific credits error
 
-        return self.exceptions.get(ex.__class__, ExInfo(None, None, None))
+        # Subclasses, like MidStreamFallbackError of ServiceUnavailableError, act like their
+        # parent: a stream that fails part way through is retried
+        for cls in ex.__class__.__mro__:
+            if cls in self.exceptions:
+                return self.exceptions[cls]
+        return ExInfo(None, None, None)

@@ -120,8 +120,9 @@ MODEL_ALIASES = {
     "gemini-exp": "gemini/gemini-2.5-pro-exp-03-25",
     "grok3": "xai/grok-3-beta",
     "optimus": "openrouter/openrouter/optimus-alpha",
-    "nemotron": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-    "deepseek-flash": "nvidia_nim/deepseek-ai/deepseek-v4-flash-0731",
+    "nemotron": "nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b",
+    "nemotron-super": "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+    "deepseek-flash": "nvidia_nim/deepseek-ai/deepseek-v4.1-flash",
     "gemini-3.1": "gemini/gemini-3.1-pro-preview",
 }
 # Model metadata loaded from resources and user's files.
@@ -985,7 +986,7 @@ class Model(ModelSettings):
 
             os.environ[openai_api_key] = token
 
-    def send_completion(self, messages, functions, stream, temperature=None):
+    def send_completion(self, messages, functions, stream, temperature=None, tools=None):
         if os.environ.get("LOOM_SANITY_CHECK_TURNS"):
             sanity_check_messages(messages)
 
@@ -1006,10 +1007,16 @@ class Model(ModelSettings):
 
             kwargs["temperature"] = temperature
 
-        if functions is not None:
+        if tools:
+            # The model may call any number of these tools, or none
+            kwargs["tools"] = tools
+        elif functions is not None:
             function = functions[0]
             kwargs["tools"] = [dict(type="function", function=function)]
             kwargs["tool_choice"] = {"type": "function", "function": {"name": function["name"]}}
+        if stream:
+            # The last chunk then reports usage, including cached tokens, for the cost report
+            kwargs["stream_options"] = {"include_usage": True}
         if self.extra_params:
             kwargs.update(self.extra_params)
         if self.is_ollama() and "num_ctx" not in kwargs:

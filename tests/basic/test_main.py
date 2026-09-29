@@ -143,13 +143,13 @@ class TestMain(TestCase):
             # Test without .env file present
             gitignore.write_text("one\ntwo\n")
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.loom*\n", gitignore.read_text())
+            self.assertEqual("one\ntwo\n.loom*\n!.loom/\n", gitignore.read_text())
 
             # Test with .env file present
             env_file = cwd / ".env"
             env_file.touch()
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.loom*\n.env\n", gitignore.read_text())
+            self.assertEqual("one\ntwo\n.loom*\n!.loom/\n.env\n", gitignore.read_text())
             del os.environ["GIT_CONFIG_GLOBAL"]
 
     def test_command_line_gitignore_files_flag(self):
@@ -1372,7 +1372,8 @@ class TestMain(TestCase):
                 mock_instance.set_thinking_tokens.assert_not_called()
 
     @patch("loom.main.InputOutput")
-    def test_stream_and_cache_warning(self, MockInputOutput):
+    def test_stream_and_cache_no_cost_warning(self, MockInputOutput):
+        # Streams report their usage, including cached tokens, so costs are accurate
         mock_io_instance = MockInputOutput.return_value
         with GitTemporaryDirectory():
             main(
@@ -1380,9 +1381,8 @@ class TestMain(TestCase):
                 input=DummyInput(),
                 output=DummyOutput(),
             )
-        mock_io_instance.tool_warning.assert_called_with(
-            "Cost estimates may be inaccurate when using streaming and caching."
-        )
+        for call in mock_io_instance.tool_warning.call_args_list:
+            self.assertNotIn("Cost estimates may be inaccurate", call[0][0])
 
     @patch("loom.main.InputOutput")
     def test_stream_without_cache_no_warning(self, MockInputOutput):
@@ -1425,6 +1425,12 @@ class TestMain(TestCase):
             oauth_keys_file = loom_dir / "oauth-keys.env"
             oauth_keys_file.write_text("OAUTH_VAR=oauth_val\nSHARED_VAR=oauth_shared\n")
 
+            # And a JSON credentials file, loaded before everything else
+            credentials_file = loom_dir / "credentials.json"
+            credentials_file.write_text(
+                '{"CRED_VAR": "cred_val", "SHARED_VAR": "cred_shared", "bad name": "x", "N": 1}'
+            )
+
             # Create git root .env file
             git_root_env = git_dir / ".env"
             git_root_env.write_text("GIT_VAR=git_val\nSHARED_VAR=git_shared\n")
@@ -1440,14 +1446,15 @@ class TestMain(TestCase):
             os.chdir(cwd_subdir)
 
             # Clear relevant env vars before test
-            for var in ["OAUTH_VAR", "SHARED_VAR", "GIT_VAR", "CWD_VAR"]:
+            for var in ["OAUTH_VAR", "SHARED_VAR", "GIT_VAR", "CWD_VAR", "CRED_VAR", "N"]:
                 if var in os.environ:
                     del os.environ[var]
 
             with patch("pathlib.Path.home", return_value=fake_home):
                 loaded_files = load_dotenv_files(str(git_dir), None)
 
-                # Assert files were loaded in expected order (oauth first)
+                # Assert files were loaded in expected order (credentials, then oauth)
+                self.assertEqual(loaded_files[0], str(credentials_file.resolve()))
                 self.assertIn(str(oauth_keys_file.resolve()), loaded_files)
                 self.assertIn(str(git_root_env.resolve()), loaded_files)
                 self.assertIn(str(cwd_env.resolve()), loaded_files)
@@ -1461,6 +1468,9 @@ class TestMain(TestCase):
                 )
 
                 # Assert environment variables reflect the override order
+                self.assertEqual(os.environ.get("CRED_VAR"), "cred_val")
+                self.assertNotIn("bad name", os.environ)
+                self.assertNotIn("N", os.environ)
                 self.assertEqual(os.environ.get("OAUTH_VAR"), "oauth_val")
                 self.assertEqual(os.environ.get("GIT_VAR"), "git_val")
                 self.assertEqual(os.environ.get("CWD_VAR"), "cwd_val")

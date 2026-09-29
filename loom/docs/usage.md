@@ -13,7 +13,10 @@ work without git (you lose auto-commits and `/undo`).
 
 ## Adding files to the chat
 
-Loom only edits files that are *in the chat*. Add the files that need to change:
+In agent mode (the default, see [agent.md](agent.md)) the model finds and reads files
+itself, and adding files is optional: added files are shown to it in full. In the other
+chat modes loom only edits files that are *in the chat*. Add the files that need to
+change:
 
 - `/add <files or globs>` adds files loom may edit.
 - `/read-only <files>` adds files as reference only; loom will not edit them. Good for
@@ -34,7 +37,10 @@ Each message goes to the current mode. Switch with `/chat-mode <mode>`, or send 
 message in another mode with `/ask ...`, `/code ...`, `/architect ...`, `/context ...`
 or `/help ...`. The same commands with no message switch modes.
 
-- **code** (default): asks for changes and applies them to your files.
+- **agent** (default when the model supports tool calling): the model explores, edits
+  and runs commands itself, asking before edits and commands. See [agent.md](agent.md).
+- **code**: asks for changes and applies them to the files in the chat. This is the
+  default for models without tool calling, or with `--no-agent`.
 - **ask**: questions about your code; no files are changed. A common pattern is to plan
   in `/ask`, then say `/code go ahead` (or `/ok`) to make the change.
 - **architect**: an architect model proposes the change and an editor model turns the
@@ -84,8 +90,8 @@ loom --message "add type hints to utils.py" utils.py
 ```
 
 `--message-file` reads the instruction from a file, and `--yes-always` answers yes to
-every confirmation. Use this carefully, since loom will then run shell commands the model
-suggests without asking.
+confirmations. It doesn't approve the agent's shell commands: allow the ones a script
+needs with `--allow`, as described in [agent.md](agent.md#scripting).
 
 ## Tips
 

@@ -43,7 +43,7 @@ def gen_commands():
         "| Command | Description |\n",
         "|---|---|\n",
     ]
-    for cmd in commands.get_commands():
+    for cmd in commands.get_builtin_commands():
         method = getattr(commands, f"cmd_{cmd[1:]}".replace("-", "_"), None)
         doc = " ".join((method.__doc__ or "").split()) if method else ""
         lines.append(f"| `{cmd}` | {doc} |\n")
@@ -59,6 +59,11 @@ def gen_commands():
 
 `!cmd` is the same as `/run cmd`: it runs a shell command and offers to add the output
 to the chat.
+
+## Your own commands
+
+Save prompts as Markdown files in `.loom/commands/` or `~/.loom/commands/` to run them
+as `/name`: see [custom-commands.md](custom-commands.md).
 """)
     return "".join(lines)
 

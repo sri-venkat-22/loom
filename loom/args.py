@@ -232,8 +232,11 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--cache-prompts",
         action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Enable caching of prompts (default: False)",
+        default=None,
+        help=(
+            "Enable caching of prompts, for models that need it requested (default: on for the"
+            " agent, off otherwise)"
+        ),
     )
     group.add_argument(
         "--cache-keepalive-pings",
@@ -291,6 +294,27 @@ def get_parser(default_config_files, git_root):
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Restore the previous chat history messages (default: False)",
+    )
+    group.add_argument(
+        "--continue",
+        dest="continue_session",
+        action="store_true",
+        default=False,
+        help="Continue the most recent conversation in this project",
+    )
+    group.add_argument(
+        "--resume",
+        metavar="SESSION_ID",
+        help="Continue a saved conversation, by its id or the start of it (see /sessions)",
+    )
+    group.add_argument(
+        "--sessions",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable saving each conversation to .loom.sessions/ in the project, for"
+            " --continue and --resume (default: True)"
+        ),
     )
     group.add_argument(
         "--llm-history-file",
@@ -521,6 +545,77 @@ def get_parser(default_config_files, git_root):
         default=False,
         help="Enable/disable watching files for ai coding comments (default: False)",
     )
+    group = parser.add_argument_group("Agent settings")
+    group.add_argument(
+        "--agent",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable the agent, which reads, edits and runs commands with tools, when no"
+            " edit format is given and the model supports tool calling (default: True)"
+        ),
+    )
+    group.add_argument(
+        "--permission-mode",
+        choices=["ask", "accept-edits", "plan"],
+        default="ask",
+        help=(
+            "What the agent may do without asking: ask (reads only), accept-edits (reads and"
+            " edits) or plan (reads only, and it can't edit or run commands) (default: ask)"
+        ),
+    )
+    group.add_argument(
+        "--allow",
+        action="append",
+        metavar="RULE",
+        default=[],
+        help=(
+            "Let the agent do something without asking, eg: 'bash(pytest*)', 'edit(src/**)'"
+            " (can be used multiple times)"
+        ),
+    )
+    group.add_argument(
+        "--project-memory",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable/disable adding LOOM.md files to the system prompt (default: True)",
+    )
+    group.add_argument(
+        "--auto-compact",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable summarizing the agent's older steps when the conversation nears the"
+            " model's context window (default: True)"
+        ),
+    )
+    group.add_argument(
+        "--mcp",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable connecting to the MCP servers in ~/.loom/mcp.json, the project's"
+            " .mcp.json and --mcp-config files (default: True)"
+        ),
+    )
+    group.add_argument(
+        "--mcp-config",
+        action="append",
+        metavar="MCP_CONFIG_FILE",
+        default=[],
+        help="Connect to the MCP servers in this JSON file (can be used multiple times)",
+    )
+    group.add_argument(
+        "--hooks",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable running the hooks in ~/.loom/hooks.json and the project's"
+            " .loom/hooks.json before and after the agent's tool calls (default: True)"
+        ),
+    )
+
+    ##########
     group = parser.add_argument_group("Fixing and committing")
     group.add_argument(
         "--lint",

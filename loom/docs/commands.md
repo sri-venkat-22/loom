@@ -7,12 +7,14 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | Command | Description |
 |---|---|
 | `/add` | Add files to the chat so loom can edit them or review them in detail |
+| `/agent` | Work as an agent that explores, edits files and runs commands with tools. If no prompt provided, switches to agent mode. |
 | `/architect` | Enter architect/editor mode using 2 different models. If no prompt provided, switches to architect/editor mode. |
 | `/ask` | Ask questions about the code base without editing any files. If no prompt provided, switches to ask mode. |
 | `/chat-mode` | Switch to a new chat mode |
 | `/clear` | Clear the chat history |
 | `/code` | Ask for changes to your code. If no prompt provided, switches to code mode. |
 | `/commit` | Commit edits to the repo made outside the chat (commit message optional) |
+| `/compact` | Summarize the chat history to free up context (optionally say what to focus on) |
 | `/context` | Enter context mode to see surrounding code context. If no prompt provided, switches to context mode. |
 | `/copy` | Copy the last assistant message to the clipboard |
 | `/copy-context` | Copy the current chat context as markdown, suitable to paste into a web UI |
@@ -24,26 +26,32 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/exit` | Exit the application |
 | `/git` | Run a git command (output excluded from chat) |
 | `/help` | Ask questions about loom |
+| `/hooks` | Show the hooks that run before and after the agent's tool calls |
 | `/lint` | Lint and fix in-chat files or all dirty files if none in chat |
 | `/load` | Load and execute commands from a file |
 | `/ls` | List all known files and indicate which are included in the chat session |
 | `/map` | Print out the current repository map |
 | `/map-refresh` | Force a refresh of the repository map |
+| `/mcp` | Show the MCP servers and their tools, or (re)connect one: /mcp tools [SERVER], /mcp connect SERVER |
 | `/model` | Switch the Main Model to a new LLM |
 | `/models` | Search the list of available models |
 | `/multiline-mode` | Toggle multiline mode (swaps behavior of Enter and Meta+Enter) |
 | `/ok` | Alias for `/code Ok, please go ahead and make those changes.` (any args are appended) |
 | `/paste` | Paste image/text from the clipboard into the chat. Optionally provide a name for the image. |
+| `/permissions` | Show what the agent may do without asking, switch mode (ask, accept-edits, plan) or add an allow rule (allow RULE) |
 | `/quit` | Exit the application |
 | `/read-only` | Add files to the chat that are for reference only, or turn added files to read-only |
 | `/reasoning-effort` | Set the reasoning effort level (values: number or low/medium/high depending on model) |
 | `/report` | Report a problem by opening a GitHub Issue |
 | `/reset` | Drop all files and clear the chat history |
+| `/resume` | Continue a saved conversation, by its id or the start of it (see /sessions) |
 | `/run` | Run a shell command and optionally add the output to the chat (alias: !) |
 | `/save` | Save commands to a file that can reconstruct the current chat session's files |
+| `/sessions` | List the saved conversations in this project, which /resume or --resume can continue |
 | `/settings` | Print out the current settings |
 | `/test` | Run a shell command and add the output to the chat on non-zero exit code |
 | `/think-tokens` | Set the thinking token budget, eg: 8096, 8k, 10.5k, 0.5M, or 0 to disable. |
+| `/todos` | Show the agent's to-do list |
 | `/tokens` | Report on the number of tokens used by the current chat context |
 | `/undo` | Undo the last git commit if it was done by loom |
 | `/voice` | Record and transcribe voice input |
@@ -60,3 +68,8 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 
 `!cmd` is the same as `/run cmd`: it runs a shell command and offers to add the output
 to the chat.
+
+## Your own commands
+
+Save prompts as Markdown files in `.loom/commands/` or `~/.loom/commands/` to run them
+as `/name`: see [custom-commands.md](custom-commands.md).

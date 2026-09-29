@@ -1,9 +1,9 @@
 # Loom
 
-Loom is AI pair programming in your terminal. You run `loom` inside a git repository,
-add the files you want to work on, and describe the change you want. Loom sends your
-request, the files, and a map of the rest of the repository to an LLM, applies the edits
-it returns to your files, and commits them to git.
+Loom is AI pair programming in your terminal. You run `loom` inside a git repository
+and describe what you want. Loom works as an agent: the model reads and searches your
+code, edits files and runs commands like your tests, asking before each edit and
+command, until the job is done. Then loom commits the changes to git.
 
 Loom is a fork of [Aider](https://github.com/Aider-AI/aider), used under the Apache-2.0
 license. It is developed at https://github.com/sri-venkat-22/loom.
@@ -39,18 +39,23 @@ loom --model gpt-4o --api-key openai=<key>
 loom --model gemini-3.1 --api-key gemini=<key>
 ```
 
-At the `>` prompt:
+At the `agent>` prompt:
 
 ```
-> /add src/app.py
-> add a --verbose flag that logs each request
+agent> add a --verbose flag that logs each request, with a test
 ```
 
-Loom edits `src/app.py`, shows the diff, and commits the change. Type `/undo` to revert
-it, or `/help <question>` to ask about using loom.
+Loom finds the code, shows each edit and command for you to approve, runs the tests and
+commits the change. Type `/undo` to revert it, or `/help <question>` to ask about using
+loom. Put project rules the model should always follow in a `LOOM.md` file.
 
 ## More docs
 
+- [agent.md](agent.md): the agent, its tools, permissions, and `LOOM.md` project memory
+- [sessions.md](sessions.md): continuing conversations with `--continue`, and long ones
+- [mcp.md](mcp.md): giving the agent tools from MCP servers
+- [custom-commands.md](custom-commands.md): your own `/commands` from Markdown files
+- [hooks.md](hooks.md): shell commands that run before or after the agent's tools
 - [usage.md](usage.md): adding files, chat modes, images, web pages, watch mode, voice
 - [commands.md](commands.md): every in-chat `/command`
 - [models.md](models.md): choosing a model and setting API keys

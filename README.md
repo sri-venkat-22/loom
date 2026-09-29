@@ -10,6 +10,12 @@ Loom lets you pair program with LLMs to start a new project or build on your exi
 
 ## Features
 
+- **Works as an agent** — ask for a change and the model finds the code, edits it, runs your tests and fixes what breaks, asking before each edit and command. See [the agent docs](loom/docs/agent.md).
+- **Permissions you control** — approve each action, accept edits automatically, or plan read-only; allow trusted commands like `bash(pytest*)`.
+- **Project memory** — put standing instructions in a `LOOM.md` file and they apply to every request.
+- **Sessions** — `loom --continue` picks up your last conversation, and long tasks compact themselves instead of overflowing the context window. See [sessions](loom/docs/sessions.md).
+- **MCP tools** — connect [MCP servers](loom/docs/mcp.md) and the agent can use their tools too.
+- **Custom commands and hooks** — save prompts as [`/commands`](loom/docs/custom-commands.md) in `.loom/commands/`, and run [hooks](loom/docs/hooks.md) before or after the agent's tools to block commands, format files or report lint errors.
 - **Cloud and local LLMs** — works best with Claude Sonnet, GPT-4o/o1/o3, and DeepSeek, but connects to almost any model, including local ones.
 - **Maps your codebase** — builds a map of your whole repo so it works well in larger projects, not just single files.
 - **100+ languages** — Python, JavaScript, Rust, Ruby, Go, C++, PHP, HTML, CSS, and dozens more via tree-sitter.

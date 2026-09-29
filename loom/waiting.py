@@ -128,7 +128,9 @@ class Spinner:
         if max_spinner_width < 0:  # Handle extremely narrow terminals
             max_spinner_width = 0
 
-        current_text_payload = f" {self.text}"
+        # The text can be a function, for a line that changes, like an elapsed time
+        text = self.text() if callable(self.text) else self.text
+        current_text_payload = f" {text}"
         line_to_display = f"{frame_str}{current_text_payload}"
 
         # Truncate the line if it's too long for the console width
