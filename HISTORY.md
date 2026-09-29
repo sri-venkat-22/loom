@@ -1,6 +1,6 @@
 # Release history
 
-### main branch
+### Loom v0.88.0
 
 - Loom now works as an agent by default when the model supports tool calling. The model
   reads, searches and edits files and runs commands with tools, calling as many as it
@@ -56,6 +56,9 @@
   calling. `scripts/check_agent_models.py` checks which models work in agent mode.
 - A stream that fails part way through (like NVIDIA's "Service temporarily overloaded") is
   now retried instead of ending the request.
+
+### Loom v0.87.0
+
 - First loom release: package `loom`, CLI command `loom`, config files `.loom*`,
   environment variables `LOOM_*`, and the `--loomignore` flag.
 - The `loom/extra_params` entry in the model settings file applies to every model.
