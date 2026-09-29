@@ -76,7 +76,8 @@ class TestScrape(unittest.TestCase):
 
         # Assert that the result contains expected content
         self.assertIsNotNone(result)
-        self.assertIn("Example Domain", result)
+        # example.com's wording changes over time, but it always links to IANA
+        self.assertIn("iana.org", result)
 
         # Assert that print_error was never called
         mock_print_error.assert_not_called()
