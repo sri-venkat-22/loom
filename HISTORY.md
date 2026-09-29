@@ -4,7 +4,7 @@ Loom is a fork of [Aider](https://github.com/Aider-AI/aider), taken from Aider's
 at version 0.86.3.dev. For changes before the fork, see
 [Aider's release history](https://github.com/Aider-AI/aider/blob/main/HISTORY.md).
 
-### main branch
+### Loom v0.88.0
 
 - Loom now works as an agent by default when the model supports tool calling. The model
   reads, searches and edits files and runs commands with tools, calling as many as it
@@ -60,6 +60,9 @@ at version 0.86.3.dev. For changes before the fork, see
   calling. `scripts/check_agent_models.py` checks which models work in agent mode.
 - A stream that fails part way through (like NVIDIA's "Service temporarily overloaded") is
   now retried instead of ending the request.
+
+### Loom v0.87.0
+
 - Renamed the project from aider to loom: package `loom`, CLI command `loom`, config files
   `.loom*`, environment variables `LOOM_*`, and the `--loomignore` flag.
 - Model settings key `aider/extra_params` is now `loom/extra_params`.
