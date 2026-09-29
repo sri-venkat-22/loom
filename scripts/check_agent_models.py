@@ -119,20 +119,24 @@ def make_repo(root):
 def run_task(model, timeout, log_file, stream):
     """Run the agent on the bug-fixing task. Returns a dict of findings."""
     res = dict(ok=False)
-    with tempfile.TemporaryDirectory() as tmp:
+    # ignore_cleanup_errors: on Windows git can still hold files open when the task ends
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         root = Path(tmp).resolve()
-        make_repo(root)
-        cwd = os.getcwd()
-        os.chdir(root)
+        make_repo(root).close()
         output = stringio.StringIO()
         started = time.time()
 
         def alarm(signum, frame):
             raise TaskTimeout()
 
-        old_handler = signal.signal(signal.SIGALRM, alarm)
-        signal.alarm(timeout)
+        # Windows has no SIGALRM, so the timeout only applies elsewhere
+        use_alarm = hasattr(signal, "SIGALRM")
+        if use_alarm:
+            old_handler = signal.signal(signal.SIGALRM, alarm)
+            signal.alarm(timeout)
         coder = None
+        cwd = os.getcwd()
+        os.chdir(root)
         try:
             with contextlib.redirect_stdout(output):
                 io = InputOutput(pretty=False, yes=True, fancy_input=False)
@@ -151,8 +155,9 @@ def run_task(model, timeout, log_file, stream):
             res["error"] = first_line(err)
             output.write(traceback.format_exc())
         finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
+            if use_alarm:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
             os.chdir(cwd)
 
         res["seconds"] = time.time() - started
@@ -255,7 +260,9 @@ def describe_task(res):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("models", nargs="+", help="Model names or aliases")
-    parser.add_argument("--timeout", type=int, default=300, help="Seconds per agent task")
+    parser.add_argument(
+        "--timeout", type=int, default=300, help="Seconds per agent task (not enforced on Windows)"
+    )
     parser.add_argument("--request-timeout", type=int, default=120, help="Seconds per API request")
     parser.add_argument("--no-task", action="store_true", help="Only run the probe")
     parser.add_argument("--no-stream", action="store_true", help="Don't stream the task")

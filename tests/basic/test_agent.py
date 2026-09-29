@@ -621,9 +621,13 @@ class TestTools(unittest.TestCase):
         with GitTemporaryDirectory():
             make_repo()
             coder = make_coder()
-            out = self.run_tool(coder, "bash", command="echo hi; exit 3")
-            self.assertEqual(out, "Exit code: 3\nhi")
-            out = self.run_tool(coder, "bash", command="sleep 5", timeout=1)
+            # Python instead of shell builtins, so the commands work in cmd.exe too
+            py = f'"{sys.executable}" -c'
+            out = self.run_tool(coder, "bash", command=f'{py} "print(1); raise SystemExit(3)"')
+            self.assertEqual(out, "Exit code: 3\n1")
+            out = self.run_tool(
+                coder, "bash", command=f'{py} "import time; time.sleep(5)"', timeout=1
+            )
             self.assertIn("Timed out after 1 seconds", out)
 
     def test_coerce_args(self):
