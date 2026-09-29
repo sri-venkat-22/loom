@@ -25,6 +25,7 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--map-multiplier-no-files] [--input-history-file]
             [--chat-history-file]
             [--restore-chat-history | --no-restore-chat-history]
+            [--continue] [--resume] [--sessions | --no-sessions]
             [--llm-history-file] [--dark-mode] [--light-mode]
             [--pretty | --no-pretty] [--stream | --no-stream]
             [--user-input-color] [--tool-output-color]
@@ -47,8 +48,12 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--git-commit-verify | --no-git-commit-verify]
             [--commit] [--commit-prompt] [--dry-run | --no-dry-run]
             [--skip-sanity-check-repo]
-            [--watch-files | --no-watch-files] [--lint] [--lint-cmd]
-            [--auto-lint | --no-auto-lint] [--test-cmd]
+            [--watch-files | --no-watch-files]
+            [--agent | --no-agent] [--permission-mode] [--allow]
+            [--project-memory | --no-project-memory]
+            [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
+            [--mcp-config] [--hooks | --no-hooks] [--lint]
+            [--lint-cmd] [--auto-lint | --no-auto-lint] [--test-cmd]
             [--auto-test | --no-auto-test] [--test]
             [--analytics | --no-analytics] [--analytics-log]
             [--analytics-disable] [--analytics-posthog-host]
@@ -229,8 +234,7 @@ Environment variable: `LOOM_MAX_CHAT_HISTORY_TOKENS`
 ## Cache settings:
 
 ### `--cache-prompts`
-Enable caching of prompts (default: False)  
-Default: False  
+Enable caching of prompts, for models that need it requested (default: on for the agent, off otherwise)  
 Environment variable: `LOOM_CACHE_PROMPTS`  
 Aliases:
   - `--cache-prompts`
@@ -276,6 +280,23 @@ Environment variable: `LOOM_RESTORE_CHAT_HISTORY`
 Aliases:
   - `--restore-chat-history`
   - `--no-restore-chat-history`
+
+### `--continue`
+Continue the most recent conversation in this project  
+Default: False  
+Environment variable: `LOOM_CONTINUE`  
+
+### `--resume SESSION_ID`
+Continue a saved conversation, by its id or the start of it (see /sessions)  
+Environment variable: `LOOM_RESUME`  
+
+### `--sessions`
+Enable/disable saving each conversation to .loom.sessions/ in the project, for --continue and --resume (default: True)  
+Default: True  
+Environment variable: `LOOM_SESSIONS`  
+Aliases:
+  - `--sessions`
+  - `--no-sessions`
 
 ### `--llm-history-file LLM_HISTORY_FILE`
 Log the conversation with the LLM to this file (for example, .loom.llm.history)  
@@ -486,6 +507,63 @@ Environment variable: `LOOM_WATCH_FILES`
 Aliases:
   - `--watch-files`
   - `--no-watch-files`
+
+## Agent settings:
+
+### `--agent`
+Enable/disable the agent, which reads, edits and runs commands with tools, when no edit format is given and the model supports tool calling (default: True)  
+Default: True  
+Environment variable: `LOOM_AGENT`  
+Aliases:
+  - `--agent`
+  - `--no-agent`
+
+### `--permission-mode VALUE`
+What the agent may do without asking: ask (reads only), accept-edits (reads and edits) or plan (reads only, and it can't edit or run commands) (default: ask)  
+Default: ask  
+Environment variable: `LOOM_PERMISSION_MODE`  
+
+### `--allow RULE`
+Let the agent do something without asking, eg: 'bash(pytest*)', 'edit(src/**)' (can be used multiple times)  
+Default: []  
+Environment variable: `LOOM_ALLOW`  
+
+### `--project-memory`
+Enable/disable adding LOOM.md files to the system prompt (default: True)  
+Default: True  
+Environment variable: `LOOM_PROJECT_MEMORY`  
+Aliases:
+  - `--project-memory`
+  - `--no-project-memory`
+
+### `--auto-compact`
+Enable/disable summarizing the agent's older steps when the conversation nears the model's context window (default: True)  
+Default: True  
+Environment variable: `LOOM_AUTO_COMPACT`  
+Aliases:
+  - `--auto-compact`
+  - `--no-auto-compact`
+
+### `--mcp`
+Enable/disable connecting to the MCP servers in ~/.loom/mcp.json, the project's .mcp.json and --mcp-config files (default: True)  
+Default: True  
+Environment variable: `LOOM_MCP`  
+Aliases:
+  - `--mcp`
+  - `--no-mcp`
+
+### `--mcp-config MCP_CONFIG_FILE`
+Connect to the MCP servers in this JSON file (can be used multiple times)  
+Default: []  
+Environment variable: `LOOM_MCP_CONFIG`  
+
+### `--hooks`
+Enable/disable running the hooks in ~/.loom/hooks.json and the project's .loom/hooks.json before and after the agent's tool calls (default: True)  
+Default: True  
+Environment variable: `LOOM_HOOKS`  
+Aliases:
+  - `--hooks`
+  - `--no-hooks`
 
 ## Fixing and committing:
 

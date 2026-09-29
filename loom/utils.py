@@ -133,8 +133,42 @@ def format_messages(messages, title=None):
         function_call = msg.get("function_call")
         if function_call:
             output.append(f"{role} Function Call: {function_call}")
+        for tool_call in msg.get("tool_calls") or []:
+            function = tool_call["function"]
+            output.append(f"{role} Tool Call: {function['name']} {function['arguments']}")
 
     return "\n".join(output)
+
+
+def flatten_tool_messages(messages):
+    """Rewrite native tool calls and results as plain user/assistant text, for models that
+    are sent the history without the tools (e.g. after switching from agent to /ask)."""
+    if not any(msg["role"] == "tool" or msg.get("tool_calls") for msg in messages):
+        return messages
+
+    res = []
+    for msg in messages:
+        if msg["role"] == "tool":
+            msg = dict(role="user", content="Tool result:\n" + str(msg.get("content") or ""))
+        elif msg.get("tool_calls"):
+            calls = [
+                f"(Called {call['function']['name']} with {call['function']['arguments']})"
+                for call in msg["tool_calls"]
+            ]
+            content = "\n\n".join([msg.get("content") or ""] + calls).strip()
+            msg = dict(role="assistant", content=content)
+
+        prev = res[-1] if res else None
+        if (
+            prev
+            and prev["role"] == msg["role"]
+            and isinstance(prev["content"], str)
+            and isinstance(msg["content"], str)
+        ):
+            res[-1] = dict(role=msg["role"], content=prev["content"] + "\n\n" + msg["content"])
+        else:
+            res.append(msg)
+    return res
 
 
 def show_messages(messages, title=None, functions=None):

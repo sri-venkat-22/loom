@@ -4,6 +4,13 @@ from loom import models, prompts
 from loom.dump import dump  # noqa: F401
 
 
+def looks_like_transcript(summary):
+    """Some models carry on the conversation they were given instead of summarizing it."""
+    if summary.lstrip().startswith("(Called "):
+        return True
+    return any(marker in summary for marker in ("# USER\n", "# ASSISTANT\n", "# TOOL RESULT\n"))
+
+
 class ChatSummary:
     def __init__(self, models=None, max_tokens=1024):
         if not models:
@@ -56,8 +63,12 @@ class ChatSummary:
             else:
                 break
 
-        # Ensure the head ends with an assistant message
-        while messages[split_index - 1]["role"] != "assistant" and split_index > 1:
+        # Ensure the head ends with an assistant message. Not one that calls tools: the tail
+        # would then start with tool results whose calls were summarized away.
+        def ends_exchange(msg):
+            return msg["role"] == "assistant" and not msg.get("tool_calls")
+
+        while not ends_exchange(messages[split_index - 1]) and split_index > 1:
             split_index -= 1
 
         if split_index <= min_split:
@@ -95,27 +106,42 @@ class ChatSummary:
         # Otherwise recurse with increased depth
         return self.summarize_real(summary + tail, depth + 1)
 
-    def summarize_all(self, messages):
+    def summarize_all(self, messages, prompt=None, prefix=None):
+        """Summarize messages as one user message. prompt and prefix replace the default
+        instructions to the model and the text put before its summary."""
         content = ""
         for msg in messages:
             role = msg["role"].upper()
-            if role not in ("USER", "ASSISTANT"):
+            if role not in ("USER", "ASSISTANT", "TOOL"):
                 continue
+            text = msg.get("content")
+            text = text if isinstance(text, str) else ""
+            if role == "TOOL":
+                role = "TOOL RESULT"
+                if len(text) > 1000:
+                    # The end of a result often matters most, like a test run's summary
+                    text = text[:400] + "\n...\n" + text[-600:]
+            for call in msg.get("tool_calls") or []:
+                function = call["function"]
+                text += f"\n(Called {function['name']} with {function['arguments'][:300]})"
             content += f"# {role}\n"
-            content += msg["content"]
+            content += text
             if not content.endswith("\n"):
                 content += "\n"
 
+        # The instructions again after the transcript, so it isn't taken for a conversation
+        # to carry on
+        content = f"<transcript>\n{content}</transcript>\n\n{prompts.summarize_now}"
         summarize_messages = [
-            dict(role="system", content=prompts.summarize),
+            dict(role="system", content=prompt or prompts.summarize),
             dict(role="user", content=content),
         ]
 
         for model in self.models:
             try:
                 summary = model.simple_send_with_retries(summarize_messages)
-                if summary is not None:
-                    summary = prompts.summary_prefix + summary
+                if summary and not looks_like_transcript(summary):
+                    summary = (prompts.summary_prefix if prefix is None else prefix) + summary
                     return [dict(role="user", content=summary)]
             except Exception as e:
                 print(f"Summarization failed for model {model.name}: {str(e)}")

@@ -14,6 +14,7 @@ from prompt_toolkit.completion import Completion, PathCompleter
 from prompt_toolkit.document import Document
 
 from loom import models, prompts, voice
+from loom.custom_commands import CustomCommand, CustomCommandError, find_commands
 from loom.editor import pipe_editor
 from loom.format_settings import format_settings
 from loom.help import Help, install_help_extra
@@ -22,6 +23,7 @@ from loom.llm import litellm
 from loom.repo import ANY_GIT_ERROR
 from loom.run_cmd import run_cmd
 from loom.scrape import Scraper, install_playwright
+from loom.sessions import Session, SessionError, list_sessions
 from loom.utils import is_image_file
 
 from .dump import dump  # noqa: F401
@@ -168,6 +170,10 @@ class Commands:
                     "context",
                     "Automatically identify which files will need to be edited.",
                 ),
+                (
+                    "agent",
+                    "Explore, edit files and run commands with tools, asking before risky actions.",
+                ),
             ]
         )
 
@@ -273,7 +279,7 @@ class Commands:
             return
         return sorted(fun())
 
-    def get_commands(self):
+    def get_builtin_commands(self):
         commands = []
         for attr in dir(self):
             if not attr.startswith("cmd_"):
@@ -284,11 +290,27 @@ class Commands:
 
         return commands
 
+    def get_commands(self):
+        return self.get_builtin_commands() + ["/" + name for name in self.get_custom_commands()]
+
+    def get_custom_commands(self):
+        """{name: (path, source)} for the custom commands from .loom/commands and
+        ~/.loom/commands, leaving out any that clash with loom's own."""
+        builtin = {cmd[1:].replace("-", "_") for cmd in self.get_builtin_commands()}
+        found = find_commands(getattr(self.coder, "root", None))
+        return {
+            name: found[name] for name in sorted(found) if name.replace("-", "_") not in builtin
+        }
+
     def do_run(self, cmd_name, args):
+        custom_name = cmd_name
         cmd_name = cmd_name.replace("-", "_")
         cmd_method_name = f"cmd_{cmd_name}"
         cmd_method = getattr(self, cmd_method_name, None)
         if not cmd_method:
+            custom = self.get_custom_commands().get(custom_name)
+            if custom:
+                return self.run_custom_command(custom_name, *custom, args)
             self.io.tool_output(f"Error: Command {cmd_name} not found.")
             return
 
@@ -330,6 +352,22 @@ class Commands:
             self.io.tool_error(f"Ambiguous command: {', '.join(matching_commands)}")
         else:
             self.io.tool_error(f"Invalid command: {first_word}")
+
+    def run_custom_command(self, name, path, source, args):
+        """Expand a custom command into the message to send."""
+        try:
+            command = CustomCommand.load(name, path, source)
+        except CustomCommandError as err:
+            self.io.tool_error(str(err))
+            return
+        prompt = command.expand(args)
+
+        edit_format = command.chat_mode
+        if edit_format == "code":
+            edit_format = self.coder.main_model.edit_format
+        if edit_format and edit_format != self.coder.edit_format:
+            return self._generic_chat_command(prompt, edit_format)
+        return prompt
 
     # any method called cmd_xxx becomes a command automatically.
     # each one must take an args param.
@@ -435,6 +473,80 @@ class Commands:
     def _clear_chat_history(self):
         self.coder.done_messages = []
         self.coder.cur_messages = []
+        # A new conversation; the old one stays saved for /resume
+        self.coder.session.restart()
+
+    def cmd_compact(self, args):
+        "Summarize the chat history to free up context (optionally say what to focus on)"
+        coder = self.coder
+        coder.summarize_end()
+        if not coder.done_messages:
+            self.io.tool_output("There's no chat history to compact.")
+            return
+
+        def count(messages):
+            return sum(tokens for tokens, _msg in coder.summarizer.tokenize(messages))
+
+        before = count(coder.done_messages)
+        prompt = prompts.summarize
+        if args.strip():
+            prompt += f"\nFocus the summary on: {args.strip()}\n"
+        try:
+            summary = coder.summarizer.summarize_all(coder.done_messages, prompt=prompt)
+        except ValueError as err:
+            self.io.tool_error(str(err))
+            return
+        coder.done_messages = summary + [dict(role="assistant", content="Ok.")]
+        coder.save_session()
+        after = count(coder.done_messages)
+        self.io.tool_output(f"Compacted the chat history from {before:,} to {after:,} tokens.")
+
+    def cmd_sessions(self, args):
+        "List the saved conversations in this project, which /resume or --resume can continue"
+        directory = self.coder.session.directory
+        if not directory:
+            self.io.tool_output("Conversations aren't being saved (--no-sessions).")
+            return
+        sessions = list_sessions(directory)
+        if not sessions:
+            self.io.tool_output(f"No saved conversations in {directory}.")
+            return
+        for session_id, updated, title, num_messages in sessions:
+            current = " (current)" if session_id == self.coder.session.id else ""
+            updated = updated[:16].replace("T", " ")
+            self.io.tool_output(
+                f"{session_id}  {updated}  {num_messages:>4} msgs  {title}{current}"
+            )
+        self.io.tool_output()
+        self.io.tool_output("Continue one with /resume ID, or loom --resume ID.")
+
+    def completions_resume(self):
+        directory = self.coder.session.directory
+        return [session[0] for session in list_sessions(directory)] if directory else []
+
+    def cmd_resume(self, args):
+        "Continue a saved conversation, by its id or the start of it (see /sessions)"
+        directory = self.coder.session.directory
+        if not args.strip():
+            self.cmd_sessions("")
+            return
+        if not directory:
+            self.io.tool_error("Conversations aren't being saved (--no-sessions).")
+            return
+        try:
+            session = Session.find(directory, args.strip())
+        except SessionError as err:
+            self.io.tool_error(str(err))
+            return
+
+        coder = self.coder
+        coder.summarize_end()
+        coder.save_session()
+        coder.session = session
+        coder.done_messages = session.messages
+        coder.cur_messages = []
+        self.io.tool_output(f"Continuing conversation {session.id}: {session.title}")
+        coder.show_session_recap()
 
     def cmd_reset(self, args):
         "Drop all files and clear the chat history"
@@ -1101,7 +1213,7 @@ class Commands:
             self.io.tool_output(f"  {file}")
 
     def basic_help(self):
-        commands = sorted(self.get_commands())
+        commands = sorted(self.get_builtin_commands())
         pad = max(len(cmd) for cmd in commands)
         pad = "{cmd:" + str(pad) + "}"
         for cmd in commands:
@@ -1113,8 +1225,24 @@ class Commands:
                 self.io.tool_output(f"{cmd} {description}")
             else:
                 self.io.tool_output(f"{cmd} No description available.")
+
+        custom = self.get_custom_commands()
+        if custom:
+            self.io.tool_output()
+            self.io.tool_output("Custom commands:")
+            pad = max(len(name) for name in custom) + 1
+            for name, (path, source) in custom.items():
+                try:
+                    description = CustomCommand.load(name, path, source).help_text()
+                except CustomCommandError as err:
+                    description = f"Error: {err}"
+                self.io.tool_output(f"{'/' + name:{pad}} {description}")
+
         self.io.tool_output()
         self.io.tool_output("Use `/help <question>` to ask questions about how to use loom.")
+        self.io.tool_output(
+            "Add your own commands as Markdown files in .loom/commands or ~/.loom/commands."
+        )
 
     def cmd_help(self, args):
         "Ask questions about loom"
@@ -1195,6 +1323,120 @@ class Commands:
         """Enter context mode to see surrounding code context. If no prompt provided, switches to context mode."""  # noqa
         return self._generic_chat_command(args, "context", placeholder=args.strip() or None)
 
+    def cmd_agent(self, args):
+        """Work as an agent that explores, edits files and runs commands with tools. If no prompt provided, switches to agent mode."""  # noqa
+        return self._generic_chat_command(args, "agent")
+
+    def completions_permissions(self):
+        return ["ask", "accept-edits", "plan", "allow"]
+
+    def cmd_permissions(self, args):
+        "Show what the agent may do without asking, switch mode (ask, accept-edits, plan) or add an allow rule (allow RULE)"  # noqa
+        from loom.permissions import MODES, Rule
+
+        permissions = self.coder.permissions
+        words = args.strip().split(maxsplit=1)
+        if not words:
+            permissions.show()
+            self.io.tool_output()
+            self.io.tool_output(f"Switch mode with /permissions {'|'.join(MODES)}")
+            self.io.tool_output("Add a rule with /permissions allow RULE, eg: bash(pytest*)")
+            return
+
+        if words[0] in MODES and len(words) == 1:
+            permissions.mode = words[0]
+            self.io.tool_output(f"Permission mode: {permissions.describe()}")
+            return
+
+        if words[0] == "allow" and len(words) == 2:
+            try:
+                rule = Rule.parse(words[1])
+            except ValueError as err:
+                self.io.tool_error(str(err))
+                return
+            permissions.save_rule(rule)
+            self.io.tool_output(f"Allowed {rule}")
+            return
+
+        self.io.tool_error(f"Use /permissions {'|'.join(MODES)} or /permissions allow RULE")
+
+    def completions_mcp(self):
+        names = list(self.coder.mcp.servers) if self.coder.mcp else []
+        return ["tools", "connect"] + names
+
+    def cmd_mcp(self, args):
+        "Show the MCP servers and their tools, or (re)connect one: /mcp tools [SERVER], /mcp connect SERVER"  # noqa
+        from loom.mcp import McpError, tool_name
+
+        mcp = self.coder.mcp
+        if not mcp or not mcp.servers:
+            self.io.tool_output(
+                "No MCP servers are configured. Add them to ~/.loom/mcp.json, the project's"
+                " .mcp.json or a --mcp-config file."
+            )
+            return
+
+        words = args.split()
+        if words[:1] == ["connect"] and len(words) == 2:
+            try:
+                server = mcp.reconnect(words[1])
+            except McpError as err:
+                self.io.tool_error(str(err))
+                return
+            if server.status == "connected":
+                self.io.tool_output(f"Connected to {server.name}: {len(server.tools)} tools.")
+            return
+
+        if words[:1] == ["tools"]:
+            names = words[1:] or list(mcp.servers)
+            for name in names:
+                server = mcp.servers.get(name)
+                if not server:
+                    self.io.tool_error(f"There's no MCP server named {name!r}")
+                    continue
+                self.io.tool_output(f"{server.name} ({server.status}):")
+                for tool in server.tools:
+                    description = (tool.get("description") or "").strip().split("\n", 1)[0]
+                    if len(description) > 80:
+                        description = description[:79] + "…"
+                    self.io.tool_output(f"  {tool_name(server.name, tool['name'])}  {description}")
+            return
+
+        if words:
+            self.io.tool_error("Use /mcp, /mcp tools [SERVER] or /mcp connect SERVER")
+            return
+
+        for server in mcp.servers.values():
+            if server.status == "connected":
+                status = f"connected, {len(server.tools)} tools"
+            else:
+                status = server.status + (f": {server.error}" if server.error else "")
+            self.io.tool_output(f"{server.name}: {status}")
+            self.io.tool_output(f"  {server.describe()}  (from {server.source})")
+        self.io.tool_output()
+        self.io.tool_output(
+            "Allow a server's tools without asking with /permissions allow mcp(SERVER)."
+        )
+
+    def cmd_hooks(self, args):
+        "Show the hooks that run before and after the agent's tool calls"
+        hooks = self.coder.hooks
+        if hooks is None:
+            self.io.tool_output("Hooks are off (--no-hooks).")
+            return
+        hooks.refresh()
+        hooks.show()
+
+    def cmd_todos(self, args):
+        "Show the agent's to-do list"
+        todos = self.coder.todos
+        if not todos:
+            self.io.tool_output("The to-do list is empty.")
+            return
+        done = sum(1 for todo in todos if todo.get("status") == "completed")
+        self.io.tool_call("Todos", f"{done} of {len(todos)} done")
+        self.io.todo_output(todos)
+
     def cmd_ok(self, args):
         "Alias for `/code Ok, please go ahead and make those changes.` (any args are appended)"
         msg = "Ok, please go ahead and make those changes."
@@ -1236,7 +1478,7 @@ class Commands:
 |Command|Description|
 |:------|:----------|
 """
-        commands = sorted(self.get_commands())
+        commands = sorted(self.get_builtin_commands())
         for cmd in commands:
             cmd_method_name = f"cmd_{cmd[1:]}".replace("-", "_")
             cmd_method = getattr(self, cmd_method_name, None)
@@ -1528,7 +1770,11 @@ class Commands:
     def cmd_copy(self, args):
         "Copy the last assistant message to the clipboard"
         all_messages = self.coder.done_messages + self.coder.cur_messages
-        assistant_messages = [msg for msg in reversed(all_messages) if msg["role"] == "assistant"]
+        assistant_messages = [
+            msg
+            for msg in reversed(all_messages)
+            if msg["role"] == "assistant" and isinstance(msg.get("content"), str) and msg["content"]
+        ]
 
         if not assistant_messages:
             self.io.tool_error("No assistant messages found to copy.")

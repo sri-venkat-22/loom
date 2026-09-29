@@ -102,3 +102,17 @@ def test_openrouter_error():
     assert "OpenRouter" in ex_info.description
     assert "overloaded" in ex_info.description
     assert "rate" in ex_info.description
+
+
+def test_mid_stream_error_is_retried_like_its_parent():
+    """A stream that fails part way through is retried, like ServiceUnavailableError"""
+    ex = LiteLLMExceptions()
+    from litellm.exceptions import MidStreamFallbackError
+
+    error = MidStreamFallbackError(
+        message="Service temporarily overloaded", model="nemotron", llm_provider="nvidia_nim"
+    )
+    assert isinstance(error, ex.exceptions_tuple())
+    ex_info = ex.get_ex_info(error)
+    assert ex_info.name == "ServiceUnavailableError"
+    assert ex_info.retry is True

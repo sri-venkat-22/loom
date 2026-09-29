@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import re
@@ -28,12 +29,16 @@ from loom.copypaste import ClipboardWatcher
 from loom.deprecated import handle_deprecated_model_args
 from loom.format_settings import format_settings, scrub_sensitive_info
 from loom.history import ChatSummary
+from loom.hooks import Hooks
 from loom.io import InputOutput
 from loom.llm import litellm  # noqa: F401; properly init litellm on launch
+from loom.mcp import McpError, McpManager
 from loom.models import ModelSettings
 from loom.onboarding import offer_openrouter_oauth, select_default_model
+from loom.permissions import SETTINGS_FILE, Permissions
 from loom.repo import ANY_GIT_ERROR, GitRepo
 from loom.report import report_uncaught_exceptions
+from loom.sessions import SESSIONS_DIR, Session, SessionError
 from loom.versioncheck import check_version, install_from_main_branch, install_upgrade
 from loom.watch import FileWatcher
 
@@ -160,8 +165,10 @@ def check_gitignore(git_root, io, ask=True):
         repo = git.Repo(git_root)
         patterns_to_add = []
 
-        if not repo.ignored(".loom"):
-            patterns_to_add.append(".loom*")
+        if not repo.ignored(".loom.chat.history.md"):
+            # loom's history, caches and sessions, but not .loom/ with the custom commands
+            # and hooks to share with the repo
+            patterns_to_add += [".loom*", "!.loom/"]
 
         env_path = Path(git_root) / ".env"
         if env_path.exists() and not repo.ignored(".env"):
@@ -359,6 +366,24 @@ def register_models(git_root, model_settings_fname, io, verbose=False):
     return None
 
 
+def load_credentials_file(fname):
+    """Set environment variables from a JSON object of NAME: value pairs, like
+    {"NVIDIA_NIM_API_KEY": "nvapi-..."}. Returns whether the file was loaded."""
+    try:
+        data = json.loads(Path(fname).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as err:
+        print(f"Error loading {fname}: {err}")
+        return False
+    if not isinstance(data, dict):
+        print(f"Error loading {fname}: expected a JSON object of NAME: value pairs")
+        return False
+
+    for name, value in data.items():
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)) and isinstance(value, str):
+            os.environ[name] = value
+    return True
+
+
 def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
     # Standard .env file search path
     dotenv_files = generate_search_path_list(
@@ -376,6 +401,12 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
         dotenv_files = list(dict.fromkeys(dotenv_files))
 
     loaded = []
+
+    # API keys kept as JSON, loaded first so any .env file can override them
+    credentials_file = Path.home() / ".loom" / "credentials.json"
+    if credentials_file.exists() and load_credentials_file(credentials_file):
+        loaded.append(str(credentials_file.resolve()))
+
     for fname in dotenv_files:
         try:
             if Path(fname).exists():
@@ -952,6 +983,14 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         args.max_chat_history_tokens or main_model.max_chat_history_tokens,
     )
 
+    edit_format = args.edit_format
+    if edit_format is None and use_agent(args, main_model):
+        edit_format = "agent"
+
+    # Caching pays off most for the agent, which resends the growing conversation every step
+    if args.cache_prompts is None:
+        args.cache_prompts = edit_format == "agent"
+
     if args.cache_prompts and args.map_refresh == "auto":
         args.map_refresh = "files"
 
@@ -971,9 +1010,46 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     analytics.event("auto_commits", enabled=bool(args.auto_commits))
 
     try:
+        permissions = Permissions(
+            io,
+            mode=args.permission_mode,
+            allow=args.allow,
+            settings_file=Path(repo.root if repo else Path.cwd()) / SETTINGS_FILE,
+        )
+    except ValueError as err:
+        io.tool_error(str(err))
+        analytics.event("exit", reason="Invalid permission rule")
+        return 1
+
+    project_root = Path(repo.root if repo else Path.cwd())
+    session = get_session(args, io, project_root)
+    if session is None:
+        analytics.event("exit", reason="Unable to resume session")
+        return 1
+    if session.messages:
+        fnames, read_only_fnames = add_session_files(
+            session, project_root, fnames, read_only_fnames
+        )
+
+    mcp = None
+    if args.mcp:
+        try:
+            mcp = McpManager.from_config(io, project_root, args.mcp_config)
+        except McpError as err:
+            io.tool_error(str(err))
+            analytics.event("exit", reason="Invalid MCP config")
+            return 1
+        atexit.register(mcp.close)
+        # Only the agent uses MCP tools; another chat mode connects when switching to it
+        if edit_format == "agent":
+            mcp.start()
+
+    hooks = Hooks.from_config(io, project_root) if args.hooks else None
+
+    try:
         coder = Coder.create(
             main_model=main_model,
-            edit_format=args.edit_format,
+            edit_format=edit_format,
             io=io,
             repo=repo,
             fnames=fnames,
@@ -1005,6 +1081,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             auto_copy_context=args.copy_paste,
             auto_accept_architect=args.auto_accept_architect,
             add_gitignore_files=args.add_gitignore_files,
+            permissions=permissions,
+            project_memory=args.project_memory,
+            session=session,
+            done_messages=session.messages or None,
+            auto_compact=args.auto_compact,
+            mcp=mcp,
+            hooks=hooks,
         )
     except UnknownEditFormat as err:
         io.tool_error(str(err))
@@ -1041,6 +1124,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         ClipboardWatcher(coder.io, verbose=args.verbose)
 
     coder.show_announcements()
+    if session.messages:
+        coder.show_session_recap()
 
     if args.show_prompts:
         coder.cur_messages += [
@@ -1118,9 +1203,6 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         io.tool_output(f"Cur working dir: {Path.cwd()}")
         io.tool_output(f"Git working dir: {git_root}")
 
-    if args.stream and args.cache_prompts:
-        io.tool_warning("Cost estimates may be inaccurate when using streaming and caching.")
-
     if args.load:
         commands.cmd_load(args.load)
 
@@ -1179,6 +1261,52 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
             if switch.kwargs.get("show_announcements") is not False:
                 coder.show_announcements()
+
+
+def get_session(args, io, root):
+    """The conversation to use: a saved one for --continue or --resume, otherwise a new one.
+    Returns None if --resume names a session that can't be loaded."""
+    directory = Path(root) / SESSIONS_DIR if args.sessions else None
+
+    if args.resume:
+        if not directory:
+            io.tool_error("--resume can't be used with --no-sessions.")
+            return None
+        try:
+            return Session.find(directory, args.resume)
+        except SessionError as err:
+            io.tool_error(str(err))
+            return None
+
+    if args.continue_session:
+        session = Session.latest(directory) if directory else None
+        if session:
+            return session
+        io.tool_warning("There's no saved conversation to continue here, so starting a new one.")
+
+    return Session(directory)
+
+
+def add_session_files(session, root, fnames, read_only_fnames):
+    """Add the files that were in the chat when the session was saved, if they still exist."""
+    fnames = list(fnames)
+    read_only_fnames = list(read_only_fnames)
+    for rel_fname in session.data.get("files") or []:
+        path = (Path(root) / rel_fname).resolve()
+        if path.is_file() and str(path) not in fnames:
+            fnames.append(str(path))
+    for fname in session.data.get("read_only_files") or []:
+        path = Path(fname)
+        if path.is_file() and str(path) not in read_only_fnames:
+            read_only_fnames.append(str(path))
+    return fnames, read_only_fnames
+
+
+def use_agent(args, main_model):
+    """Whether to default to the agent, when no edit format was chosen."""
+    if not args.agent or args.copy_paste or args.apply or args.apply_clipboard_edits or args.gui:
+        return False
+    return main_model.info.get("supports_function_calling") is True
 
 
 def is_first_run_of_new_version(io, verbose=False):

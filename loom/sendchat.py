@@ -14,6 +14,9 @@ def sanity_check_messages(messages):
         role = msg.get("role")
         if role == "system":
             continue
+        # Each tool call in an assistant message gets its own tool result message
+        if role == "tool" and last_role == "tool":
+            continue
 
         if last_role and role == last_role:
             turns = format_messages(messages)

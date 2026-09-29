@@ -118,6 +118,13 @@ class TestOnboarding(unittest.TestCase):
         mock_check_tier.assert_not_called()
 
     @patch("loom.onboarding.check_openrouter_tier")
+    @patch.dict(os.environ, {"NVIDIA_NIM_API_KEY": "nvapi-key"}, clear=True)
+    def test_try_select_default_model_nvidia(self, mock_check_tier):
+        """Test NVIDIA build model selection."""
+        self.assertEqual(try_to_select_default_model(), "nemotron")
+        mock_check_tier.assert_not_called()
+
+    @patch("loom.onboarding.check_openrouter_tier")
     @patch.dict(os.environ, {"OPENAI_API_KEY": "oa_key"}, clear=True)
     def test_try_select_default_model_openai(self, mock_check_tier):
         """Test OpenAI model selection."""

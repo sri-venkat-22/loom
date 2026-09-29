@@ -3130,7 +3130,31 @@
 - name: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free
   edit_format: whole
 
-- name: nvidia_nim/deepseek-ai/deepseek-v4-flash-0731
+- name: nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b
+  edit_format: diff
+  weak_model_name: nvidia_nim/nvidia/nemotron-3-super-120b-a12b
+  use_repo_map: true
+  use_temperature: 1.0
+  extra_params:
+    top_p: 0.95
+    max_tokens: 16384
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: true
+
+- name: nvidia_nim/nvidia/nemotron-3-super-120b-a12b
+  edit_format: diff
+  weak_model_name: nvidia_nim/nvidia/nemotron-3-super-120b-a12b
+  use_repo_map: true
+  use_temperature: 1.0
+  extra_params:
+    top_p: 0.95
+    max_tokens: 16384
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: true
+
+- name: nvidia_nim/deepseek-ai/deepseek-v4.1-flash
   edit_format: whole
   use_temperature: 1.0
   extra_params:

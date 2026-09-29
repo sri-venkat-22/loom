@@ -59,3 +59,35 @@ Start the summary with "I asked you...".
 """
 
 summary_prefix = "I spoke to you previously about a number of things.\n"
+
+summarize_now = (
+    "Now write the summary of the transcript above, as your instructions say. Don't carry on"
+    " the conversation or reply to it."
+)
+
+# PROJECT MEMORY
+project_memory_prefix = """# Project memory
+
+The user keeps standing instructions in LOOM.md files, shown below. Follow them in every
+reply without being reminded. They take precedence over general style defaults, but not
+over the reply format you have been told to use.
+
+"""
+
+# COMPACTING THE AGENT'S STEPS
+compact_steps = """Below is a transcript of an AI coding agent working on a user's request: its messages, the tools it called and their results.
+Summarize the work so far, so the agent can carry on without the transcript. Include:
+- what the user asked for;
+- what was learned: the relevant files and functions, and facts from reading code and command output;
+- what was changed, file by file;
+- the commands that were run and how they went: tests passing or failing, error messages;
+- what remains to do, and what the agent was about to do next.
+
+Be specific: name the files, functions, commands and errors. Don't include long code. Don't invent anything that isn't in the transcript.
+Write the summary as notes to the agent, calling it "you".
+"""
+
+compact_steps_prefix = """# Progress so far
+To make room in the context window, loom replaced your earlier steps on this request with this summary. Carry on from where it leaves off; read files again if you need their details.
+
+"""

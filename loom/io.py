@@ -1,12 +1,14 @@
 import base64
 import functools
 import os
+import re
 import shutil
 import signal
 import subprocess
 import time
 import webbrowser
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
@@ -15,7 +17,7 @@ from pathlib import Path
 from prompt_toolkit.completion import Completer, Completion, ThreadedCompleter
 from prompt_toolkit.cursor_shapes import ModalCursorShapeConfig
 from prompt_toolkit.enums import EditingMode
-from prompt_toolkit.filters import Condition, is_searching
+from prompt_toolkit.filters import Condition, has_completions, is_searching
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.vi_state import InputMode
@@ -33,6 +35,7 @@ from rich.markdown import Markdown
 from rich.style import Style as RichStyle
 from rich.text import Text
 
+from loom.esc import EscListener
 from loom.mdstream import MarkdownStream
 
 from .dump import dump  # noqa: F401
@@ -69,6 +72,68 @@ def restore_multiline(func):
             self.multiline_mode = orig_multiline
 
     return wrapper
+
+
+def pause_esc(func):
+    """Stop watching for Esc while asking the user something, so the question gets the keys."""
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        listener = self.esc_listener
+        if not (listener and listener.running):
+            return func(self, *args, **kwargs)
+        listener.stop()
+        try:
+            return func(self, *args, **kwargs)
+        finally:
+            listener.start()
+
+    return wrapper
+
+
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def numbered_diff_lines(diff):
+    """(line number, marker, text) for each line of a unified diff, where the marker is -, +
+    or a space. Removed lines have their old line number, others their new one. A gap
+    between hunks is None."""
+    res = []
+    old = new = 0
+    in_hunk = False
+    for line in diff.splitlines():
+        match = HUNK_RE.match(line)
+        if match:
+            if in_hunk:
+                res.append(None)
+            in_hunk = True
+            old, new = int(match.group(1)), int(match.group(2))
+            continue
+        if not in_hunk:
+            # The --- and +++ file headers
+            continue
+        if line.startswith("-"):
+            res.append((old, "-", line[1:]))
+            old += 1
+        elif line.startswith("+"):
+            res.append((new, "+", line[1:]))
+            new += 1
+        elif line.startswith(" ") or not line:
+            res.append((new, " ", line[1:]))
+            old += 1
+            new += 1
+        else:
+            # Like "... (12 more diff lines)"
+            res.append(("", "", line))
+    return res
+
+
+def count_diff_changes(diff):
+    """(added lines, removed lines) in a unified diff."""
+    lines = numbered_diff_lines(diff)
+    added = sum(1 for line in lines if line and line[1] == "+")
+    removed = sum(1 for line in lines if line and line[1] == "-")
+    return added, removed
 
 
 class CommandCompletionException(Exception):
@@ -266,6 +331,7 @@ class InputOutput:
     ):
         self.placeholder = None
         self.interrupted = False
+        self.esc_listener = None
         self.never_prompts = set()
         self.editingmode = editingmode
         self.multiline_mode = multiline_mode
@@ -528,7 +594,10 @@ class InputOutput:
         commands,
         abs_read_only_fnames=None,
         edit_format=None,
+        cycle_mode=None,
     ):
+        """Read the user's next message. cycle_mode, if given, is called on Shift-Tab to switch
+        modes and returns the new edit_format label for the prompt."""
         self.rule()
 
         # Ring the bell if needed
@@ -542,15 +611,9 @@ class InputOutput:
             ]
             show = self.format_files_for_input(rel_fnames, rel_read_only_fnames)
 
-        prompt_prefix = ""
-        if edit_format:
-            prompt_prefix += edit_format
-        if self.multiline_mode:
-            prompt_prefix += (" " if edit_format else "") + "multi"
-        prompt_prefix += "> "
-
-        show += prompt_prefix
-        self.prompt_prefix = prompt_prefix
+        files_show = show
+        self.prompt_prefix = self.get_prompt_prefix(edit_format)
+        show = files_show + self.prompt_prefix
 
         inp = ""
         multiline_input = False
@@ -623,6 +686,16 @@ class InputOutput:
                 # In normal mode, Enter submits
                 event.current_buffer.validate_and_handle()
 
+        if cycle_mode:
+
+            @kb.add("s-tab", filter=~has_completions)
+            def _(event):
+                "Cycle the agent's permission mode with Shift-Tab"
+                nonlocal show
+                self.prompt_prefix = self.get_prompt_prefix(cycle_mode())
+                show = ("" if multiline_input else files_show) + self.prompt_prefix
+                event.app.invalidate()
+
         @kb.add("escape", "enter", eager=True, filter=~is_searching)  # This is Alt+Enter
         def _(event):
             "Handle Alt+Enter key press"
@@ -653,8 +726,9 @@ class InputOutput:
                     def get_continuation(width, line_number, is_soft_wrap):
                         return self.prompt_prefix
 
+                    # A callable, so Shift-Tab can change the prompt while it's shown
                     line = self.prompt_session.prompt(
-                        show,
+                        lambda: show,
                         default=default,
                         completer=completer_instance,
                         reserve_space_for_menu=4,
@@ -733,6 +807,12 @@ class InputOutput:
         self.user_input(inp)
         return inp
 
+    def get_prompt_prefix(self, edit_format):
+        prefix = edit_format or ""
+        if self.multiline_mode:
+            prefix += (" " if edit_format else "") + "multi"
+        return prefix + "> "
+
     def add_to_input_history(self, inp):
         if not self.input_history_file:
             return
@@ -803,6 +883,7 @@ class InputOutput:
             return True
         return False
 
+    @pause_esc
     @restore_multiline
     def confirm_ask(
         self,
@@ -924,6 +1005,180 @@ class InputOutput:
 
         return is_yes
 
+    @pause_esc
+    @restore_multiline
+    def permission_ask(self, question, subject=None, always=None, explicit_yes_required=False):
+        """Ask the user to approve an agent action. Returns "yes", "no" or "always".
+
+        always labels the (A)lways option, which is only offered when it's given.
+        With --yes-always the answer is "yes", unless explicit_yes_required.
+        """
+        self.num_user_asks += 1
+        self.ring_bell()
+
+        choices = ["yes", "no"]
+        options = " (Y)es/(N)o"
+        if always:
+            choices.append("always")
+            options += f"/(A)lways: {always}"
+        question += options + " [Yes]: "
+
+        if subject:
+            if subject.startswith("--- "):
+                self.diff_output(subject, indent="     ")
+            else:
+                self.tool_output(subject, bold=True)
+
+        if self.yes is True:
+            res = "no" if explicit_yes_required else "yes"
+        elif self.yes is False:
+            res = "no"
+        else:
+            style = self._get_style()
+            while True:
+                try:
+                    if self.prompt_session:
+                        res = self.prompt_session.prompt(
+                            question, style=style, complete_while_typing=False
+                        )
+                    else:
+                        res = input(question)
+                except EOFError:
+                    res = "no"
+                    break
+                res = res.strip().lower() or "yes"
+                matches = [choice for choice in choices if choice.startswith(res)]
+                if matches:
+                    res = matches[0]
+                    break
+                self.tool_error(f"Please answer with one of: {', '.join(choices)}")
+
+        hist = f"{question.strip()} {res}"
+        self.append_chat_history(hist, linebreak=True, blockquote=True)
+        if self.yes in (True, False):
+            self.tool_output(hist)
+        return res
+
+    def diff_output(self, diff, indent=""):
+        """Show a unified diff with line numbers, removed lines in red and added lines in
+        green."""
+        for line in diff.splitlines():
+            self.append_chat_history(line, linebreak=True, blockquote=True, strip=False)
+
+        lines = numbered_diff_lines(diff)
+        width = max((len(str(line[0])) for line in lines if line), default=1)
+        text = Text()
+        for line in lines:
+            if line is None:
+                text.append(f"{indent}{'⋮':>{width}}\n", style="dim" if self.pretty else None)
+                continue
+            num, marker, content = line
+            style = None
+            if self.pretty:
+                style = {"-": "red", "+": "green", "": "dim"}.get(marker)
+            text.append(f"{indent}{num:>{width}} {marker} {content}".rstrip() + "\n", style=style)
+        self._print_text(text, end="")
+
+    # Agent tool calls
+
+    @contextmanager
+    def esc_interrupts(self):
+        """While the block runs, pressing Esc interrupts it like ^C, when loom runs in an
+        interactive terminal. Text typed meanwhile becomes the start of the next prompt."""
+        if self.esc_listener or not self.prompt_session or self.input is not None:
+            yield
+            return
+        if not EscListener.supported():
+            yield
+            return
+
+        listener = EscListener()
+        listener.start()
+        self.esc_listener = listener
+        try:
+            yield
+        finally:
+            self.esc_listener = None
+            listener.stop()
+            typed = listener.take_typed().strip("\n")
+            if typed.strip():
+                self.placeholder = (self.placeholder or "") + typed
+
+    def consume_esc(self):
+        """Whether the KeyboardInterrupt being handled came from pressing Esc."""
+        return bool(self.esc_listener and self.esc_listener.consume_escape())
+
+    def _print_text(self, text, **kwargs):
+        try:
+            self.console.print(text, **kwargs)
+        except UnicodeEncodeError:
+            plain = text.plain if isinstance(text, Text) else str(text)
+            plain = plain.replace("●", "*").replace("⎿", "|").replace("⋮", ":")
+            self.console.print(plain.encode("ascii", errors="replace").decode("ascii"), **kwargs)
+
+    def tool_call(self, name, detail=""):
+        """Show one line for a tool the agent is using, like: ● Read(loom/io.py)"""
+        if detail:
+            # One line: the first line of a multi-line command, with whitespace collapsed
+            first, _, rest = detail.strip().partition("\n")
+            detail = " ".join(first.split()) + (" …" if rest.strip() else "")
+        width = max(20, self.console.width - len(name) - 4)
+        if len(detail) > width:
+            detail = detail[: width - 1] + "…"
+        shown = f"{name}({detail})" if detail else name
+        self.append_chat_history(shown, linebreak=True, blockquote=True)
+
+        text = Text()
+        text.append("● ", style="green" if self.pretty else None)
+        text.append(name, style="bold" if self.pretty else None)
+        if detail:
+            text.append(f"({detail})")
+        self._print_text(text)
+
+    def tool_result(self, lines, error=False, styles=None):
+        """Show a tool's outcome, indented under its call:
+          ⎿  Read 120 lines
+        styles optionally gives a rich style for each line."""
+        if isinstance(lines, str):
+            lines = lines.splitlines() or [""]
+        for line in lines:
+            self.append_chat_history(line, linebreak=True, blockquote=True)
+
+        default = None
+        if self.pretty:
+            default = self.tool_error_color if error else "dim"
+        text = Text()
+        for num, line in enumerate(lines):
+            prefix = "  ⎿  " if num == 0 else "     "
+            style = default
+            if styles and num < len(styles) and styles[num] and self.pretty:
+                style = styles[num]
+            text.append(prefix, style="dim" if self.pretty else None)
+            text.append(line + "\n", style=style)
+        # One screen line per result line
+        self._print_text(text, end="", no_wrap=True, overflow="ellipsis")
+
+    def todo_output(self, todos):
+        """Show the agent's to-do list as a checklist."""
+        lines = []
+        styles = []
+        for todo in todos:
+            status = todo.get("status")
+            if status == "completed":
+                lines.append(f"☒ {todo['content']}")
+                styles.append("dim strike")
+            elif status == "in_progress":
+                lines.append(f"◼ {todo['content']}")
+                styles.append("bold")
+            else:
+                lines.append(f"☐ {todo['content']}")
+                styles.append("")
+        if not lines:
+            lines = ["(empty)"]
+            styles = ["dim"]
+        self.tool_result(lines, styles=styles)
+
+    @pause_esc
     @restore_multiline
     def prompt_ask(self, question, default="", subject=None):
         self.num_user_asks += 1

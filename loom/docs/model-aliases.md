@@ -27,6 +27,7 @@ You can add your own with `--alias ALIAS:MODEL`.
 | `gemini-exp` | `gemini/gemini-2.5-pro-exp-03-25` |
 | `grok3` | `xai/grok-3-beta` |
 | `optimus` | `openrouter/openrouter/optimus-alpha` |
-| `nemotron` | `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` |
-| `deepseek-flash` | `nvidia_nim/deepseek-ai/deepseek-v4-flash-0731` |
+| `nemotron` | `nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b` |
+| `nemotron-super` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
+| `deepseek-flash` | `nvidia_nim/deepseek-ai/deepseek-v4.1-flash` |
 | `gemini-3.1` | `gemini/gemini-3.1-pro-preview` |
