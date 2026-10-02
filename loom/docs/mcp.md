@@ -44,9 +44,12 @@ name:
 3. files given with `--mcp-config FILE` (any number of times).
 
 A server either runs as a command that loom starts (`command`, `args`, and optionally
-`env` and `cwd`), talking over stdin and stdout, or is at a `url`, using MCP's streamable
-HTTP transport. `"timeout": SECONDS` changes how long a tool call may take (5 minutes by
-default), and `"disabled": true` skips a server.
+`env` and `cwd`), talking over stdin and stdout, or is at a `url` (with optional
+`headers`), using MCP's streamable HTTP transport. A server with both a `command` and a
+`url` is an error. Server names use letters, digits, `_`, `.` and `-`, and may not contain
+`__`, which separates the server from the tool in the name the model sees.
+`"timeout": SECONDS` changes how long a tool call may take (5 minutes by default), and
+`"disabled": true` skips a server.
 
 `${VAR}` in any string is replaced by that environment variable, and `${VAR:-default}`
 falls back to a default, so keep tokens in the environment (or in
@@ -81,7 +84,15 @@ loom --allow "mcp(github)"                # every tool of the github server
 loom --allow "mcp(github__get_*)"         # the github tools whose names start with get_
 ```
 
-In plan mode, only the tools their server marks as read-only (`readOnlyHint`) run.
+In plan mode every MCP tool asks before running: loom doesn't trust a server's own
+`readOnlyHint`, since a mislabeled or hostile tool could claim to be safe when it isn't.
+To let specific tools run without asking in plan mode, list them in
+`~/.loom/mcp-readonly.json`:
+
+```json
+{"allow": ["mcp(github__get_*)", "mcp(docs__search)"]}
+```
+
 `--yes-always` doesn't approve MCP tools; they need a rule.
 
 ### Project servers
@@ -90,14 +101,23 @@ A project's `.mcp.json` comes with its code, and starting a server runs a comman
 loom asks before starting each server from it:
 
 ```
-npx -y @modelcontextprotocol/server-github
+command: npx -y @modelcontextprotocol/server-github
+env: GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}
 Start the MCP server 'github' from this project's .mcp.json? (Y)es/(N)o/(A)lways: trust it in this project [Yes]:
 ```
 
+The question shows everything that decides what runs and what gets sent: the command or
+url, and each `env` variable, header and `cwd`, as written in the file, so a token it
+would pass on shows up as its `${VARIABLE}`.
+
 **Always** remembers the answer in `~/.loom/mcp-approvals.json`, until the server's
 config in `.mcp.json` changes. A server you decline can be started later with
-`/mcp connect SERVER`. Servers in `~/.loom/mcp.json` and `--mcp-config` files are yours,
-so they start without asking.
+`/mcp connect SERVER`.
+
+The same goes for any config file inside the project, even when `.mcp.json` is a symlink
+to it, and for `mcp-config` files named by a `.loom.conf.yml` or `.env` that came with
+the repo. Servers in `~/.loom/mcp.json`, and in `--mcp-config` files you give outside the
+project, are yours, so they start without asking.
 
 ## Limits
 

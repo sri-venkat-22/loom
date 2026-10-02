@@ -5,6 +5,7 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 import webbrowser
 from collections import defaultdict
@@ -35,6 +36,7 @@ from rich.markdown import Markdown
 from rich.style import Style as RichStyle
 from rich.text import Text
 
+from loom.display import sanitize_for_display
 from loom.esc import EscListener
 from loom.mdstream import MarkdownStream
 
@@ -545,6 +547,11 @@ class InputOutput:
         """
         Writes content to a file, retrying with progressive backoff if the file is locked.
 
+        Writes atomically: content is encoded first, then written to a temporary file
+        next to the destination, then renamed into place. So a mis-encoded string (like a
+        lone surrogate from the model) raises before the destination is touched, and a
+        crash mid-write leaves the destination unchanged.
+
         :param filename: Path to the file to write.
         :param content: Content to write to the file.
         :param max_retries: Maximum number of retries if a file lock is encountered.
@@ -553,13 +560,49 @@ class InputOutput:
         if self.dry_run:
             return
 
+        # Normalize line endings up front, matching what open() with self.newline would do:
+        # self.newline is "" (keep what\'s there), None (write platform native), or an explicit
+        # terminator like "\n", "\r\n".
+        if self.newline not in ("", None):
+            content = content.replace("\r\n", "\n").replace("\n", self.newline)
+        elif self.newline is None and os.linesep != "\n":
+            content = content.replace("\r\n", "\n").replace("\n", os.linesep)
+
+        try:
+            data = content.encode(self.encoding, errors="strict")
+        except UnicodeEncodeError as err:
+            self.tool_error(
+                f"Unable to write {filename}: can't encode as {self.encoding} ({err})."
+                " The file was not touched."
+            )
+            raise
+
+        filename = str(filename)
+        dirname = os.path.dirname(filename) or "."
         delay = initial_delay
         for attempt in range(max_retries):
+            tmp = None
             try:
-                with open(str(filename), "w", encoding=self.encoding, newline=self.newline) as f:
-                    f.write(content)
-                return  # Successfully wrote the file
+                fd, tmp = tempfile.mkstemp(
+                    prefix="." + os.path.basename(filename) + ".", suffix=".tmp", dir=dirname
+                )
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(data)
+                except Exception:
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+                    raise
+                os.replace(tmp, filename)
+                return
             except PermissionError as err:
+                if tmp and os.path.exists(tmp):
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
                 if attempt < max_retries - 1:
                     time.sleep(delay)
                     delay *= 2  # Exponential backoff
@@ -569,6 +612,11 @@ class InputOutput:
                     )
                     raise
             except OSError as err:
+                if tmp and os.path.exists(tmp):
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
                 self.tool_error(f"Unable to write file {filename}: {err}")
                 raise
 
@@ -903,6 +951,9 @@ class InputOutput:
 
         if question_id in self.never_prompts:
             return False
+        question = sanitize_for_display(question, show_escapes=True)
+        if subject:
+            subject = sanitize_for_display(subject, show_escapes=True)
 
         if group and not group.show_group:
             group = None
@@ -1015,6 +1066,10 @@ class InputOutput:
         """
         self.num_user_asks += 1
         self.ring_bell()
+        # What the user approves has to be shown as it is
+        question = sanitize_for_display(question, show_escapes=True)
+        if subject:
+            subject = sanitize_for_display(subject, show_escapes=True)
 
         choices = ["yes", "no"]
         options = " (Y)es/(N)o"
@@ -1062,6 +1117,7 @@ class InputOutput:
     def diff_output(self, diff, indent=""):
         """Show a unified diff with line numbers, removed lines in red and added lines in
         green."""
+        diff = sanitize_for_display(diff, show_escapes=True)
         for line in diff.splitlines():
             self.append_chat_history(line, linebreak=True, blockquote=True, strip=False)
 
@@ -1118,6 +1174,8 @@ class InputOutput:
 
     def tool_call(self, name, detail=""):
         """Show one line for a tool the agent is using, like: ● Read(loom/io.py)"""
+        name = sanitize_for_display(name, show_escapes=True)
+        detail = sanitize_for_display(detail, show_escapes=True)
         if detail:
             # One line: the first line of a multi-line command, with whitespace collapsed
             first, _, rest = detail.strip().partition("\n")
@@ -1141,6 +1199,7 @@ class InputOutput:
         styles optionally gives a rich style for each line."""
         if isinstance(lines, str):
             lines = lines.splitlines() or [""]
+        lines = [part for line in lines for part in sanitize_for_display(line).split("\n") or [""]]
         for line in lines:
             self.append_chat_history(line, linebreak=True, blockquote=True)
 
@@ -1182,6 +1241,9 @@ class InputOutput:
     @restore_multiline
     def prompt_ask(self, question, default="", subject=None):
         self.num_user_asks += 1
+        question = sanitize_for_display(question, show_escapes=True)
+        if subject:
+            subject = sanitize_for_display(subject, show_escapes=True)
 
         # Ring the bell if needed
         self.ring_bell()
@@ -1219,6 +1281,8 @@ class InputOutput:
         return res
 
     def _tool_message(self, message="", strip=True, color=None):
+        if not isinstance(message, Text):
+            message = sanitize_for_display(message)
         if message.strip():
             if "\n" in message:
                 for line in message.splitlines():
@@ -1248,6 +1312,7 @@ class InputOutput:
         self._tool_message(message, strip, self.tool_warning_color)
 
     def tool_output(self, *messages, log_only=False, bold=False):
+        messages = [sanitize_for_display(message) for message in messages]
         if messages:
             hist = " ".join(messages)
             hist = f"{hist.strip()}"
@@ -1280,6 +1345,7 @@ class InputOutput:
             self.tool_warning("Empty response received from LLM. Check your provider account?")
             return
 
+        message = sanitize_for_display(message)
         show_resp = message
 
         # Coder will force pretty off if fence is not triple-backticks

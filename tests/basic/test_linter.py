@@ -82,3 +82,28 @@ class TestLinter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFlake8Isolation(unittest.TestCase):
+    def test_a_flake8_package_in_the_project_does_not_run(self):
+        from pathlib import Path
+
+        from loom.utils import (
+            IgnorantTemporaryDirectory,
+            get_pip_install,
+            safe_path_flag,
+        )
+
+        with IgnorantTemporaryDirectory() as root:
+            # python -m flake8 run in the project would import this instead of flake8
+            shadow = Path(root) / "flake8"
+            shadow.mkdir()
+            (shadow / "__init__.py").write_text("")
+            (shadow / "__main__.py").write_text("open('SHADOWED', 'w').close()\n")
+            (Path(root) / "x.py").write_text("print(undefined_name)\n")
+
+            res = Linter(root=root).flake8_lint("x.py")
+            self.assertFalse((Path(root) / "SHADOWED").exists())
+            self.assertIn("F821", res.text)
+
+        self.assertEqual(get_pip_install(["x"])[1], safe_path_flag())

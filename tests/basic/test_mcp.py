@@ -82,10 +82,47 @@ class TestConfig(HomeDirMixin, unittest.TestCase):
                 json.dumps(dict(other={})),
                 json.dumps(dict(mcpServers=dict(one=dict(args=[])))),
                 json.dumps(dict(mcpServers={"bad name": dict(command="x")})),
+                # Only the url would be used, so the command can't hide behind it
+                json.dumps(dict(mcpServers=dict(one=dict(command="x", url="http://a/mcp")))),
+                json.dumps(dict(mcpServers=dict(one=dict(command="x", args="--y")))),
+                json.dumps(dict(mcpServers=dict(one=dict(command="x", env=["A=1"])))),
+                json.dumps(dict(mcpServers=dict(one=dict(url="http://a/mcp", headers="x")))),
             ]:
                 Path("c.json").write_text(bad)
-                with self.assertRaises(McpError):
+                with self.assertRaises(McpError, msg=bad):
                     load_config_file("c.json")
+
+    def test_describe_shows_everything_that_decides_what_runs(self):
+        stdio = McpServer(
+            "s",
+            dict(
+                command="node",
+                args=["server.js", "--name", "a b; c"],
+                env=dict(NODE_OPTIONS="--require ./x.js", TOKEN="${OPENAI_API_KEY}"),
+                cwd="tools",
+            ),
+            "x.json",
+        )
+        self.assertEqual(
+            stdio.describe().splitlines(),
+            [
+                "command: node server.js --name 'a b; c'",
+                "env: NODE_OPTIONS=--require ./x.js",
+                "env: TOKEN=${OPENAI_API_KEY}",
+                "cwd: tools",
+            ],
+        )
+        self.assertEqual(stdio.describe(details=False), "command: node server.js --name 'a b; c'")
+
+        http = McpServer(
+            "h",
+            dict(type="http", url="https://x.example/mcp", headers=dict(Auth="${OPENAI_API_KEY}")),
+            "x.json",
+        )
+        self.assertEqual(
+            http.describe().splitlines(),
+            ["url: https://x.example/mcp", "type: http", "header: Auth: ${OPENAI_API_KEY}"],
+        )
 
     def test_expand_env(self):
         env = dict(TOKEN="t0k")
@@ -168,6 +205,22 @@ class TestConfig(HomeDirMixin, unittest.TestCase):
             changed_manager = McpManager.from_config(io, root)
             self.assertFalse(changed_manager.is_approved(changed_manager.servers["proj"]))
 
+    def test_approval_shows_env_and_headers(self):
+        with GitTemporaryDirectory() as root:
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            config = dict(
+                type="http",
+                url="https://x.example/mcp",
+                headers={"X-Key": "${OPENAI_API_KEY}"},
+            )
+            Path(".mcp.json").write_text(json.dumps(dict(mcpServers=dict(web=config))))
+            manager = McpManager.from_config(io, root)
+            manager.start()
+            subject = io.permission_ask.call_args[1]["subject"]
+            self.assertIn("url: https://x.example/mcp", subject)
+            self.assertIn("header: X-Key: ${OPENAI_API_KEY}", subject)
+
     def test_bad_config_files(self):
         with GitTemporaryDirectory() as root:
             io = InputOutput(yes=True)
@@ -182,10 +235,71 @@ class TestConfig(HomeDirMixin, unittest.TestCase):
 
             # --mcp-config files override the defaults
             Path(".mcp.json").write_text(json.dumps(dict(mcpServers=dict(a=dict(command="x")))))
-            Path("mine.json").write_text(json.dumps(dict(mcpServers=dict(a=dict(command="y")))))
-            manager = McpManager.from_config(io, root, ["mine.json"])
+            mine = Path(self.home.name) / "mine.json"
+            mine.write_text(json.dumps(dict(mcpServers=dict(a=dict(command="y")))))
+            manager = McpManager.from_config(io, root, [str(mine)])
             self.assertEqual(manager.servers["a"].config["command"], "y")
             self.assertFalse(manager.servers["a"].is_project_server)
+
+    def test_config_files_in_the_project_need_approval(self):
+        with GitTemporaryDirectory() as root:
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            config = json.dumps(dict(mcpServers=dict(tools=dict(command="x"))))
+            # A repo's .loom.conf.yml can name a config file, like mcp-config: tools.json
+            Path("tools.json").write_text(config)
+            Path("sub").mkdir()
+            Path("sub/more.json").write_text(config.replace("tools", "more"))
+            outside = Path(self.home.name) / "outside.json"
+            outside.write_text(config.replace("tools", "outside"))
+            named = Path(self.home.name) / "named.json"
+            named.write_text(config.replace("tools", "named"))
+
+            manager = McpManager.from_config(
+                io,
+                root,
+                ["tools.json", str(Path(root) / "sub" / "more.json"), str(outside), str(named)],
+                project_config_files=[str(named)],
+            )
+            servers = manager.servers
+            self.assertTrue(servers["tools"].is_project_server)
+            self.assertTrue(servers["more"].is_project_server)
+            self.assertFalse(servers["outside"].is_project_server)
+            # Named by the repo's config, so it's the project's wherever it is
+            self.assertTrue(servers["named"].is_project_server)
+
+            manager.start()
+            self.assertEqual(io.permission_ask.call_count, 3)
+            self.assertEqual(io.permission_ask.call_args_list[0][1]["subject"], "command: x")
+            questions = [c[0][0] for c in io.permission_ask.call_args_list]
+            self.assertIn("this project's tools.json", questions[0])
+            self.assertIn("this project's sub/more.json", questions[1])
+            for name in ["tools", "more", "named"]:
+                self.assertEqual(servers[name].status, "not approved")
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_symlinked_project_config_needs_approval(self):
+        with GitTemporaryDirectory() as root:
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            Path("config").mkdir()
+            Path("config/servers.json").write_text(
+                json.dumps(dict(mcpServers=dict(proj=dict(command="x"))))
+            )
+            os.symlink(os.path.join("config", "servers.json"), ".mcp.json")
+            # And a file outside the project that links into it
+            link = Path(self.home.name) / "link.json"
+            target = Path(root) / "config" / "other.json"
+            target.write_text(json.dumps(dict(mcpServers=dict(other=dict(command="x")))))
+            os.symlink(target, link)
+
+            manager = McpManager.from_config(io, root, [str(link)])
+            self.assertTrue(manager.servers["proj"].is_project_server)
+            self.assertTrue(manager.servers["other"].is_project_server)
+            manager.start()
+            self.assertEqual(io.permission_ask.call_count, 2)
+            self.assertEqual(manager.servers["proj"].status, "not approved")
+            self.assertEqual(manager.servers["other"].status, "not approved")
 
 
 class TestStdioServer(unittest.TestCase):
@@ -373,6 +487,98 @@ class TestHttpServer(unittest.TestCase):
         self.assertIn("streamable HTTP", server.error)
 
 
+class TestMalformedMcpMessages(HomeDirMixin, unittest.TestCase):
+    def test_handle_survives_unhashable_and_broken_messages(self):
+        from loom.mcp import Connection
+
+        conn = Connection()
+        # Fake a pending request so we can confirm it stays pending
+        import queue as q_mod
+
+        answer = q_mod.Queue(1)
+        conn.pending[1] = answer
+
+        for bad in [
+            dict(id={}, result={}),  # id is a dict → was raising TypeError
+            dict(id=[1, 2], result={}),  # id is a list → ditto
+            "not a dict",
+            12345,
+            None,
+            dict(method="unknown/thing"),  # notification with no method handler is fine
+            dict(id=1, error=dict(message="x")),  # legitimate: fills the pending answer
+        ]:
+            conn.handle(bad)
+
+        # The pending request got exactly the legitimate answer; the broken messages were
+        # silently dropped, not raised
+        self.assertFalse(answer.empty())
+        self.assertEqual(answer.get()["error"]["message"], "x")
+
+    def test_stdio_reader_keeps_running_after_bad_messages(self):
+        import sys
+        import tempfile
+
+        # A server that first sends a broken message, then answers initialize normally
+        script = tempfile.NamedTemporaryFile(delete=False, suffix=".py", mode="w")
+        script.write(
+            "import json, sys\n"
+            # Deliberately bad message with unhashable id
+            'sys.stdout.write(json.dumps({"id": {}, "result": {}}) + "\\n")\n'
+            "sys.stdout.flush()\n"
+            "for line in sys.stdin:\n"
+            "    msg = json.loads(line)\n"
+            '    reply = {"jsonrpc": "2.0", "id": msg["id"], "result": {"protocolVersion":'
+            ' "2025-06-18", "capabilities": {}}}\n'
+            '    sys.stdout.write(json.dumps(reply) + "\\n")\n'
+            "    sys.stdout.flush()\n"
+        )
+        script.close()
+        try:
+            server = McpServer("bad", dict(command=sys.executable, args=[script.name]), "x.json")
+            server.connect()
+            # Despite the broken first message, initialize completed
+            self.assertEqual(server.status, "connected", server.error)
+        finally:
+            server.close()
+            Path(script.name).unlink()
+
+    def test_format_result_tolerates_weird_shapes(self):
+        from loom.mcp import format_result
+
+        # Not a dict
+        self.assertEqual(format_result("hi"), ("(no output)", False))
+        # content item isn\'t a dict
+        self.assertEqual(format_result(dict(content=["raw"])), ("(no output)", False))
+        # resource is a string, not a dict
+        out, _ = format_result(dict(content=[dict(type="resource", resource="text")]))
+        self.assertIn("binary resource", out)
+        # resource_link with no fields
+        out, _ = format_result(dict(content=[dict(type="resource_link")]))
+        self.assertIn("resource link", out)
+        # structured content
+        out, _ = format_result(dict(structuredContent=dict(a=1)))
+        self.assertIn('"a": 1', out)
+
+    def test_mcp_tool_prepares_with_bad_annotations(self):
+        from loom import tools as agent_tools
+
+        with GitTemporaryDirectory():
+            io = InputOutput(yes=True)
+            manager = McpManager(io, [McpServer("test", TEST_SERVER, "test.json")])
+            manager.start()
+            self.addCleanup(manager.close)
+            coder = make_coder(io, Permissions(io, allow=["mcp"]), mcp=manager)
+
+            # Inject a tool with an annotations list, which the old code would AttributeError on
+            server, _ = manager.find("mcp__test__add")
+            server.tools.append(
+                dict(name="broken", description="d", annotations=["readOnlyHint"], inputSchema={})
+            )
+            action = agent_tools.prepare(coder, "mcp__test__broken", {})
+            self.assertEqual(action.kind, "mcp")
+            self.assertFalse(action.extra.get("read_only"))
+
+
 class TestAgentWithMcp(HomeDirMixin, unittest.TestCase):
     def make_manager(self, io):
         manager = McpManager(io, [McpServer("test", TEST_SERVER, "test.json")])
@@ -435,9 +641,23 @@ class TestAgentWithMcp(HomeDirMixin, unittest.TestCase):
             self.assertEqual(decide("ask", ["mcp(test__e*)"], "mcp__test__fail"), "ask")
             self.assertEqual(decide("ask", ["mcp(other)"], "mcp__test__echo"), "ask")
             self.assertEqual(decide("ask", ["mcp"], "mcp__test__echo"), "allow")
-            # Plan mode allows the tools their server says are read-only
+            # Plan mode no longer trusts the server\'s own readOnlyHint: a mislabeled or
+            # hostile tool could claim to be safe when it isn\'t. See H11.
+            self.assertEqual(decide("plan", [], "mcp__test__add", a=1, b=2), "ask")
+            # A user-maintained allow-list in ~/.loom/mcp-readonly.json lets specific tools
+            # run without asking
+            readonly = Path(self.home.name) / ".loom" / "mcp-readonly.json"
+            readonly.parent.mkdir(exist_ok=True)
+            readonly.write_text(json.dumps(dict(allow=["mcp(test__add)"])))
             self.assertEqual(decide("plan", [], "mcp__test__add", a=1, b=2), "allow")
-            self.assertEqual(decide("plan", ["mcp"], "mcp__test__echo"), "deny")
+            # Anything else still asks (never deny: the user has to answer)
+            self.assertEqual(decide("plan", [], "mcp__test__echo"), "ask")
+            # A --allow mcp rule still doesn\'t bypass plan mode (same as before):
+            # the whole point of plan mode is that nothing changes files
+            self.assertEqual(decide("plan", ["mcp"], "mcp__test__echo"), "ask")
+            readonly.unlink()
+            # And without the allow-list, the hint goes back to doing nothing
+            self.assertEqual(decide("plan", [], "mcp__test__add", a=1, b=2), "ask")
 
             # --yes-always doesn't approve them, and "always" saves the exact tool
             permissions = Permissions(io, settings_file=".loom.permissions.json")
@@ -457,11 +677,13 @@ class TestAgentWithMcp(HomeDirMixin, unittest.TestCase):
         from loom.main import main
 
         with GitTemporaryDirectory():
-            Path("servers.json").write_text(json.dumps(dict(mcpServers=dict(test=TEST_SERVER))))
+            # Outside the project: a config file inside it needs approval
+            servers = Path(self.home.name) / "servers.json"
+            servers.write_text(json.dumps(dict(mcpServers=dict(test=TEST_SERVER))))
             args = ["--model", "gpt-4o-mini", "--no-git", "--yes-always", "--exit"]
             with patch.dict(os.environ, OPENAI_API_KEY="deadbeef", LOOM_CHECK_UPDATE="false"):
                 coder = main(
-                    args + ["--mcp-config", "servers.json"],
+                    args + ["--mcp-config", str(servers)],
                     input=DummyInput(),
                     output=DummyOutput(),
                     return_coder=True,

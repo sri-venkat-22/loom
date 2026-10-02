@@ -184,6 +184,7 @@ class AgentCoder(Coder):
             self.mcp.start()
         if self.hooks:
             self.hooks.start()
+        self.permissions.start()
 
         message = inp
         try:
@@ -209,43 +210,42 @@ class AgentCoder(Coder):
 
         self.show_usage_report()
         if self.tools_error:
-            self.fall_back_to_edit_format(inp)
+            self.tools_rejected()
         self.finish_request(inp)
 
     def send(self, messages, model=None, functions=None):
         try:
             yield from super().send(messages, model, functions)
         except Exception as err:
-            # No point retrying: fall back to an edit format instead
+            # No point retrying
             if not (self.in_agent_loop and tools_unsupported(err)):
                 raise
             self.tools_error = err
 
-    def fall_back_to_edit_format(self, inp):
-        """The provider rejected the tools: redo the request with the model's edit format,
-        where it edits files by replying with edit blocks, and stay in that mode."""
-        from loom.commands import SwitchCoder
+    def tools_rejected(self):
+        """The provider rejected the tools: stop and say how to carry on without them.
 
+        loom doesn't switch to an edit format by itself: the model's edit blocks are applied
+        without asking Permissions, so it would ignore plan mode and the user's answers."""
         err = str(self.tools_error).strip().split("\n", 1)[0]
         self.tools_error = None
+        # The request got no reply, so it stays out of the chat history
+        if all(msg["role"] == "user" for msg in self.cur_messages):
+            self.cur_messages = []
+
+        self.io.tool_error(f"{self.main_model.name} can't use the agent's tools: {err}")
+        if self.permissions.mode == "plan":
+            self.io.tool_output(
+                "Use /ask to discuss the code with it instead; it can't change files there."
+            )
+            return
         edit_format = self.main_model.edit_format
         if edit_format == self.edit_format:
             edit_format = "diff"
-        self.io.tool_warning(f"{self.main_model.name} can't use the agent's tools: {err}")
         self.io.tool_output(
-            f"Switching to the {edit_format} edit format, where the model edits files without"
-            " tools. Start loom with --no-agent to go straight there."
-        )
-
-        # The new coder sends the request again
-        self.cur_messages = []
-        coder = Coder.create(from_coder=self, edit_format=edit_format, summarize_from_coder=False)
-        coder.run(with_message=inp, preproc=False)
-        raise SwitchCoder(
-            from_coder=coder,
-            edit_format=edit_format,
-            summarize_from_coder=False,
-            show_announcements=False,
+            f"To have it edit files without tools, switch with /chat-mode {edit_format} and send"
+            " the request again (or start loom with --no-agent). Its edits are then applied"
+            " without asking you first."
         )
 
     def get_spinner_text(self):
@@ -339,6 +339,13 @@ class AgentCoder(Coder):
             self.io.tool_call(name, describe_args(args))
             self.io.tool_result(f"Error: {err}", error=True)
             return f"Error: {err}"
+        except Exception as err:
+            # Never let an unexpected failure escape: the model\'s tool_calls message is
+            # already on the way to the chat history, and a missing tool reply would make
+            # the next request a 400 forever
+            self.io.tool_call(name, describe_args(args))
+            self.io.tool_result(f"Error: {err}", error=True)
+            return f"Error preparing {name}: {err.__class__.__name__}: {err}"
 
         self.io.tool_call(action.name or name, action.detail)
         refusal = self.refuse_action(name, action)
@@ -381,6 +388,13 @@ class AgentCoder(Coder):
         except (ToolError, OSError) as err:
             self.io.tool_result(f"Error: {err}", error=True)
             return f"Error: {err}"
+        except KeyboardInterrupt:
+            raise
+        except Exception as err:
+            # A buggy tool can\'t take the session down: return the error to the model so
+            # this call still has a matching tool reply
+            self.io.tool_result(f"Error: {err}", error=True)
+            return f"Error running {name}: {err.__class__.__name__}: {err}"
 
         if action.kind == "edit":
             result += self.after_edit(action)

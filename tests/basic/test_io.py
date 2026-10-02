@@ -608,3 +608,50 @@ class TestInputOutputFormatFiles(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAtomicWriteText(unittest.TestCase):
+    def test_encoding_failure_does_not_touch_the_file(self):
+        import tempfile
+
+        from loom.io import InputOutput
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "greeting.txt"
+            path.write_text("hello\n", encoding="utf-8")
+            before = path.read_bytes()
+
+            io = InputOutput(yes=True, pretty=False, encoding="ascii")
+            io.tool_error = lambda *a, **kw: None
+            with self.assertRaises(UnicodeEncodeError):
+                io.write_text(str(path), "\u00e9lan")
+            # The destination still has what it did before the failed write
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_lone_surrogate_from_a_model_does_not_truncate(self):
+        import tempfile
+
+        from loom.io import InputOutput
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "edit.py"
+            path.write_text("def ok():\n    return 1\n", encoding="utf-8")
+            before = path.read_bytes()
+            io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+            io.tool_error = lambda *a, **kw: None
+            with self.assertRaises(UnicodeEncodeError):
+                io.write_text(str(path), "x\ud800")
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_write_text_is_atomic_with_newline_normalization(self):
+        import tempfile
+
+        from loom.io import InputOutput
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "file.txt"
+            io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+            io.write_text(str(path), "a\nb\nc")
+            self.assertEqual(path.read_text(encoding="utf-8"), "a\nb\nc")
+            # No stray temp files left behind
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["file.txt"])

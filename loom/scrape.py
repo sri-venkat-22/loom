@@ -44,7 +44,7 @@ def install_playwright(io):
 
     pip_cmd = utils.get_pip_install(utils.loom_extra("playwright"))
     chromium_cmd = "-m playwright install --with-deps chromium"
-    chromium_cmd = [sys.executable] + chromium_cmd.split()
+    chromium_cmd = [sys.executable, utils.safe_path_flag()] + chromium_cmd.split()
 
     cmds = ""
     if not has_pip:

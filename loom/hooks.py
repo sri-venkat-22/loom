@@ -45,11 +45,13 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from loom.tools import kill_process_tree
+from loom.display import sanitize_for_display
+from loom.tools import finish_killed, kill_process_tree
 
 EVENTS = ("PreToolUse", "PostToolUse")
 PROJECT_CONFIG = ".loom/hooks.json"
@@ -95,10 +97,104 @@ class Hook:
         return self.regex is None or self.regex.fullmatch(tool_name) is not None
 
     def describe(self):
-        return f"{self.event} {self.matcher or '*'}: {self.command}"
+        """A one-liner for the approval prompt. Sanitized so a hook command with escape
+        sequences can\'t disguise what the user is about to approve."""
+        line = f"{self.event} {self.matcher or '*'}: {self.command}"
+        return sanitize_for_display(line, show_escapes=True)
 
-    def config(self):
-        return [self.event, self.matcher, self.command, self.timeout]
+    def config(self, root=None):
+        """What goes into the approval hash. Includes the content of any local script this
+        hook names, so the user is re-prompted if a hook that runs \'python scripts/x.py\'
+        later has its scripts/x.py edited to do something else."""
+        return [
+            self.event,
+            self.matcher,
+            self.command,
+            self.timeout,
+            referenced_script_hash(self.command, root),
+        ]
+
+
+# Common ways a hook names a script to run: a direct interpreter, env prefix, or just the
+# script path. The matched token is the first candidate; we also check argv[0].
+SCRIPT_RUNNERS = {
+    "python",
+    "python2",
+    "python3",
+    "py",
+    "pwsh",
+    "powershell",
+    "ruby",
+    "node",
+    "deno",
+    "bun",
+    "perl",
+    "lua",
+    "php",
+    "bash",
+    "sh",
+    "zsh",
+    "fish",
+    "dash",
+    "ksh",
+    "awk",
+    "sed",
+    "tclsh",
+    "osascript",
+}
+
+
+def referenced_script_hash(command, root):
+    """A sha256 of each local script this command names, or "" when there\'s none to find.
+
+    When the hook is \'python scripts/check.py\' and scripts/check.py is inside the
+    project, its content goes into the hash: editing the script after the user approved
+    the hook will invalidate the approval, so the user is asked again."""
+    if not isinstance(command, str) or not command.strip():
+        return ""
+    try:
+        tokens = shlex.split(command, posix=os.name != "nt")
+    except ValueError:
+        tokens = command.split()
+    # Skip VAR=value env assignments at the front
+    i = 0
+    while i < len(tokens) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", tokens[i]):
+        i += 1
+    if i >= len(tokens):
+        return ""
+
+    cwd = Path(root) if root else None
+    hashes = []
+    first = Path(tokens[i]).name.lower()
+    runner_arg = (
+        tokens[i + 1]
+        if first in SCRIPT_RUNNERS and i + 1 < len(tokens) and not tokens[i + 1].startswith("-")
+        else None
+    )
+    for candidate in (tokens[i], runner_arg):
+        if not candidate:
+            continue
+        for base in ((cwd,) if cwd else ()) + (None,):
+            try:
+                path = (base / candidate).resolve() if base else Path(candidate).resolve()
+            except (OSError, RuntimeError):
+                continue
+            if cwd is not None:
+                try:
+                    cwd_real = cwd.resolve()
+                except (OSError, RuntimeError):
+                    cwd_real = None
+                if cwd_real and cwd_real not in path.parents and path != cwd_real:
+                    continue
+            try:
+                if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+                    continue
+                data = path.read_bytes()
+            except OSError:
+                continue
+            hashes.append(f"{candidate}:{hashlib.sha256(data).hexdigest()}")
+            break
+    return "|".join(hashes)
 
 
 def load_config_file(path, is_project=False):
@@ -217,11 +313,11 @@ def run_hook(hook, payload, cwd, env):
         code = proc.returncode
     except subprocess.TimeoutExpired:
         kill_process_tree(proc)
-        out, err = proc.communicate()
+        out, err = finish_killed(proc)
         code = None
     except KeyboardInterrupt:
         kill_process_tree(proc)
-        proc.communicate()
+        finish_killed(proc)
         raise
     return code, decode(out), decode(err)
 
@@ -292,7 +388,7 @@ class Hooks:
         return [hook for hook in self.hooks if hook.is_project_hook]
 
     def project_hash(self):
-        configs = [hook.config() for hook in self.project_hooks()]
+        configs = [hook.config(self.root) for hook in self.project_hooks()]
         return hashlib.sha256(json.dumps(configs).encode()).hexdigest()
 
     def load_approvals(self):

@@ -21,7 +21,9 @@ Servers are configured the way Claude Code and other MCP clients do it:
 loom reads ~/.loom/mcp.json, the project's .mcp.json and any --mcp-config files, later
 ones overriding earlier ones. The project's .mcp.json comes with the repo, so loom asks
 before starting each of its servers, and remembers the answer "always" in
-~/.loom/mcp-approvals.json until the server's config changes.
+~/.loom/mcp-approvals.json until the server's config changes. The same goes for any config
+file inside the project, even through a symlink, and for --mcp-config files named by a
+.loom.conf.yml or .env that came with the repo.
 
 Servers run over stdio (a command) or streamable HTTP (a url). Each tool is offered to
 the model as mcp__<server>__<tool>, and calls go through Permissions like the built-in
@@ -34,6 +36,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -109,10 +112,19 @@ def load_config_file(path):
     for name, config in servers.items():
         if not isinstance(config, dict):
             raise McpError(f"{path}: the config for {name!r} should be an object")
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
-            raise McpError(f"{path}: server names can only use letters, digits, _ . and -")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or "__" in name:
+            raise McpError(
+                f"{path}: server names can only use letters, digits, _ . and -, and must not"
+                " contain __ (which separates the server from the tool name)"
+            )
         if not (config.get("command") or config.get("url")):
             raise McpError(f"{path}: {name!r} needs a command to run or a url")
+        if config.get("command") and config.get("url"):
+            # Only the url would be used, so a question about one would hide the other
+            raise McpError(f"{path}: {name!r} has both a command and a url; give one")
+        for key, kind in [("args", list), ("env", dict), ("headers", dict)]:
+            if config.get(key) is not None and not isinstance(config[key], kind):
+                raise McpError(f"{path}: {key} for {name!r} should be a {kind.__name__}")
         if config.get("disabled"):
             continue
         res[name] = config
@@ -143,28 +155,37 @@ def tool_parameters(tool):
     return schema
 
 
+def mget(obj, key, default=None):
+    """obj.get(key, default) when obj is a dict, else default. Lets format_result and
+    mcp_tool survive a server that sends, for example, annotations: ["readOnlyHint"] or
+    content: [{resource: "text"}] without crashing the agent."""
+    return obj.get(key, default) if isinstance(obj, dict) else default
+
+
 def format_result(result):
     """(text for the model, whether the tool reported an error) from a tools/call result."""
     parts = []
-    for item in result.get("content") or []:
+    for item in mget(result, "content") or []:
         if not isinstance(item, dict):
             continue
-        kind = item.get("type")
+        kind = mget(item, "type")
         if kind == "text":
-            parts.append(str(item.get("text", "")))
+            parts.append(str(mget(item, "text", "")))
         elif kind in ("image", "audio"):
-            parts.append(f"[{kind} ({item.get('mimeType', 'unknown type')}) not shown]")
+            parts.append(f"[{kind} ({mget(item, 'mimeType', 'unknown type')}) not shown]")
         elif kind == "resource":
-            resource = item.get("resource") or {}
-            if "text" in resource:
-                parts.append(f"[resource {resource.get('uri', '')}]\n{resource['text']}")
+            resource = mget(item, "resource") or {}
+            if isinstance(resource, dict) and "text" in resource:
+                parts.append(f"[resource {mget(resource, 'uri', '')}]\n{resource['text']}")
             else:
-                parts.append(f"[binary resource {resource.get('uri', '')} not shown]")
+                parts.append(f"[binary resource {mget(resource, 'uri', '')} not shown]")
         elif kind == "resource_link":
-            parts.append(f"[resource link: {item.get('uri', '')} {item.get('name', '')}]".strip())
-    if not parts and result.get("structuredContent") is not None:
+            parts.append(
+                f"[resource link: {mget(item, 'uri', '')} {mget(item, 'name', '')}]".strip()
+            )
+    if not parts and mget(result, "structuredContent") is not None:
         parts.append(json.dumps(result["structuredContent"], indent=2))
-    return "\n".join(parts).strip() or "(no output)", bool(result.get("isError"))
+    return "\n".join(parts).strip() or "(no output)", bool(mget(result, "isError"))
 
 
 # Connections: JSON-RPC over stdio or HTTP
@@ -223,7 +244,14 @@ class Connection:
             pass
 
     def handle(self, msg):
-        """Deal with a message from the server."""
+        """Deal with a message from the server. Never raises: a broken message is dropped,
+        so the reader thread stays alive and other calls still get their answers."""
+        try:
+            self._handle(msg)
+        except Exception:
+            pass
+
+    def _handle(self, msg):
         if isinstance(msg, list):
             for item in msg:
                 self.handle(item)
@@ -236,8 +264,14 @@ class Connection:
             else:
                 self.on_notification(msg)
             return
+        msg_id = msg.get("id")
+        # Only int ids make it in: a buggy server could send {}, [] or a string, all of
+        # which would miss a real pending call anyway. str ids are allowed too since some
+        # clients use them.
+        if not isinstance(msg_id, (int, str)):
+            return
         with self.lock:
-            answer = self.pending.get(msg.get("id"))
+            answer = self.pending.get(msg_id)
         if answer and answer.empty():
             answer.put(msg)
 
@@ -301,16 +335,19 @@ class StdioConnection(Connection):
         threading.Thread(target=self.read_stderr, daemon=True).start()
 
     def read_stdout(self):
-        for line in self.proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except ValueError:
-                self.stderr.append(line.decode(errors="replace")[:500])
-                continue
-            self.handle(msg)
+        try:
+            for line in self.proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    self.stderr.append(line.decode(errors="replace")[:500])
+                    continue
+                self.handle(msg)
+        except Exception as err:
+            self.stderr.append(f"loom: reader thread error: {err.__class__.__name__}: {err}")
         self.closed = True
         self.fail_pending(self.exit_message())
 
@@ -479,12 +516,34 @@ class HttpConnection(Connection):
 # Servers
 
 
+def is_within(path, root):
+    path = Path(path)
+    return path == root or root in path.parents
+
+
+def is_project_file(path, root):
+    """Whether a config file came with the project: it's inside root, as named or after
+    following symlinks, so a symlinked .mcp.json counts too."""
+    if root is None:
+        return False
+    path = Path(os.path.abspath(path))
+    try:
+        paths = (path, path.resolve())
+        roots = {Path(os.path.abspath(root)), Path(root).resolve()}
+    except (OSError, RuntimeError):
+        # A symlink loop: count it as the project's, which asks first
+        return True
+    return any(is_within(p, r) for p in paths for r in roots)
+
+
 class McpServer:
-    def __init__(self, name, config, source, root=None):
+    def __init__(self, name, config, source, root=None, project=False):
         self.name = name
         self.config = config
         self.source = source  # the config file it came from
         self.root = root
+        # The config came with the repo, from a file it names rather than one inside it
+        self.project = project
         self.status = "not started"  # connecting, connected, failed, not approved
         self.error = ""
         self.tools = []
@@ -496,11 +555,19 @@ class McpServer:
 
     @property
     def is_project_server(self):
-        return (
-            Path(self.source).name == PROJECT_CONFIG
-            and self.root is not None
-            and (Path(self.source).resolve().parent == Path(self.root).resolve())
-        )
+        """Whether the server came with the repo, so it needs the user's approval."""
+        return self.project or is_project_file(self.source, self.root)
+
+    def source_name(self):
+        """The config file, relative to the project when it's inside."""
+        try:
+            return (
+                Path(os.path.abspath(self.source))
+                .relative_to(os.path.abspath(self.root))
+                .as_posix()
+            )
+        except (TypeError, ValueError):
+            return str(self.source)
 
     @property
     def timeout(self):
@@ -509,13 +576,27 @@ class McpServer:
         except (TypeError, ValueError):
             return CALL_TIMEOUT
 
-    def describe(self):
-        """The command line or URL."""
-        if self.config.get("url"):
-            return str(self.config["url"])
-        return " ".join(
-            [str(self.config["command"])] + [str(a) for a in self.config.get("args") or []]
-        )
+    def describe(self, details=True):
+        """The command line or URL and, with details, everything else that decides what the
+        server runs or gets sent, one per line, as written in the config (so a ${VARIABLE}
+        it would send is visible, not its value)."""
+        config = self.config
+        if config.get("url"):
+            lines = [f"url: {config['url']}"]
+            if config.get("type"):
+                lines.append(f"type: {config['type']}")
+        else:
+            command = [str(config["command"])] + [str(a) for a in config.get("args") or []]
+            lines = [f"command: {shlex.join(command)}"]
+        if not details:
+            return lines[0]
+        for key, value in (config.get("env") or {}).items():
+            lines.append(f"env: {key}={value}")
+        for key, value in (config.get("headers") or {}).items():
+            lines.append(f"header: {key}: {value}")
+        if config.get("cwd"):
+            lines.append(f"cwd: {config['cwd']}")
+        return "\n".join(lines)
 
     def on_notification(self, msg):
         if msg.get("method") == "notifications/tools/list_changed":
@@ -633,18 +714,26 @@ class McpManager:
         self.started = False
 
     @classmethod
-    def from_config(cls, io, root, config_files=(), use_default_files=True):
+    def from_config(
+        cls, io, root, config_files=(), use_default_files=True, project_config_files=()
+    ):
         """Read the user's and the project's config files, then config_files. A broken
-        default file is skipped with a warning; a broken config_file raises McpError."""
+        default file is skipped with a warning; a broken config_file raises McpError.
+
+        project_config_files are config_files the repo asked for (in a .loom.conf.yml or
+        .env inside it), so their servers need approval wherever the files are."""
         configs = {}
         sources = []
         if use_default_files:
-            sources.append((user_config_file(), False))
+            sources.append((user_config_file(), False, False))
             if root:
-                sources.append((Path(root) / PROJECT_CONFIG, False))
-        sources += [(Path(fname), True) for fname in config_files or []]
+                sources.append((Path(root) / PROJECT_CONFIG, False, True))
+        project_config_files = list(project_config_files or [])
+        sources += [
+            (Path(fname), True, fname in project_config_files) for fname in config_files or []
+        ]
 
-        for path, explicit in sources:
+        for path, explicit, project in sources:
             if not explicit and not path.is_file():
                 continue
             try:
@@ -655,10 +744,11 @@ class McpManager:
                 io.tool_warning(str(err))
                 continue
             for name, config in servers.items():
-                configs[name] = (config, str(path))
+                configs[name] = (config, str(path), project)
 
         servers = [
-            McpServer(name, config, source, root) for name, (config, source) in configs.items()
+            McpServer(name, config, source, root, project)
+            for name, (config, source, project) in configs.items()
         ]
         return cls(io, servers, root)
 
@@ -690,11 +780,11 @@ class McpManager:
             self.io.tool_warning(f"Unable to save the approval to {approvals_file()}: {err}")
 
     def approve(self, server):
-        """Ask before starting a server from the project's .mcp.json."""
+        """Ask before starting a server that came with the project."""
         if self.is_approved(server):
             return True
         answer = self.io.permission_ask(
-            f"Start the MCP server {server.name!r} from this project's {PROJECT_CONFIG}?",
+            f"Start the MCP server {server.name!r} from this project's {server.source_name()}?",
             subject=server.describe(),
             always="trust it in this project",
             explicit_yes_required=True,

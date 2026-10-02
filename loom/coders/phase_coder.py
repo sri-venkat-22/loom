@@ -77,7 +77,7 @@ class PhaseCoder(AgentCoder):
         # question
         return action.kind == "edit" and action.inside and action.target == self.phase.document
 
-    def fall_back_to_edit_format(self, inp):
+    def tools_rejected(self):
         err = str(self.tools_error).strip().split("\n", 1)[0]
         self.tools_error = None
         self.failed = f"{self.main_model.name} can't use tools, which phase agents need: {err}"

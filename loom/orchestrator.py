@@ -42,10 +42,29 @@ TRANSITIONS = {
 MAX_FIX_ROUNDS = 3
 # Longer documents aren't put in the agents' messages; they read them with read_file
 MAX_INLINE_CHARS = 40_000
+# The most loom reads of a phase document or the project file
+MAX_DOC_BYTES = 1_000_000
 
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def in_project(root, path):
+    """Whether path is a regular file inside root after following symlinks: a repo could
+    link a phase document to ~/.aws/credentials, or to /dev/zero."""
+    root = Path(root).resolve()
+    real = Path(path).resolve()
+    return (real == root or root in real.parents) and real.is_file()
+
+
+def read_project_file(root, path, limit=MAX_DOC_BYTES):
+    """The text of a file in the project, at most limit bytes of it, or None when it's
+    missing or isn't a regular file inside root."""
+    if not in_project(root, path):
+        return None
+    with open(Path(path).resolve(), "rb") as f:
+        return f.read(limit).decode("utf-8", errors="replace")
 
 
 class TransitionError(Exception):
@@ -53,9 +72,11 @@ class TransitionError(Exception):
 
 
 class ProjectState:
-    def __init__(self, path, data):
+    def __init__(self, path, data, root=None):
         self.path = Path(path)
         self.data = data
+        # The project root, which the file has to stay in
+        self.root = root
 
     @classmethod
     def new(cls, root, idea):
@@ -67,7 +88,7 @@ class ProjectState:
             fix_rounds=0,
             history=[],
         )
-        state = cls(Path(root) / STATE_FILE, data)
+        state = cls(Path(root) / STATE_FILE, data, root)
         state.log(None, "new", idea.strip().split("\n", 1)[0])
         return state
 
@@ -75,20 +96,27 @@ class ProjectState:
     def load(cls, root):
         """The project in root, or None if it has none."""
         path = Path(root) / STATE_FILE
-        if not path.exists():
+        if not path.exists() and not path.is_symlink():
             return None
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            text = read_project_file(root, path)
+            if text is None:
+                raise ValueError("it isn't a file in the project")
+            data = json.loads(text)
         except (OSError, ValueError) as err:
             raise TransitionError(f"Unable to read {path}: {err}")
         if not isinstance(data, dict) or data.get("version") != FORMAT_VERSION:
             raise TransitionError(f"{path} isn't a loom project file this version can read")
         for phase in PHASES:
             data["phases"].setdefault(phase.key, dict(status="pending", runs=0))
-        return cls(path, data)
+        return cls(path, data, root)
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.root is not None and (self.path.exists() or self.path.is_symlink()):
+            # Don't write through a symlink to a file outside the project
+            if not in_project(self.root, self.path):
+                raise TransitionError(f"{self.path} isn't a file in the project")
         self.path.write_text(json.dumps(self.data, indent=2) + "\n", encoding="utf-8")
 
     @property
@@ -200,6 +228,8 @@ class Orchestrator:
         self.io = coder.io
         self.root = Path(coder.root)
         self.state = state if state is not None else ProjectState.load(self.root)
+        # Phases whose document links outside the project, which loom has warned about
+        self.outside_warned = set()
 
     # Starting and running
 
@@ -326,10 +356,18 @@ class Orchestrator:
         return self.root / phase.document
 
     def document_text(self, phase):
+        """The phase's document, or "" if there's none in the project."""
+        path = self.document_path(phase)
         try:
-            return self.document_path(phase).read_text(encoding="utf-8").strip()
-        except (OSError, UnicodeDecodeError):
+            text = read_project_file(self.root, path)
+        except OSError:
             return ""
+        if text is None:
+            if path.is_symlink() and phase.key not in self.outside_warned:
+                self.outside_warned.add(phase.key)
+                self.io.tool_warning(f"Ignoring {phase.document}: it links outside the project.")
+            return ""
+        return text.strip()
 
     def task_message(self, phase):
         """The agent's first message: the idea, the documents it works from and its task."""

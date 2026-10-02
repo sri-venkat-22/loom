@@ -1,4 +1,5 @@
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -16,7 +17,7 @@ except ImportError:
 
 import importlib_resources
 import shtab
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from prompt_toolkit.enums import EditingMode
 
 from loom import __version__, models, urls, utils
@@ -60,6 +61,118 @@ def check_config_files_for_yes(config_files):
             except Exception:
                 pass
     return found
+
+
+# Options that make loom run a command: lint and test commands run after the agent's edits,
+# --load runs slash commands (like /run) at startup
+PROJECT_COMMAND_OPTIONS = ("lint_cmd", "test_cmd", "load", "notifications_command", "editor")
+
+# Options a repo mustn't set for itself, since they let loom act without asking: allow
+# rules, MCP config files whose servers loom starts, and the command options
+PROJECT_GATED_OPTIONS = ("allow", "mcp_config") + PROJECT_COMMAND_OPTIONS
+
+
+def config_approvals_file():
+    return Path.home() / ".loom" / "config-approvals.json"
+
+
+def safe_resolve(fname):
+    try:
+        return Path(fname).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return Path(fname)
+
+
+def project_sourced_options(parser, args, loaded_dotenvs):
+    """{option: file} for the PROJECT_GATED_OPTIONS whose value came with the repo: from a
+    .loom.conf.yml or .env found in the project, rather than the command line, the
+    environment, --config or the user's own files in their home directory."""
+    home = Path.home()
+    trusted = {
+        safe_resolve(home / ".loom.conf.yml"),
+        safe_resolve(home / ".env"),
+        safe_resolve(home / ".loom" / "oauth-keys.env"),
+        safe_resolve(home / ".loom" / "credentials.json"),
+    }
+    if args.config:
+        trusted.add(safe_resolve(args.config))
+
+    res = {}
+    for source, settings in parser.get_source_to_settings_dict().items():
+        kind, _, fname = source.partition("|")
+        for key, (action, _value) in settings.items():
+            dest = action.dest if action else None
+            if dest not in PROJECT_GATED_OPTIONS:
+                continue
+            if kind == "config_file" and safe_resolve(fname) not in trusted:
+                res[dest] = fname
+            elif kind == "environment_variables":
+                # Set by a project .env file, which load_dotenv_files put in the environment
+                for env_file in loaded_dotenvs:
+                    if safe_resolve(env_file) in trusted:
+                        continue
+                    try:
+                        if key in dotenv_values(env_file):
+                            res[dest] = env_file
+                    except (OSError, ValueError):
+                        res[dest] = env_file
+    return res
+
+
+def approve_project_commands(io, parser, args, project_options, root):
+    """Ask before using the PROJECT_COMMAND_OPTIONS that came with the repo, and remember
+    "always" in ~/.loom/config-approvals.json until they change. Declined options go back
+    to their defaults. Returns the declined options."""
+    gated = [dest for dest in PROJECT_COMMAND_OPTIONS if dest in project_options]
+    if not gated:
+        return []
+    settings = {dest: getattr(args, dest) for dest in gated}
+    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+    key = str(safe_resolve(root))
+    try:
+        approvals = json.loads(config_approvals_file().read_text(encoding="utf-8"))
+        approvals = approvals if isinstance(approvals, dict) else {}
+    except (OSError, ValueError):
+        approvals = {}
+    if approvals.get(key) == digest:
+        return []
+
+    lines = []
+    for dest, value in settings.items():
+        for item in value if isinstance(value, list) else [value]:
+            lines.append(f"{dest.replace('_', '-')}: {item}")
+    sources = sorted({Path(project_options[dest]).name for dest in gated})
+    answer = io.permission_ask(
+        f"Run the commands set in this project's {' and '.join(sources)}?",
+        subject="\n".join(lines),
+        always="trust them in this project",
+        explicit_yes_required=True,
+    )
+    if answer == "always":
+        approvals[key] = digest
+        try:
+            config_approvals_file().parent.mkdir(parents=True, exist_ok=True)
+            config_approvals_file().write_text(
+                json.dumps(approvals, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as err:
+            io.tool_warning(f"Unable to save the approval to {config_approvals_file()}: {err}")
+    if answer in ("yes", "always"):
+        return []
+
+    for dest in gated:
+        setattr(args, dest, parser.get_default(dest))
+    if "test_cmd" in gated:
+        args.auto_test = False
+    if "notifications_command" in gated:
+        io.notifications_command = (
+            io.get_default_notification_command() if io.notifications else None
+        )
+    io.tool_output(
+        f"loom won't use {', '.join(dest.replace('_', '-') for dest in gated)} from the project"
+        " this session; it asks again next time."
+    )
+    return gated
 
 
 def get_git_root():
@@ -534,6 +647,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     # Parse again to include any arguments that might have been defined in .env
     args = parser.parse_args(argv)
+    project_options = project_sourced_options(parser, args, loaded_dotenvs)
 
     if args.shell_completions:
         # Ensure parser.prog is set for shtab, though it should be by default
@@ -914,6 +1028,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             val = json.dumps(val, indent=4)
             io.tool_output(f"{attr.name}: {val}")
 
+    approve_project_commands(io, parser, args, project_options, git_root or os.getcwd())
     lint_cmds = parse_lint_cmds(args.lint_cmd, io)
     if lint_cmds is None:
         analytics.event("exit", reason="Invalid lint command format")
@@ -986,6 +1101,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     edit_format = args.edit_format
     if edit_format is None and use_agent(args, main_model):
         edit_format = "agent"
+    if args.permission_mode == "plan" and edit_format not in ("agent", "ask", "context"):
+        # Only the agent asks Permissions; the classic edit formats apply edits as they come
+        io.tool_warning(
+            "Plan mode needs the agent, which isn't in use, so loom starts in ask mode, where"
+            " the model can't change files."
+        )
+        edit_format = "ask"
 
     # Caching pays off most for the agent, which resends the growing conversation every step
     if args.cache_prompts is None:
@@ -1009,11 +1131,17 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     # Track auto-commits configuration
     analytics.event("auto_commits", enabled=bool(args.auto_commits))
 
+    allow, project_allow = args.allow, []
+    if "allow" in project_options:
+        # Like the rules in .loom.permissions.json, they need the user's approval
+        source = Path(project_options["allow"]).name
+        allow, project_allow = [], [(text, source) for text in args.allow]
     try:
         permissions = Permissions(
             io,
             mode=args.permission_mode,
-            allow=args.allow,
+            allow=allow,
+            project_allow=project_allow,
             settings_file=Path(repo.root if repo else Path.cwd()) / SETTINGS_FILE,
         )
     except ValueError as err:
@@ -1028,13 +1156,18 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         return 1
     if session.messages:
         fnames, read_only_fnames = add_session_files(
-            session, project_root, fnames, read_only_fnames
+            session, project_root, fnames, read_only_fnames, io=io
         )
 
     mcp = None
     if args.mcp:
         try:
-            mcp = McpManager.from_config(io, project_root, args.mcp_config)
+            mcp = McpManager.from_config(
+                io,
+                project_root,
+                args.mcp_config,
+                project_config_files=args.mcp_config if "mcp_config" in project_options else (),
+            )
         except McpError as err:
             io.tool_error(str(err))
             analytics.event("exit", reason="Invalid MCP config")
@@ -1287,18 +1420,53 @@ def get_session(args, io, root):
     return Session(directory)
 
 
-def add_session_files(session, root, fnames, read_only_fnames):
-    """Add the files that were in the chat when the session was saved, if they still exist."""
+def add_session_files(session, root, fnames, read_only_fnames, io=None):
+    """Add the files that were in the chat when the session was saved, if they still exist.
+
+    A session file comes with the repo on \'loom --resume\', so a crafted one could list
+    files outside the project (\'files: [\'../../home/.ssh/id_rsa\']\'). Entries that
+    aren\'t inside the project are dropped with a warning; the user can add such a file
+    with /read if they really meant to."""
     fnames = list(fnames)
     read_only_fnames = list(read_only_fnames)
+    root_resolved = safe_resolve(root)
+
+    def inside(path):
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, RuntimeError):
+            return False
+        return resolved == root_resolved or root_resolved in resolved.parents
+
+    skipped = []
     for rel_fname in session.data.get("files") or []:
-        path = (Path(root) / rel_fname).resolve()
+        if not isinstance(rel_fname, str):
+            continue
+        try:
+            path = (Path(root) / rel_fname).resolve()
+        except (OSError, RuntimeError):
+            skipped.append(rel_fname)
+            continue
+        if not inside(path):
+            skipped.append(rel_fname)
+            continue
         if path.is_file() and str(path) not in fnames:
             fnames.append(str(path))
     for fname in session.data.get("read_only_files") or []:
+        if not isinstance(fname, str):
+            continue
+        if not inside(fname):
+            skipped.append(fname)
+            continue
         path = Path(fname)
         if path.is_file() and str(path) not in read_only_fnames:
             read_only_fnames.append(str(path))
+    if skipped and io is not None:
+        io.tool_warning(
+            "Skipped session files that aren't inside this project: "
+            + ", ".join(sorted(set(skipped))[:10])
+            + ". Add them with /read or /add if you need them."
+        )
     return fnames, read_only_fnames
 
 

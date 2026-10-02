@@ -262,9 +262,16 @@ def loom_extra(extra):
     return pkgs
 
 
+def safe_path_flag():
+    """The python flag that keeps the current directory off sys.path, so python -m X run in
+    a project can't import the project's own X instead (-P needs Python 3.11)."""
+    return "-P" if sys.version_info >= (3, 11) else "-I"
+
+
 def get_pip_install(args):
     cmd = [
         sys.executable,
+        safe_path_flag(),
         "-m",
         "pip",
         "install",
@@ -281,7 +288,7 @@ def run_install(cmd):
     print("Installing:", printable_shell_command(cmd))
 
     # First ensure pip is available
-    ensurepip_cmd = [sys.executable, "-m", "ensurepip", "--upgrade"]
+    ensurepip_cmd = [sys.executable, safe_path_flag(), "-m", "ensurepip", "--upgrade"]
     try:
         subprocess.run(ensurepip_cmd, capture_output=True, check=False)
     except Exception:
