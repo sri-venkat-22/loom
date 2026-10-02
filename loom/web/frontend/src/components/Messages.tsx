@@ -3,6 +3,7 @@ import { useState } from "react";
 import { answerSummary } from "../lib/asks";
 import { send } from "../lib/socket";
 import type { AskEntry, Entry } from "../store/session";
+import { CheckpointCard } from "./CheckpointCard";
 import { DiffView } from "./DiffView";
 import { ToolCard } from "./ToolCard";
 
@@ -143,6 +144,7 @@ export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
         </div>
       );
     case "ask":
+      if (entry.ask.kind === "checkpoint") return <CheckpointCard entry={entry} />;
       return <AskMessage entry={entry} />;
   }
 }

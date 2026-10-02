@@ -125,10 +125,13 @@ class TestOutput(unittest.TestCase):
             [("info", "Added calc.py to the chat"), ("warning", "careful"), ("error", "broken")],
         )
 
-    def test_usage_report_is_only_logged(self):
+    def test_usage_goes_to_the_status_line(self):
         io, session = make_io()
-        io.usage_output("Tokens: 3.6k sent, 129 received.")
+        io.usage_output("Tokens: 3.6k sent, 129 received.", sent=3600, received=129, cost=0.01)
+        io.usage_output("Tokens: 1k sent, 1 received.", sent=1000, received=1, cost=0.02)
         self.assertEqual(session.history, [])
+        self.assertEqual(session.snapshot["tokens"], dict(sent=4600, received=130))
+        self.assertAlmostEqual(session.snapshot["cost"], 0.03)
 
     def test_assistant_output(self):
         io, session = make_io()
