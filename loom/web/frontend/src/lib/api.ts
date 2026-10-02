@@ -1,3 +1,5 @@
+import type { DiffLine } from "./protocol";
+
 // The side pane's reads of the project, from loom/web/backend/api.py.
 
 export interface Files {
@@ -40,6 +42,32 @@ export interface Memory {
   decisions: Decision[];
 }
 
+export interface SavedSession {
+  id: string;
+  // ISO time it was last saved, or null for a new conversation not saved yet
+  updated: string | null;
+  title: string;
+  messages: number;
+  current: boolean;
+}
+
+export interface FileChange {
+  path: string;
+  old_path: string | null;
+  status: "added" | "modified" | "deleted" | "renamed";
+  binary: boolean;
+  added: number;
+  removed: number;
+  lines: DiffLine[];
+}
+
+export interface Changes {
+  available: boolean;
+  base: string | null;
+  label: string | null;
+  files: FileChange[];
+}
+
 export interface Alias {
   alias: string;
   model: string;
@@ -65,4 +93,6 @@ export const api = {
   file: (path: string) => get<FileText>("file", { path }),
   memory: (q: string) => get<Memory>("memory", { q }),
   models: () => get<{ aliases: Alias[] }>("models"),
+  sessions: () => get<{ saved: boolean; sessions: SavedSession[] }>("sessions"),
+  changes: (base: "session" | "branch") => get<Changes>("changes", { base }),
 };

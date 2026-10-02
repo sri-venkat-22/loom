@@ -1,8 +1,8 @@
 # The web UI
 
 `loom --web` runs loom as usual and lets you chat with it in your browser, in an interface
-modeled on Claude Code: one monospace column, tool calls as one-line cards, edits as
-inline diffs, and a status line. It is the same loom underneath, with the same agent,
+modeled on Claude Code: your sessions on the left, the chat in the middle with tool calls
+as one-line cards and edits as inline diffs, and the code changes on the right. It is the same loom underneath, with the same agent,
 permissions, sessions, `/commands` and `/project` orchestrator, and your settings and
 `.loom.conf.yml` apply as usual.
 
@@ -31,7 +31,8 @@ install it.
 ## Chatting
 
 Type in the input at the bottom. ⌘↵ or ↵ sends, and Shift-↵ starts a new line. Replies
-stream in as the model writes them; the model's thinking folds into a line you can open.
+stream in as the model writes them, formatted as Markdown with highlighted code blocks;
+the model's thinking folds into a line you can open.
 
 - **Tool calls** show as cards: ● while running, ✓ when done, ✗ when they failed, with the
   result underneath. Click a card for its arguments and full output.
@@ -43,6 +44,13 @@ stream in as the model writes them; the model's thinking folds into a line you c
 
 The status line shows whether loom is working, the model, the tokens used this session,
 the project folder, and the `/project` phase.
+
+## Sessions
+
+The sidebar on the left lists this project's saved conversations, newest first, with
+the current one marked. Click one to continue it (loom's `/resume`): the chat shows that
+conversation, and the agent picks it up where it left off. **+ new** starts a new one
+(`/clear`); the old one stays saved. ⌘\, or ⌘\ in the header, shows and hides the sidebar.
 
 ## Commands
 
@@ -74,6 +82,10 @@ Each phase's checkpoint shows inline, with the document and its verdict:
 
 ⌘B, or ⌘B in the header, shows a pane beside the chat:
 
+- **changes**: every file that differs from the commit loom started at, with its diff and
+  how many lines it adds and removes, even though loom commits each change as it goes.
+  **since main** compares with where the branch left `main` (or `master`) instead.
+  Files you haven't added to git show as new. Click a file's name to view it.
 - **files**: the project's files. `[x]` marks the files in the chat; click it to `/add` or
   `/drop` a file. Click a name to view the file.
 - **memory**: search the project's shared memory, with ChromaDB when the `memory` extra is

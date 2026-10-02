@@ -77,6 +77,15 @@ const EXTENSIONS: Record<string, string> = {
   sql: "sql",
 };
 
+// The grammar for a Markdown code fence's language, like "py" or "typescript"
+export function languageForFence(lang: string): string | undefined {
+  const name = lang.trim().toLowerCase();
+  if (!name) return undefined;
+  if (name in GRAMMARS) return name;
+  if (name === "shell" || name === "console" || name === "zsh") return "shellscript";
+  return EXTENSIONS[name];
+}
+
 export function languageFor(file: string): string | undefined {
   const name = file.split("/").pop() ?? file;
   if (name === "Dockerfile") return "dockerfile";
@@ -126,10 +135,10 @@ async function highlightLines(lines: string[], lang: string): Promise<Token[][]>
   );
 }
 
-// The tokens of each line of code from file, once they're ready; null until then, or for
-// files in languages without a grammar here.
-export function useHighlighted(lines: string[], file: string): Token[][] | null {
-  const lang = languageFor(file);
+// The tokens of each line of code from file (or in the grammar lang, when given), once
+// they're ready; null until then, or for languages without a grammar here.
+export function useHighlighted(lines: string[], file: string, grammar?: string): Token[][] | null {
+  const lang = grammar ?? languageFor(file);
   const key = lines.join("\n");
   const [result, setResult] = useState<{ key: string; tokens: Token[][] } | null>(null);
 

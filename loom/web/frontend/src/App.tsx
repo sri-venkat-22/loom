@@ -4,6 +4,7 @@ import { Chat } from "./components/Chat";
 import { Composer } from "./components/Composer";
 import { PhaseBreadcrumb } from "./components/PhaseBreadcrumb";
 import { SidePane } from "./components/SidePane";
+import { Sidebar } from "./components/Sidebar";
 import { StatusLine } from "./components/StatusLine";
 import { answerWithKey } from "./lib/asks";
 import { send } from "./lib/socket";
@@ -11,14 +12,19 @@ import { useSession } from "./store/session";
 import { useUi } from "./store/ui";
 
 export function App() {
-  // Esc stops loom's current work, like in the terminal; ⌘B shows the side pane and ⌘K
-  // the commands
+  // Esc stops loom's current work, like in the terminal; ⌘\ shows the sessions, ⌘B the
+  // side pane and ⌘K the commands
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
         useUi.getState().togglePane();
+        return;
+      }
+      if (mod && event.key === "\\") {
+        event.preventDefault();
+        useUi.getState().toggleSidebar();
         return;
       }
       if (mod && event.key.toLowerCase() === "k") {
@@ -49,6 +55,13 @@ export function App() {
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-background text-foreground">
       <header className="flex h-[57px] shrink-0 items-center border-b border-border px-[30px]">
+        <button
+          onClick={() => useUi.getState().toggleSidebar()}
+          title="sessions"
+          className="mr-5 shrink-0 text-muted-foreground hover:text-foreground"
+        >
+          ⌘\
+        </button>
         <span className="mr-9 shrink-0 text-[18px] font-bold text-primary">loom</span>
         <PhaseBreadcrumb />
         <button
@@ -60,6 +73,7 @@ export function App() {
         </button>
       </header>
       <div className="flex min-h-0 flex-1">
+        <Sidebar />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Chat />
           <Composer />

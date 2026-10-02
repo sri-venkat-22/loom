@@ -11,7 +11,11 @@ Server to browser:
                  The current state. Sent first on every connection and again when it changes.
                  project is the /project idea (null without one), phase the key of the
                  phase it's in (null when there's none or it's complete), and each phase's
-                 status pending, running, review or approved.
+                 status pending, running, review or approved. conversation is the id of
+                 the saved conversation the chat is.
+  conversation   {id, title}                The chat is now another conversation, like
+                                            one /resume continues: clear it, and the
+                                            messages that follow show that one.
   user           {text}                     A message the user sent, as loom received it.
   turn_start     {turn_id}                  loom started working on the user's message.
   turn_end       {turn_id, status}          It stopped: status is done or cancelled.
@@ -56,6 +60,7 @@ PROTOCOL_VERSION = 1
 
 SERVER_EVENTS = (
     "session",
+    "conversation",
     "user",
     "turn_start",
     "turn_end",
@@ -82,6 +87,8 @@ ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "prompt", "edit")
 PHASE_STATUSES = ("pending", "running", "review", "approved")
 TURN_STATUSES = ("done", "cancelled")
 TOOL_STATUSES = ("done", "failed")
+# Longest tool result the browser gets, for an expanded card
+MAX_TOOL_OUTPUT = 20_000
 DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")
 
 

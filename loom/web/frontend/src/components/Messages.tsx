@@ -5,6 +5,7 @@ import { send } from "../lib/socket";
 import type { AskEntry, Entry } from "../store/session";
 import { CheckpointCard } from "./CheckpointCard";
 import { DiffView } from "./DiffView";
+import { Markdown } from "./Markdown";
 import { ToolCard } from "./ToolCard";
 
 type Of<K extends Entry["kind"]> = Extract<Entry, { kind: K }>;
@@ -48,8 +49,8 @@ function LoomMessage({ entry }: { entry: Of<"loom"> }) {
         <Thinking text={entry.reasoning} active={entry.streaming && !entry.text} />
       )}
       {(entry.text || !entry.reasoning) && (
-        <div className="whitespace-pre-wrap break-words text-[16px] leading-6">
-          {entry.text}
+        <div className="text-[16px] leading-6">
+          <Markdown text={entry.text} />
           {entry.streaming && <span className="blink text-primary">▍</span>}
         </div>
       )}

@@ -8,11 +8,15 @@ from fastapi import APIRouter, HTTPException
 
 from loom.memory import ProjectDB, ProjectMemory, ProjectMemoryError
 from loom.models import MODEL_ALIASES
+from loom.sessions import list_sessions
+
+from .changes import branch_base, changes
 
 # Largest file the viewer opens
 MAX_FILE_BYTES = 1_000_000
 MAX_HITS = 20
 MAX_DECISIONS = 100
+MAX_SESSIONS = 50
 
 
 def make_router(io):
@@ -72,6 +76,50 @@ def make_router(io):
             raise HTTPException(500, str(err))
         result["available"] = True
         return result
+
+    @router.get("/sessions")
+    def sessions():
+        """The project's saved conversations, newest first, for the sessions sidebar."""
+        root()
+        current = io.conversation_id
+        found = []
+        if io.sessions_dir:
+            for session_id, updated, title, messages in list_sessions(
+                io.sessions_dir, limit=MAX_SESSIONS
+            ):
+                found.append(
+                    dict(
+                        id=session_id,
+                        updated=updated,
+                        title=title,
+                        messages=messages,
+                        current=session_id == current,
+                    )
+                )
+        if current and not any(session["current"] for session in found):
+            # A new conversation isn't saved until it has a message
+            found.insert(0, dict(id=current, updated=None, title="", messages=0, current=True))
+        return dict(saved=bool(io.sessions_dir), sessions=found)
+
+    @router.get("/changes")
+    def changes_(base: str = "session"):
+        """The files that differ from the commit loom started at (base=session), or from
+        where the branch left main (base=branch), with their diffs."""
+        project = root()
+        if not io.git:
+            return dict(available=False, base=None, label=None, files=[])
+        if base == "branch":
+            commit, branch = branch_base(io.git)
+            label = f"since {branch}" if branch else None
+        else:
+            commit, label = io.base_commit, "since loom started"
+        if not commit:
+            return dict(available=False, base=None, label=label, files=[])
+        try:
+            files = changes(io.git, project, commit)
+        except Exception as err:
+            raise HTTPException(500, f"Unable to diff against {commit[:7]}: {err}")
+        return dict(available=True, base=commit[:7], label=label, files=files)
 
     @router.get("/models")
     def models():

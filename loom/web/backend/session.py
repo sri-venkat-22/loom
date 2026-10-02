@@ -36,6 +36,7 @@ class WebSession:
             project=None,
             phase=None,
             phases=[],
+            conversation=None,
             busy=False,
         )
         self.history = []
@@ -83,6 +84,16 @@ class WebSession:
                     # Its event loop is closed
                     del self.clients[client]
         return message
+
+    def start_conversation(self, conversation_id, title, messages=()):
+        """Show another conversation, like one /resume continues: browsers clear the chat
+        and get messages, its (type, payload) messages, and ones that connect later get
+        only this conversation."""
+        with self.lock:
+            self.history = []
+            self.emit("conversation", id=conversation_id, title=title)
+            for type, payload in messages:
+                self.emit(type, **payload)
 
     def update(self, **fields):
         """Change some of the session's state and send the new snapshot."""
