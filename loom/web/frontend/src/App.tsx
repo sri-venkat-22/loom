@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Chat } from "./components/Chat";
 import { Composer } from "./components/Composer";
 import { StatusLine } from "./components/StatusLine";
+import { answerWithKey } from "./lib/asks";
 import { send } from "./lib/socket";
 import { useSession } from "./store/session";
 
@@ -13,6 +14,13 @@ export function App() {
       if (event.key === "Escape" && useSession.getState().session?.busy) {
         event.preventDefault();
         send({ type: "cancel" });
+        return;
+      }
+      // Outside the inputs, keys answer loom's question, like y and n for a diff
+      const target = event.target as HTMLElement | null;
+      const typing = target?.tagName === "TEXTAREA" || target?.tagName === "INPUT";
+      if (!typing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        if (answerWithKey(event.key)) event.preventDefault();
       }
     }
     window.addEventListener("keydown", onKeyDown);

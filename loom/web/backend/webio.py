@@ -5,12 +5,14 @@ the browser. Input and questions come from the browser once the server is listen
 before that, like for startup questions, they're asked in the terminal.
 """
 
+import json
 from contextlib import contextmanager
 
 from rich.text import Text
 
 from loom import __version__
-from loom.io import InputOutput
+from loom.display import sanitize_for_display
+from loom.io import HUNK_RE, InputOutput
 from loom.reasoning_tags import REASONING_END, REASONING_START
 
 from .session import WebSession
@@ -81,13 +83,79 @@ class WebPrompt:
             default = default or ""
         else:
             default = ask.get("default", "")
-        return self.io.web.ask(ask["kind"], ask["question"], ask["choices"], default)
+        return self.io.web.ask(
+            ask["kind"],
+            ask["question"],
+            ask["choices"],
+            default,
+            subject=ask.get("subject"),
+            tool_id=self.io.tool_id,
+        )
+
+
+# Longest tool result the browser gets, for the expanded card
+MAX_TOOL_OUTPUT = 20_000
 
 
 def plain(message):
     if isinstance(message, Text):
         return message.plain
     return str(message)
+
+
+def parse_diff(diff):
+    """The file a unified diff changes, and its lines as dicts of kind (add, del, ctx, gap
+    between hunks, or note), old and new line numbers, and text."""
+    file = ""
+    lines = []
+    old = new = 0
+    in_hunk = False
+    for line in diff.splitlines():
+        match = HUNK_RE.match(line)
+        if match:
+            if in_hunk:
+                lines.append(dict(kind="gap", old=None, new=None, text=""))
+            in_hunk = True
+            old, new = int(match.group(1)), int(match.group(2))
+            continue
+        if not in_hunk:
+            if line.startswith("+++ "):
+                file = line[4:].strip()
+                if file.startswith("b/"):
+                    file = file[2:]
+            continue
+        if line.startswith("-"):
+            lines.append(dict(kind="del", old=old, new=None, text=line[1:]))
+            old += 1
+        elif line.startswith("+"):
+            lines.append(dict(kind="add", old=None, new=new, text=line[1:]))
+            new += 1
+        elif line.startswith(" ") or not line:
+            lines.append(dict(kind="ctx", old=old, new=new, text=line[1:]))
+            old += 1
+            new += 1
+        else:
+            # Like "... (12 more diff lines)"
+            lines.append(dict(kind="note", old=None, new=None, text=line))
+    return file, lines
+
+
+def line_style(style):
+    """The browser's name for a rich style the terminal shows a result line in."""
+    if not style:
+        return None
+    style = str(style).lower()
+    if "strike" in style:
+        return "done"
+    if "yellow" in style or "orange" in style:
+        return "warning"
+    if "red" in style or style.startswith("#f"):
+        return "error"
+    if "bold" in style:
+        return "bold"
+    if "dim" in style:
+        return "dim"
+    return None
 
 
 class WebIO(InputOutput):
@@ -99,6 +167,9 @@ class WebIO(InputOutput):
         self.web_prompt = WebPrompt(self)
         # What the question being asked is, for the browser to show it with buttons
         self.pending_ask = None
+        # The tool call being shown, whose results and diffs go on its card
+        self.tool_id = None
+        self.tool_failed = False
 
     @property
     def prompt_session(self):
@@ -109,6 +180,15 @@ class WebIO(InputOutput):
 
     @prompt_session.setter
     def prompt_session(self, value):
+        pass
+
+    @property
+    def agent_diffs(self):
+        # Every edit shows its diff, and an edit's question shows it with y and n to answer
+        return True
+
+    @agent_diffs.setter
+    def agent_diffs(self, value):
         pass
 
     # Input
@@ -133,6 +213,7 @@ class WebIO(InputOutput):
                 edit_format,
                 cycle_mode,
             )
+        self.end_tool()
         coder = getattr(commands, "coder", None)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
         inp = self.web.wait_for_input()
@@ -171,8 +252,13 @@ class WebIO(InputOutput):
     # Questions
 
     @contextmanager
-    def asking(self, kind, question, choices, default):
-        self.pending_ask = dict(kind=kind, question=question, choices=choices, default=default)
+    def asking(self, kind, question, choices, default, subject=None):
+        # The question shows its subject, so it isn't also shown as output
+        if subject:
+            subject = sanitize_for_display(subject, show_escapes=True)
+        self.pending_ask = dict(
+            kind=kind, question=question, choices=choices, default=default, subject=subject
+        )
         try:
             yield
         finally:
@@ -195,7 +281,7 @@ class WebIO(InputOutput):
             allow_never = True
         if allow_never:
             choices.append(("d", "Don't ask again"))
-        with self.asking("confirm", question, choices, default[:1].lower()):
+        with self.asking("confirm", question, choices, default[:1].lower(), subject):
             return super().confirm_ask(
                 question,
                 default=default,
@@ -213,10 +299,16 @@ class WebIO(InputOutput):
             choices.append(("always", f"Always: {always}"))
         if bypass:
             choices.append(("bypass", f"Bypass permissions: {bypass}"))
-        with self.asking("permission", question, choices, "yes"):
+        if subject and subject.startswith("--- "):
+            # An edit: the browser shows the diff on the tool's card, with y and n to answer
+            self.diff_output(sanitize_for_display(subject, show_escapes=True))
+            shown = None
+        else:
+            shown = subject
+        with self.asking("permission", question, choices, "yes", shown):
             return super().permission_ask(
                 question,
-                subject=subject,
+                subject=shown,
                 always=always,
                 explicit_yes_required=explicit_yes_required,
                 bypass=bypass,
@@ -230,14 +322,14 @@ class WebIO(InputOutput):
             )
 
     def prompt_ask(self, question, default="", subject=None):
-        with self.asking("prompt", question, (), default):
+        with self.asking("prompt", question, (), default, subject):
             return super().prompt_ask(question, default=default, subject=subject)
 
     # Output
 
     def tool_output(self, *messages, log_only=False, bold=False):
         super().tool_output(*messages, log_only=log_only, bold=bold)
-        if not log_only:
+        if not log_only and not self.pending_ask:
             self.emit_system("info", " ".join(plain(message) for message in messages))
 
     def tool_warning(self, message="", strip=True):
@@ -248,21 +340,82 @@ class WebIO(InputOutput):
         super().tool_error(message, strip)
         self.emit_system("error", plain(message))
 
-    def _print_text(self, text, **kwargs):
-        # Tool calls, their results, diffs and to-do lists
-        super()._print_text(text, **kwargs)
-        self.emit_system("info", plain(text).rstrip("\n"))
+    def usage_output(self, report):
+        # The status line shows the tokens
+        super().tool_output(report, log_only=True)
 
     def emit_system(self, level, text):
         # InputOutput.__init__ can warn before the session exists
         if getattr(self, "web", None) and text.strip():
             self.web.emit("system", level=level, text=text.strip("\n"))
 
+    # Agent tool calls, as cards
+
+    def tool_call(self, name, detail="", args=None):
+        super().tool_call(name, detail, args=args)
+        self.end_tool()
+        self.tool_id = self.web.next_id("c")
+        self.tool_failed = False
+        if args is not None:
+            try:
+                args = json.dumps(args, indent=2, ensure_ascii=False)
+            except (TypeError, ValueError):
+                args = str(args)
+        self.web.emit(
+            "tool_start",
+            id=self.tool_id,
+            name=sanitize_for_display(name, show_escapes=True),
+            detail=sanitize_for_display(detail or "", show_escapes=True),
+            args=args,
+        )
+
+    def tool_result(self, lines, error=False, styles=None):
+        super().tool_result(lines, error=error, styles=styles)
+        if isinstance(lines, str):
+            lines = lines.splitlines() or [""]
+        lines = [sanitize_for_display(str(line)) for line in lines]
+        styles = [line_style(style) for style in (styles or [])]
+        styles += [None] * (len(lines) - len(styles))
+        if not self.tool_id:
+            self.emit_system("error" if error else "info", "\n".join(lines))
+            return
+        if error:
+            self.tool_failed = True
+        self.web.emit("tool_output", id=self.tool_id, lines=lines, error=error, styles=styles)
+
+    def tool_done(self, result, error=False):
+        super().tool_done(result, error)
+        self.end_tool(result, error)
+
+    def end_tool(self, result=None, error=False):
+        """Finish the open tool card, if there is one."""
+        if not self.tool_id:
+            return
+        output = sanitize_for_display(result or "")
+        if len(output) > MAX_TOOL_OUTPUT:
+            output = output[:MAX_TOOL_OUTPUT] + "\n…"
+        failed = error or self.tool_failed
+        self.web.emit(
+            "tool_end", id=self.tool_id, status="failed" if failed else "done", output=output
+        )
+        self.tool_id = None
+
+    def diff_output(self, diff, indent=""):
+        super().diff_output(diff, indent)
+        file, lines = parse_diff(diff)
+        self.web.emit(
+            "diff", id=self.web.next_id("d"), tool_id=self.tool_id, file=file, lines=lines
+        )
+
+    # Replies
+
     def get_assistant_mdstream(self):
+        self.end_tool()
         return WebMarkdownStream(self.web)
 
     def assistant_output(self, message, pretty=None):
         super().assistant_output(message, pretty)
+        self.end_tool()
         if message:
             stream = WebMarkdownStream(self.web)
             stream.update(message, final=True)

@@ -16,9 +16,20 @@ Server to browser:
                  appended, or replacing both when replace.
   assistant_end  {id}                       That message is complete.
   system         {level, text}              A line of loom output: info, warning or error.
-  ask            {ask_id, kind, question, choices: [{value, label}], default}
+  tool_start     {id, name, detail, args}   The agent called a tool: its card shows
+                                            name(detail), and args (JSON) when expanded.
+  tool_output    {id, lines, error, styles} Result lines shown under the card. styles has
+                                            done, warning, error, bold, dim or null per line.
+  tool_end       {id, status, output}       The call finished: done or failed. output is
+                                            what the model got back.
+  diff           {id, tool_id, file, lines: [{kind, old, new, text}]}
+                 A unified diff, on tool_id's card if it has one. kind is add, del, ctx,
+                 gap (between hunks) or note; old and new are line numbers or null.
+  ask            {ask_id, kind, question, choices: [{value, label}], default, subject,
+                  tool_id}
                  loom waits for an answer. kind is confirm, permission, choice or prompt;
-                 a prompt's answer is free text and default prefills it.
+                 a prompt's answer is free text and default prefills it. subject is what
+                 it's about, like a command, and tool_id the card it belongs on.
   ask_resolved   {ask_id, value}            The question was answered.
 
 Browser to server:
@@ -41,6 +52,10 @@ SERVER_EVENTS = (
     "assistant_delta",
     "assistant_end",
     "system",
+    "tool_start",
+    "tool_output",
+    "tool_end",
+    "diff",
     "ask",
     "ask_resolved",
 )
@@ -54,6 +69,8 @@ CLIENT_EVENTS = (
 LEVELS = ("info", "warning", "error")
 ASK_KINDS = ("confirm", "permission", "choice", "prompt")
 TURN_STATUSES = ("done", "cancelled")
+TOOL_STATUSES = ("done", "failed")
+DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")
 
 
 def event(type, **payload):

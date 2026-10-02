@@ -1,10 +1,12 @@
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 
-import { pendingAsk, useSession } from "../store/session";
+import { type AskEntry, pendingAsk, useSession } from "../store/session";
 import { Message } from "./Messages";
 
 // Within this many pixels of the bottom, new output keeps the chat scrolled to the end
 const STICK_DISTANCE = 80;
+
+const NO_ASKS: AskEntry[] = [];
 
 export function Chat() {
   const entries = useSession((state) => state.entries);
@@ -17,9 +19,29 @@ export function Chat() {
     if (el && stuck.current) el.scrollTop = el.scrollHeight;
   }, [entries, busy]);
 
+  // Questions about a tool call show on its card
+  const { onCards, cards } = useMemo(() => {
+    const cards = new Set<string>();
+    const onCards = new Map<string, AskEntry[]>();
+    for (const entry of entries) {
+      if (entry.kind === "tool") cards.add(entry.id);
+      if (entry.kind === "ask" && entry.ask.tool_id && cards.has(`tool-${entry.ask.tool_id}`)) {
+        const card = `tool-${entry.ask.tool_id}`;
+        onCards.set(card, [...(onCards.get(card) ?? []), entry]);
+      }
+    }
+    return { onCards, cards };
+  }, [entries]);
+  const shown = entries.filter(
+    (entry) =>
+      entry.kind !== "ask" || !entry.ask.tool_id || !cards.has(`tool-${entry.ask.tool_id}`),
+  );
+
   const last = entries[entries.length - 1];
-  const streaming = last?.kind === "loom" && last.streaming;
-  const working = busy && !streaming && !pendingAsk(entries);
+  const active =
+    (last?.kind === "loom" && last.streaming) ||
+    (last?.kind === "tool" && last.status === "running");
+  const working = busy && !active && !pendingAsk(entries);
 
   return (
     <div
@@ -39,8 +61,8 @@ export function Chat() {
             </div>
           </div>
         )}
-        {entries.map((entry) => (
-          <Message key={entry.id} entry={entry} />
+        {shown.map((entry) => (
+          <Message key={entry.id} entry={entry} asks={onCards.get(entry.id) ?? NO_ASKS} />
         ))}
         {working && (
           <div className="text-dim">

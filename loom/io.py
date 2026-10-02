@@ -1236,8 +1236,10 @@ class InputOutput:
             plain = plain.replace("●", "*").replace("⎿", "|").replace("⋮", ":")
             self.console.print(plain.encode("ascii", errors="replace").decode("ascii"), **kwargs)
 
-    def tool_call(self, name, detail=""):
-        """Show one line for a tool the agent is using, like: ● Read(loom/io.py)"""
+    def tool_call(self, name, detail="", args=None):
+        """Show one line for a tool the agent is using, like: ● Read(loom/io.py)
+
+        args are the call's arguments as the model sent them, for UIs that show them."""
         name = sanitize_for_display(name, show_escapes=True)
         detail = sanitize_for_display(detail, show_escapes=True)
         if detail:
@@ -1280,6 +1282,14 @@ class InputOutput:
             text.append(line + "\n", style=style)
         # One screen line per result line
         self._print_text(text, end="", no_wrap=True, overflow="ellipsis")
+
+    def tool_done(self, result, error=False):
+        """The agent's tool call finished, and result is what the model gets back. The
+        terminal has already shown it compactly, with tool_result."""
+
+    def usage_output(self, report):
+        """Show the tokens and cost of a request."""
+        self.tool_output(report)
 
     def todo_output(self, todos):
         """Show the agent's to-do list as a checklist."""

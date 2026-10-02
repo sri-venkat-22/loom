@@ -316,10 +316,12 @@ class AgentCoder(Coder):
             else:
                 try:
                     result = self.run_tool_call(call)
+                    self.io.tool_done(result)
                 except KeyboardInterrupt:
                     self.keyboard_interrupt()
                     self.stop_requested = True
                     result = "Interrupted by the user. Stop and wait for their instructions."
+                    self.io.tool_done(result, error=True)
             self.cur_messages.append(dict(role="tool", tool_call_id=call["id"], content=result))
 
         self.continue_loop = not self.stop_requested
@@ -336,18 +338,18 @@ class AgentCoder(Coder):
         try:
             action = agent_tools.prepare(self, name, args)
         except ToolError as err:
-            self.io.tool_call(name, describe_args(args))
+            self.io.tool_call(name, describe_args(args), args=args)
             self.io.tool_result(f"Error: {err}", error=True)
             return f"Error: {err}"
         except Exception as err:
             # Never let an unexpected failure escape: the model\'s tool_calls message is
             # already on the way to the chat history, and a missing tool reply would make
             # the next request a 400 forever
-            self.io.tool_call(name, describe_args(args))
+            self.io.tool_call(name, describe_args(args), args=args)
             self.io.tool_result(f"Error: {err}", error=True)
             return f"Error preparing {name}: {err.__class__.__name__}: {err}"
 
-        self.io.tool_call(action.name or name, action.detail)
+        self.io.tool_call(action.name or name, action.detail, args=args)
         refusal = self.refuse_action(name, action)
         if refusal:
             self.io.tool_result(f"Refused: {refusal}", error=True)

@@ -2474,7 +2474,7 @@ class Coder:
         self.total_tokens_sent += self.message_tokens_sent
         self.total_tokens_received += self.message_tokens_received
 
-        self.io.tool_output(self.usage_report)
+        self.io.usage_output(self.usage_report)
 
         prompt_tokens = self.message_tokens_sent
         completion_tokens = self.message_tokens_received

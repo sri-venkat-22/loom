@@ -1,7 +1,10 @@
 import { useState } from "react";
 
+import { answerSummary } from "../lib/asks";
 import { send } from "../lib/socket";
-import type { Entry } from "../store/session";
+import type { AskEntry, Entry } from "../store/session";
+import { DiffView } from "./DiffView";
+import { ToolCard } from "./ToolCard";
 
 type Of<K extends Entry["kind"]> = Extract<Entry, { kind: K }>;
 
@@ -85,12 +88,16 @@ function PromptAnswer({ askId, initial }: { askId: string; initial: string }) {
 function AskMessage({ entry }: { entry: Of<"ask"> }) {
   const { ask, answer } = entry;
   const pending = answer === undefined;
-  const answered = ask.choices.find((choice) => choice.value === answer)?.label ?? answer;
 
   return (
     <div className="border-l-2 border-primary pl-3">
       <div className="mb-1 text-[12px] text-primary">{ask.kind}</div>
       <div className="whitespace-pre-wrap break-words">{ask.question}</div>
+      {ask.subject && (
+        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[13px] text-muted-foreground">
+          {ask.subject}
+        </pre>
+      )}
       {pending && ask.kind === "prompt" && (
         <PromptAnswer askId={ask.ask_id} initial={ask.default} />
       )}
@@ -112,15 +119,13 @@ function AskMessage({ entry }: { entry: Of<"ask"> }) {
         </div>
       )}
       {!pending && (
-        <div className="mt-2 text-[13px] text-dim">
-          {answer === null ? "cancelled" : `› ${answered || "(empty)"}`}
-        </div>
+        <div className="mt-2 text-[13px] text-dim">{answerSummary(ask, answer, false).text}</div>
       )}
     </div>
   );
 }
 
-export function Message({ entry }: { entry: Entry }) {
+export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
   switch (entry.kind) {
     case "user":
       return <UserMessage entry={entry} />;
@@ -128,6 +133,15 @@ export function Message({ entry }: { entry: Entry }) {
       return <LoomMessage entry={entry} />;
     case "system":
       return <SystemMessage entry={entry} />;
+    case "tool":
+      return <ToolCard entry={entry} asks={asks} />;
+    case "diff":
+      return (
+        <div className="text-[14px]">
+          <div className="text-muted-foreground">{entry.diff.file}</div>
+          <DiffView diff={entry.diff} />
+        </div>
+      );
     case "ask":
       return <AskMessage entry={entry} />;
   }

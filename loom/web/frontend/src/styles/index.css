@@ -101,3 +101,12 @@
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* Diff syntax highlighting: shiki gives each token both themes' colors */
+.shiki-token {
+  color: var(--shiki-dark);
+}
+
+:root.light .shiki-token {
+  color: var(--shiki-light);
+}
