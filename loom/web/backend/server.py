@@ -28,16 +28,16 @@ def check_port(port, host=HOST):
             raise ServerError(f"Can't listen on {host}:{port}: {err.strerror or err}")
 
 
-def start_server(session, port=DEFAULT_PORT, open_browser=True, host=HOST):
-    """Serve the web UI for session on host:port, and return its URL once it's listening.
-    Only this computer can connect."""
+def start_server(session, port=DEFAULT_PORT, open_browser=True, host=HOST, io=None):
+    """Serve the web UI for session, and io (the WebIO) on host:port, and return its URL
+    once it's listening. Only this computer can connect."""
     import uvicorn
 
     from .app import create_app
 
     check_port(port, host)
     config = uvicorn.Config(
-        create_app(session),
+        create_app(session, io=io),
         host=host,
         port=port,
         log_level="warning",

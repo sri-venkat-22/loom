@@ -40,10 +40,15 @@ export type AskEntry = Extract<Entry, { kind: "ask" }>;
 
 export type Connection = "connecting" | "open" | "closed";
 
+// The terminal keeps this much of the end of the commands' output
+const MAX_TERMINAL = 200_000;
+
 interface SessionState {
   connection: Connection;
   session: SessionEvent | null;
   entries: Entry[];
+  // The output of commands like /run, for the side pane's terminal
+  terminal: string;
   setConnection: (connection: Connection) => void;
   reset: () => void;
   apply: (event: ServerEvent) => void;
@@ -173,13 +178,19 @@ export const useSession = create<SessionState>((set) => ({
   connection: "connecting",
   session: null,
   entries: [],
+  terminal: "",
   setConnection: (connection) => set({ connection }),
   // The server replays the whole conversation to every new connection
-  reset: () => set({ session: null, entries: [] }),
+  reset: () => set({ session: null, entries: [], terminal: "" }),
   apply: (event) =>
-    set((state) =>
-      event.type === "session" ? { session: event } : { entries: reduce(state.entries, event) },
-    ),
+    set((state) => {
+      if (event.type === "session") return { session: event };
+      if (event.type === "terminal") {
+        const gap = event.start && state.terminal ? "\n" : "";
+        return { terminal: (state.terminal + gap + event.text).slice(-MAX_TERMINAL) };
+      }
+      return { entries: reduce(state.entries, event) };
+    }),
 }));
 
 export const pendingAsk = (entries: Entry[]): AskEntry | undefined => {

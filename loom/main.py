@@ -348,7 +348,7 @@ def start_web(io, args):
     from loom.web.backend.server import ServerError, start_server
 
     try:
-        url = start_server(io.web, port=args.port, open_browser=args.browser)
+        url = start_server(io.web, port=args.port, open_browser=args.browser, io=io)
     except ServerError as err:
         io.tool_error(str(err))
         return False

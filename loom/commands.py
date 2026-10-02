@@ -810,12 +810,14 @@ class Commands:
 
         self.io.tool_output(f"Diff since {commit_before_message[:7]}...")
 
-        if self.coder.pretty:
+        # A UI that shows output itself (the web UI) gets the plain diff to show
+        shows_output = bool(self.io.command_output)
+        if self.coder.pretty and not shows_output:
             run_cmd(f"git diff {commit_before_message}")
             return
 
         diff = self.coder.repo.diff_commits(
-            self.coder.pretty,
+            self.coder.pretty and not shows_output,
             commit_before_message,
             "HEAD",
         )
@@ -1141,7 +1143,11 @@ class Commands:
     def cmd_run(self, args, add_on_nonzero_exit=False):
         "Run a shell command and optionally add the output to the chat (alias: !)"
         exit_status, combined_output = run_cmd(
-            args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root
+            args,
+            verbose=self.verbose,
+            error_print=self.io.tool_error,
+            cwd=self.coder.root,
+            output=self.io.command_output,
         )
 
         if combined_output is None:

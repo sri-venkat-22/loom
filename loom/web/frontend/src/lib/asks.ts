@@ -27,6 +27,7 @@ const CHECKPOINT_ACTIONS: Record<string, { key: string; label: string; primary?:
   approve: { key: "a", label: "Approve", primary: true },
   "approve anyway": { key: "a", label: "Approve anyway" },
   "send back": { key: "s", label: "Send back to Building" },
+  edit: { key: "e", label: "Edit" },
   reject: { key: "r", label: "Request changes" },
 };
 
@@ -66,6 +67,9 @@ export function answerSummary(
   onDiff: boolean,
 ): { text: string; ok: boolean | null } {
   if (value === null || value === undefined) return { text: "cancelled", ok: null };
+  if (ask.kind === "edit") {
+    return { text: value === ask.default ? "› unchanged" : "› saved", ok: null };
+  }
   if (ask.kind === "permission") {
     const ok = value !== "no";
     if (onDiff) return { text: ok ? "accepted" : "rejected", ok };

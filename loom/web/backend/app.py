@@ -11,6 +11,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from loom import __version__
 
+from .api import make_router
 from .protocol import PROTOCOL_VERSION
 
 # Where `npm run build` in loom/web/frontend puts the frontend
@@ -44,10 +45,13 @@ def local_origin(origin):
     return host in LOCAL_HOSTS
 
 
-def create_app(session, static_dir=STATIC_DIR, allowed_hosts=LOCAL_HOSTS):
+def create_app(session, static_dir=STATIC_DIR, allowed_hosts=LOCAL_HOSTS, io=None):
+    """The app for session. io is the WebIO, which the side pane's /api routes read the
+    project through."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     # Refuse other Host names, so a rebound DNS name can't reach the server
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
+    app.include_router(make_router(io))
 
     @app.get("/api/health")
     def health():
