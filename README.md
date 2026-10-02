@@ -10,6 +10,7 @@ Loom lets you pair program with LLMs to start a new project or build on your exi
 
 ## Features
 
+- **In your browser too** — `loom --web` gives you the same loom in a Claude-Code-style web UI, with inline diffs you accept with `y`, project checkpoints, a file tree and an editor. See [the web UI](#web-ui).
 - **Works as an agent** — ask for a change and the model finds the code, edits it, runs your tests and fixes what breaks, asking before each edit and command. See [the agent docs](loom/docs/agent.md).
 - **Permissions you control** — approve each action, accept edits automatically, or plan read-only; allow trusted commands like `bash(pytest*)`.
 - **Project memory** — put standing instructions in a `LOOM.md` file and they apply to every request.
@@ -50,6 +51,29 @@ loom --model deepseek --api-key deepseek=<key>
 ```
 
 Run `loom --help` to see all options. Configuration can also live in a `.loom.conf.yml` file or `LOOM_*` environment variables.
+
+## Web UI
+
+![loom --web: a tool card, an edit's diff waiting for y or n, and the project's phases](loom/docs/images/web-ui.png)
+
+Run loom with `--web` to chat with it in your browser instead of the terminal:
+
+```bash
+cd /to/your/project
+loom --web                    # serves http://127.0.0.1:8765/ and opens it
+loom --web --port 9000        # another port
+loom --web --no-browser       # open the address yourself
+```
+
+It's the same loom, with your models and settings: replies stream in, tool calls show as cards, edits show as diffs you accept with `y` or reject with `n`, and Esc stops the current work. Type `/` or press ⌘K for commands, and ⌘B for a side pane with your files, a Monaco viewer, `/run` output, the `/project` memory and the models. `/project` runs show their phases in the header and stop at inline checkpoints. Press ^C twice in the terminal to stop loom. The server only listens on 127.0.0.1.
+
+In a clone of this repo, build the frontend once first (it needs Node.js 20.19+ or 22.12+):
+
+```bash
+cd loom/web/frontend && npm install && npm run build
+```
+
+See [the web UI docs](loom/docs/web.md) for the keys, commands and side pane.
 
 ## Development
 

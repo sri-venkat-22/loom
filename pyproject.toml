@@ -43,6 +43,11 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["loom"]
 
+[tool.setuptools.exclude-package-data]
+# loom --web ships its built frontend (loom/web/static), not the sources, and the docs'
+# screenshots are for GitHub
+loom = ["web/frontend/*", "web/frontend/**/*", "docs/images/*"]
+
 [build-system]
 requires = ["setuptools>=68", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
