@@ -304,6 +304,12 @@ class InputOutput:
     bypass_permissions = False
     # Show full diffs of the agent's edits, instead of the file and its line counts
     agent_diffs = False
+    # UIs that show things themselves, like the web UI, set these to functions; the
+    # terminal leaves them None. command_output is run_cmd's output callback, for the
+    # output of /run and the like, and edit_document(text, path) lets the user edit a
+    # /project document, returning the new text.
+    command_output = None
+    edit_document = None
 
     def __init__(
         self,

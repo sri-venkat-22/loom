@@ -691,8 +691,12 @@ class Orchestrator:
             self.io.tool_error(f"There is no {phase.document} in the project to edit.")
             return False
 
-        commands = getattr(self.coder, "commands", None)
-        after = pipe_editor(before, suffix=".md", editor=getattr(commands, "editor", None))
+        if self.io.edit_document:
+            # A UI with its own editor, like the web UI's
+            after = self.io.edit_document(before, phase.document)
+        else:
+            commands = getattr(self.coder, "commands", None)
+            after = pipe_editor(before, suffix=".md", editor=getattr(commands, "editor", None))
         if after.strip() == before.strip():
             self.io.tool_output(f"The {phase.document_title} is unchanged.")
             return False

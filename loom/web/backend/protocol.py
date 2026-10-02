@@ -36,7 +36,11 @@ Server to browser:
                  subject is what it's about, like a command, and tool_id the card it
                  belongs on. A checkpoint reviews a /project phase, and checkpoint is
                  {phase, title, document, document_title, verdict, next, next_title}.
+                 An edit asks for the new text of the document at subject, whose text is
+                 default.
   ask_resolved   {ask_id, value}            The question was answered.
+  terminal       {text, start}              Output of a command like /run, for the side
+                                            pane's terminal; start begins a new command.
 
 Browser to server:
 
@@ -64,6 +68,7 @@ SERVER_EVENTS = (
     "diff",
     "ask",
     "ask_resolved",
+    "terminal",
 )
 
 CLIENT_EVENTS = (
@@ -73,7 +78,7 @@ CLIENT_EVENTS = (
 )
 
 LEVELS = ("info", "warning", "error")
-ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "prompt")
+ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "prompt", "edit")
 PHASE_STATUSES = ("pending", "running", "review", "approved")
 TURN_STATUSES = ("done", "cancelled")
 TOOL_STATUSES = ("done", "failed")

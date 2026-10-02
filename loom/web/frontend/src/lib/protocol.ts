@@ -4,7 +4,7 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Level = "info" | "warning" | "error";
-export type AskKind = "confirm" | "permission" | "choice" | "checkpoint" | "prompt";
+export type AskKind = "confirm" | "permission" | "choice" | "checkpoint" | "prompt" | "edit";
 export type PhaseStatus = "pending" | "running" | "review" | "approved";
 
 export interface Phase {
@@ -156,6 +156,14 @@ export interface AskResolvedEvent {
   value: string | null;
 }
 
+// Output of a command like /run, for the side pane's terminal
+export interface TerminalEvent {
+  type: "terminal";
+  text: string;
+  // A new command starts
+  start: boolean;
+}
+
 export type ServerEvent =
   | SessionEvent
   | UserEvent
@@ -169,7 +177,8 @@ export type ServerEvent =
   | ToolEndEvent
   | DiffEvent
   | AskEvent
-  | AskResolvedEvent;
+  | AskResolvedEvent
+  | TerminalEvent;
 
 export type ClientEvent =
   | { type: "input"; text: string }

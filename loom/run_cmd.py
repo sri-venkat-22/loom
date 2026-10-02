@@ -8,12 +8,21 @@ import pexpect
 import psutil
 
 
-def run_cmd(command, verbose=False, error_print=None, cwd=None):
+def run_cmd(command, verbose=False, error_print=None, cwd=None, output=None):
+    """Run command in a shell, showing its output as it runs, and return (exit status,
+    output). output, if given, is called with (command, start=True) first, then with each
+    line of output as it comes, and last with ("", exit_code=status); the command then
+    runs without the terminal, so it can't be interactive."""
     try:
-        if sys.stdin.isatty() and hasattr(pexpect, "spawn") and platform.system() != "Windows":
+        if (
+            output is None
+            and sys.stdin.isatty()
+            and hasattr(pexpect, "spawn")
+            and platform.system() != "Windows"
+        ):
             return run_cmd_pexpect(command, verbose, cwd)
 
-        return run_cmd_subprocess(command, verbose, cwd)
+        return run_cmd_subprocess(command, verbose, cwd, output=output)
     except OSError as e:
         error_message = f"Error occurred while running command '{command}': {str(e)}"
         if error_print is None:
@@ -39,9 +48,11 @@ def get_windows_parent_process_name():
         return None
 
 
-def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding):
+def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding, output=None):
     if verbose:
         print("Using run_cmd_subprocess:", command)
+    if output:
+        output(command, start=True)
 
     try:
         shell = os.environ.get("SHELL", "/bin/sh")
@@ -72,16 +83,26 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
             cwd=cwd,
         )
 
-        output = []
+        captured = []
+        line = []
         while True:
             chunk = process.stdout.read(1)
             if not chunk:
                 break
             print(chunk, end="", flush=True)  # Print the chunk in real-time
-            output.append(chunk)  # Store the chunk for later use
+            captured.append(chunk)  # Store the chunk for later use
+            if output:
+                line.append(chunk)
+                if chunk == "\n":
+                    output("".join(line))
+                    line = []
+        if output and line:
+            output("".join(line))
 
         process.wait()
-        return process.returncode, "".join(output)
+        if output:
+            output("", exit_code=process.returncode)
+        return process.returncode, "".join(captured)
     except Exception as e:
         return 1, str(e)
 

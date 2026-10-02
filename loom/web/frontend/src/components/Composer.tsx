@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { answerWithKey } from "../lib/asks";
+import { LOCAL_COMMANDS, runLocal } from "../lib/localCommands";
 import type { Command } from "../lib/protocol";
 import { send } from "../lib/socket";
 import { useSession } from "../store/session";
@@ -17,7 +18,11 @@ export function Composer() {
   const input = useRef<HTMLTextAreaElement>(null);
   const busy = useSession((state) => state.session?.busy ?? false);
   const open = useSession((state) => state.connection === "open");
-  const commands = useSession((state) => state.session?.commands ?? NO_COMMANDS);
+  const loomCommands = useSession((state) => state.session?.commands ?? NO_COMMANDS);
+  const commands = useMemo(
+    () => [...loomCommands, ...LOCAL_COMMANDS].sort((a, b) => a.cmd.localeCompare(b.cmd)),
+    [loomCommands],
+  );
 
   const matches = useMemo(
     () => (dismissed ? [] : matchingCommands(text, commands)),
@@ -45,7 +50,12 @@ export function Composer() {
 
   function run(message: string) {
     message = message.trim();
-    if (!message || busy || !open) return;
+    if (!message) return;
+    if (runLocal(message)) {
+      change("");
+      return;
+    }
+    if (busy || !open) return;
     if (send({ type: "input", text: message })) change("");
   }
 

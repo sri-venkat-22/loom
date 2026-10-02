@@ -6,6 +6,7 @@ before that, like for startup questions, they're asked in the terminal.
 """
 
 import json
+import re
 from contextlib import contextmanager
 
 from rich.text import Text
@@ -178,6 +179,13 @@ class WebIO(InputOutput):
         # The tokens and cost of every request this session, the phase agents' included
         self.usage = dict(sent=0, received=0)
         self.cost = 0.0
+        # The project's files, for the side pane's tree, as of the last prompt
+        self.root = None
+        self.files = dict(files=[], chat=[], read_only=[])
+        # The output of the /run command being shown, for its card
+        self.run_output = None
+        # The current card already ended, like a finished /run's
+        self.tool_closed = False
 
     @property
     def prompt_session(self):
@@ -225,6 +233,7 @@ class WebIO(InputOutput):
         if not self.project_watcher:
             self.project_watcher = ProjectWatcher(self.web, root).start()
         coder = getattr(commands, "coder", None)
+        self.remember_files(coder, root, rel_fnames, addable_rel_fnames)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
         inp = self.web.wait_for_input()
         self.add_to_input_history(inp)
@@ -252,6 +261,17 @@ class WebIO(InputOutput):
         if not self.confirm_ask(question, default="n"):
             return ""
         return f"/project back {phase.key}"
+
+    def remember_files(self, coder, root, rel_fnames, addable_rel_fnames):
+        read_only = []
+        if coder:
+            read_only = [coder.get_rel_fname(f) for f in coder.abs_read_only_fnames]
+        self.root = str(root)
+        self.files = dict(
+            files=sorted(set(rel_fnames) | set(addable_rel_fnames) | set(read_only)),
+            chat=sorted(rel_fnames),
+            read_only=sorted(read_only),
+        )
 
     def session_state(self, coder, root, rel_fnames, commands):
         state = dict(
@@ -440,6 +460,13 @@ class WebIO(InputOutput):
         """Finish the open tool card, if there is one."""
         if not self.tool_id:
             return
+        if self.tool_closed:
+            self.tool_id = None
+            self.tool_closed = False
+            return
+        if result is None and self.run_output is not None:
+            result = "".join(self.run_output)
+        self.run_output = None
         output = sanitize_for_display(result or "")
         if len(output) > MAX_TOOL_OUTPUT:
             output = output[:MAX_TOOL_OUTPUT] + "\n…"
@@ -448,6 +475,59 @@ class WebIO(InputOutput):
             "tool_end", id=self.tool_id, status="failed" if failed else "done", output=output
         )
         self.tool_id = None
+
+    def command_output(self, text, start=False, exit_code=None):
+        """run_cmd's output callback: a command like /run's shows as a card in the chat,
+        with its output in the side pane's terminal as it comes."""
+        if not self.web.started:
+            return
+        text = sanitize_for_display(text)
+        if exit_code is not None:
+            if self.run_output is None:
+                return
+            if exit_code:
+                self.tool_result(f"Exit code: {exit_code}", error=True)
+            output = "".join(self.run_output)
+            self.web.emit(
+                "tool_end",
+                id=self.tool_id,
+                status="failed" if self.tool_failed else "done",
+                output=output[-MAX_TOOL_OUTPUT:],
+            )
+            # The card stays the current one, so asking to add the output goes on it
+            self.run_output = None
+            self.tool_closed = True
+            return
+        if start:
+            self.end_tool()
+            self.tool_id = self.web.next_id("c")
+            self.tool_failed = False
+            self.web.emit("tool_start", id=self.tool_id, name="Run", detail=text, args=None)
+            self.run_output = []
+            self.web.emit("terminal", text=f"$ {text}\n", start=True)
+            return
+        if self.run_output is not None:
+            self.run_output.append(text)
+        self.web.emit("terminal", text=text, start=False)
+
+    def print(self, message=""):
+        super().print(message)
+        message = sanitize_for_display(str(message))
+        if "diff --git " in message:
+            # /diff: one inline diff per file
+            for part in re.split(r"(?m)^(?=diff --git )", message):
+                if part.strip():
+                    file, lines = parse_diff(part)
+                    self.web.emit(
+                        "diff", id=self.web.next_id("d"), tool_id=None, file=file, lines=lines
+                    )
+        else:
+            self.emit_system("info", message)
+
+    def edit_document(self, text, path):
+        """Let the user edit a /project document in the browser, and return the result."""
+        value = self.web.ask("edit", f"Edit {path}", default=text, subject=path)
+        return text if value is None else value
 
     def diff_output(self, diff, indent=""):
         super().diff_output(diff, indent)

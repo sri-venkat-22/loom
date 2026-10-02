@@ -126,6 +126,25 @@ function AskMessage({ entry }: { entry: Of<"ask"> }) {
   );
 }
 
+// The document itself is edited in the side pane
+function EditMessage({ entry }: { entry: Of<"ask"> }) {
+  const { ask, answer } = entry;
+  return (
+    <div className="border-l-2 border-primary pl-3 text-[13px]">
+      <div className="mb-1 text-[12px] text-primary">edit</div>
+      {answer === undefined ? (
+        <div className="text-muted-foreground">
+          Editing {ask.subject} in the side pane: <span className="text-foreground">⌘S</span> saves
+        </div>
+      ) : (
+        <div className="text-dim">
+          {ask.subject} {answerSummary(ask, answer, false).text}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
   switch (entry.kind) {
     case "user":
@@ -145,6 +164,7 @@ export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
       );
     case "ask":
       if (entry.ask.kind === "checkpoint") return <CheckpointCard entry={entry} />;
+      if (entry.ask.kind === "edit") return <EditMessage entry={entry} />;
       return <AskMessage entry={entry} />;
   }
 }
