@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 
+import { answerWithKey } from "../lib/asks";
 import { send } from "../lib/socket";
-import { pendingAsk, useSession } from "../store/session";
+import { useSession } from "../store/session";
 
 const MAX_HEIGHT = 240;
 
@@ -31,16 +32,11 @@ export function Composer() {
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // With an empty input, a choice's first letter answers loom's question
-    const ask = pendingAsk(useSession.getState().entries);
-    if (ask && !text && ask.ask.kind !== "prompt" && event.key.length === 1) {
-      const key = event.key.toLowerCase();
-      const choice = ask.ask.choices.find((c) => c.value.toLowerCase().startsWith(key));
-      if (choice && !event.metaKey && !event.ctrlKey) {
-        event.preventDefault();
-        send({ type: "answer", ask_id: ask.ask.ask_id, value: choice.value });
-        return;
-      }
+    // With an empty input, a choice's first letter answers loom's question: y accepts
+    // an edit and n rejects it
+    if (!text && !event.metaKey && !event.ctrlKey && !event.altKey && answerWithKey(event.key)) {
+      event.preventDefault();
+      return;
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey || !event.shiftKey)) {
       event.preventDefault();

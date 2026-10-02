@@ -12,6 +12,9 @@ export default defineConfig({
     // Served by loom/web/backend/app.py, and packaged with loom
     outDir: "../static",
     emptyOutDir: true,
+    // Shiki's grammars are their own chunks, loaded only for files in that language; the
+    // C++ one is the largest at about 800 kB
+    chunkSizeWarningLimit: 1000,
   },
   server: {
     host: "127.0.0.1",

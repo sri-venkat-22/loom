@@ -64,6 +64,50 @@ export interface SystemEvent {
   text: string;
 }
 
+export type ToolStatus = "done" | "failed";
+export type LineStyle = "done" | "warning" | "error" | "bold" | "dim" | null;
+
+export interface ToolStartEvent {
+  type: "tool_start";
+  id: string;
+  name: string;
+  detail: string;
+  // The call's arguments as pretty JSON, or null
+  args: string | null;
+}
+
+export interface ToolOutputEvent {
+  type: "tool_output";
+  id: string;
+  lines: string[];
+  error: boolean;
+  styles: LineStyle[];
+}
+
+export interface ToolEndEvent {
+  type: "tool_end";
+  id: string;
+  status: ToolStatus;
+  // What the model got back
+  output: string;
+}
+
+export interface DiffLine {
+  kind: "add" | "del" | "ctx" | "gap" | "note";
+  old: number | null;
+  new: number | null;
+  text: string;
+}
+
+export interface DiffEvent {
+  type: "diff";
+  id: string;
+  // The card it belongs on, or null
+  tool_id: string | null;
+  file: string;
+  lines: DiffLine[];
+}
+
 export interface Choice {
   value: string;
   label: string;
@@ -76,6 +120,10 @@ export interface AskEvent {
   question: string;
   choices: Choice[];
   default: string;
+  // What it's about, like a command to run
+  subject: string | null;
+  // The card of the tool call that needs the answer
+  tool_id: string | null;
 }
 
 export interface AskResolvedEvent {
@@ -93,6 +141,10 @@ export type ServerEvent =
   | AssistantDeltaEvent
   | AssistantEndEvent
   | SystemEvent
+  | ToolStartEvent
+  | ToolOutputEvent
+  | ToolEndEvent
+  | DiffEvent
   | AskEvent
   | AskResolvedEvent;
 

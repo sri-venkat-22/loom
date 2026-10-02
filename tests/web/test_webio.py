@@ -1,3 +1,4 @@
+import json
 import threading
 import unittest
 from unittest.mock import patch
@@ -5,7 +6,7 @@ from unittest.mock import patch
 from loom.io import ConfirmGroup
 from loom.reasoning_tags import REASONING_END, REASONING_START
 from loom.web.backend.session import WebSession
-from loom.web.backend.webio import WebIO, WebMarkdownStream, split_reasoning
+from loom.web.backend.webio import WebIO, WebMarkdownStream, parse_diff, split_reasoning
 
 
 def make_io(started=True):
@@ -124,12 +125,10 @@ class TestOutput(unittest.TestCase):
             [("info", "Added calc.py to the chat"), ("warning", "careful"), ("error", "broken")],
         )
 
-    def test_tool_call_lines(self):
+    def test_usage_report_is_only_logged(self):
         io, session = make_io()
-        io.tool_call("Read", "calc.py")
-        io.tool_result("Read 2 lines")
-        texts = [msg["text"] for msg in session.history]
-        self.assertEqual(texts, ["● Read(calc.py)", "  ⎿  Read 2 lines"])
+        io.usage_output("Tokens: 3.6k sent, 129 received.")
+        self.assertEqual(session.history, [])
 
     def test_assistant_output(self):
         io, session = make_io()
@@ -177,3 +176,113 @@ class TestOutput(unittest.TestCase):
             [("Let me", ""), (" read it.", ""), ("", "It adds"), ("", " two numbers.")],
         )
         self.assertEqual(split_reasoning("plain answer"), ("", "plain answer"))
+
+
+DIFF = """--- a/calc.py
++++ b/calc.py
+@@ -1,2 +1,5 @@
+ def add(a, b):
+-    return a - b
++    return a + b
++
++
+@@ -9,1 +12,2 @@
+ x = 1
++y = 2
+... (3 more diff lines)"""
+
+
+class TestToolCards(unittest.TestCase):
+    def test_a_tool_call_is_a_card(self):
+        io, session = make_io()
+        io.tool_call("Read", "calc.py", args=dict(path="calc.py"))
+        io.tool_result("Read 2 lines")
+        io.tool_done("1  def add(a, b):\n2      return a + b")
+
+        start, output, end = session.history
+        self.assertEqual(start["type"], "tool_start")
+        self.assertEqual((start["name"], start["detail"]), ("Read", "calc.py"))
+        self.assertEqual(json.loads(start["args"]), dict(path="calc.py"))
+        self.assertEqual(output["id"], start["id"])
+        self.assertEqual(output["lines"], ["Read 2 lines"])
+        self.assertFalse(output["error"])
+        self.assertEqual(end["status"], "done")
+        self.assertIn("return a + b", end["output"])
+        self.assertIsNone(io.tool_id)
+
+    def test_errors_fail_the_card(self):
+        io, session = make_io()
+        io.tool_call("Bash", "pytest")
+        io.tool_result(["1 failed", "Exit code: 1"], styles=[None, "red"])
+        io.tool_done("Exit code: 1\n1 failed")
+        self.assertEqual(session.history[1]["styles"], [None, "error"])
+        self.assertEqual(session.history[-1]["status"], "done")
+
+        io.tool_call("Update", "calc.py")
+        io.tool_result("Denied", error=True)
+        io.tool_done("The user denied this edit.")
+        self.assertEqual(session.history[-1]["status"], "failed")
+
+        io.tool_call("Bash", "sleep 100")
+        io.tool_done("Interrupted by the user.", error=True)
+        self.assertEqual(session.history[-1]["status"], "failed")
+
+    def test_cards_close_when_something_else_starts(self):
+        io, session = make_io()
+        io.tool_call("Todos", "1 of 2 done")
+        io.tool_call("Compacted the conversation")
+        io.get_assistant_mdstream()
+        ends = [msg for msg in session.history if msg["type"] == "tool_end"]
+        self.assertEqual(len(ends), 2)
+        self.assertEqual([end["output"] for end in ends], ["", ""])
+
+    def test_results_without_a_card(self):
+        io, session = make_io()
+        io.tool_result("Read 2 lines")
+        self.assertEqual(session.history[0]["type"], "system")
+
+    def test_parse_diff(self):
+        file, lines = parse_diff(DIFF)
+        self.assertEqual(file, "calc.py")
+        self.assertEqual(
+            [(line["kind"], line["old"], line["new"]) for line in lines],
+            [
+                ("ctx", 1, 1),
+                ("del", 2, None),
+                ("add", None, 2),
+                ("add", None, 3),
+                ("add", None, 4),
+                ("gap", None, None),
+                ("ctx", 9, 12),
+                ("add", None, 13),
+                ("note", None, None),
+            ],
+        )
+        self.assertEqual(lines[1]["text"], "    return a - b")
+        self.assertEqual(lines[-1]["text"], "... (3 more diff lines)")
+
+    def test_an_edit_asks_with_its_diff_on_the_card(self):
+        io, session = make_io()
+        io.tool_call("Update", "calc.py")
+        card = io.tool_id
+        asks, thread = answer_asks(session, "no")
+        self.assertEqual(io.permission_ask("Edit calc.py?", subject=DIFF, always="edits"), "no")
+        thread.join(5)
+
+        diffs = [msg for msg in session.history if msg["type"] == "diff"]
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0]["tool_id"], card)
+        self.assertEqual(diffs[0]["file"], "calc.py")
+        self.assertEqual(asks[0]["tool_id"], card)
+        self.assertIsNone(asks[0]["subject"])
+        self.assertFalse([msg for msg in session.history if msg["type"] == "system"])
+
+    def test_a_command_asks_with_the_command(self):
+        io, session = make_io()
+        io.tool_call("Bash", "pytest -q")
+        asks, thread = answer_asks(session, "yes")
+        self.assertEqual(io.permission_ask("Run this command?", subject="pytest -q"), "yes")
+        thread.join(5)
+        self.assertEqual(asks[0]["subject"], "pytest -q")
+        # Shown on the question, not again as output
+        self.assertFalse([msg for msg in session.history if msg["type"] == "system"])

@@ -205,9 +205,10 @@ class WebSession:
             self.update(busy=False)
             self.emit("turn_end", turn_id=turn_id, status=status)
 
-    def ask(self, kind, question, choices=(), default=""):
+    def ask(self, kind, question, choices=(), default="", subject=None, tool_id=None):
         """Ask the browser a question and wait for its answer: one of the choices' values,
-        or free text for a prompt."""
+        or free text for a prompt. subject is what it's about, like a command to run, and
+        tool_id the card of the tool call that needs the answer."""
         ask_id = self.next_id("a")
         answers = queue.Queue(maxsize=1)
         with self.lock:
@@ -219,6 +220,8 @@ class WebSession:
             question=question,
             choices=[dict(value=value, label=label) for value, label in choices],
             default=default,
+            subject=subject,
+            tool_id=tool_id,
         )
         value = None
         try:
