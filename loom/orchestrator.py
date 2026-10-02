@@ -1,10 +1,11 @@
 """
 The project orchestrator: takes an idea through the six phases of loom/phases.py in order,
-running each phase's agent and asking the user to approve its document before the next
-phase starts.
+running each phase's agent, with an approval checkpoint after each one where the founder
+approves, edits or rejects its document before the next phase starts.
 
-ProjectState is the state machine. It's saved in .loom/project.json, so a project
-survives restarting loom, and tracks which phase the project is in. Each phase is:
+ProjectState is the state machine. It's saved in the project's shared memory, the SQLite
+database in .loom/memory/project.db (see loom/memory.py), so a project survives
+restarting loom, and tracks which phase the project is in. Each phase is:
 
   pending ──start──▶ running ──finish──▶ review ──approve──▶ approved
      ▲                  │                   │
@@ -15,6 +16,10 @@ Only the current phase (the first one not approved) can change, except with back
 sends the project back to an earlier phase and resets the phases after it to pending
 (their documents stay on disk for the agents to revise). The project is complete when
 every phase is approved.
+
+The checkpoints' outcomes, and the decisions the phase agents record, go in the same
+database. Each agent's task message lists them, and the agents can search them and the
+earlier documents (indexed in a vector store) with the recall tool.
 """
 
 import json
@@ -22,9 +27,22 @@ from datetime import datetime
 from pathlib import Path
 
 from loom.coders import phase_prompts
+from loom.editor import pipe_editor
+from loom.memory import (
+    CONTEXT_KINDS,
+    DB_FILE,
+    FOUNDER,
+    ProjectDB,
+    ProjectMemory,
+    ProjectMemoryError,
+    chroma_installed,
+)
 from loom.phases import PHASES, PHASES_BY_KEY, get_phase, next_phase, read_verdict
+from loom.tools import count_changes, describe_changes
 
-STATE_FILE = ".loom/project.json"
+STATE_FILE = DB_FILE
+# Where projects were saved before the shared memory; loom moves them into it
+LEGACY_STATE_FILE = ".loom/project.json"
 FORMAT_VERSION = 1
 
 STATUSES = ("pending", "running", "review", "approved")
@@ -44,6 +62,10 @@ MAX_FIX_ROUNDS = 3
 MAX_INLINE_CHARS = 40_000
 # The most loom reads of a phase document or the project file
 MAX_DOC_BYTES = 1_000_000
+# How many of the latest decisions an agent's task message lists
+MAX_DECISIONS = 40
+# How many passages of earlier documents the orchestrator looks up for an agent
+MAX_RECALLED = 3
 
 
 def now():
@@ -72,14 +94,17 @@ class TransitionError(Exception):
 
 
 class ProjectState:
-    def __init__(self, path, data, root=None):
-        self.path = Path(path)
+    def __init__(self, db, data):
+        # The ProjectDB it's saved in
+        self.db = db
         self.data = data
-        # The project root, which the file has to stay in
-        self.root = root
+
+    @property
+    def path(self):
+        return self.db.path
 
     @classmethod
-    def new(cls, root, idea):
+    def new(cls, root, idea, db=None):
         data = dict(
             version=FORMAT_VERSION,
             idea=idea.strip(),
@@ -88,14 +113,31 @@ class ProjectState:
             fix_rounds=0,
             history=[],
         )
-        state = cls(Path(root) / STATE_FILE, data, root)
+        state = cls(db or ProjectDB(root), data)
         state.log(None, "new", idea.strip().split("\n", 1)[0])
         return state
 
     @classmethod
-    def load(cls, root):
+    def load(cls, root, db=None):
         """The project in root, or None if it has none."""
-        path = Path(root) / STATE_FILE
+        db = db or ProjectDB(root)
+        try:
+            data = db.load_state()
+        except ProjectMemoryError as err:
+            raise TransitionError(f"Unable to read the project: {err}")
+        if data is None:
+            return cls.load_legacy(root, db)
+        if data.get("version") != FORMAT_VERSION:
+            raise TransitionError(f"{db.path} has a project this version of loom can't read")
+        for phase in PHASES:
+            data["phases"].setdefault(phase.key, dict(status="pending", runs=0))
+        return cls(db, data)
+
+    @classmethod
+    def load_legacy(cls, root, db):
+        """Move a project from .loom/project.json, where loom used to keep it, into the
+        database. None if there's none."""
+        path = Path(root) / LEGACY_STATE_FILE
         if not path.exists() and not path.is_symlink():
             return None
         try:
@@ -109,15 +151,16 @@ class ProjectState:
             raise TransitionError(f"{path} isn't a loom project file this version can read")
         for phase in PHASES:
             data["phases"].setdefault(phase.key, dict(status="pending", runs=0))
-        return cls(path, data, root)
+        state = cls(db, data)
+        state.save()
+        path.rename(path.with_name(path.name + ".migrated"))
+        return state
 
     def save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        if self.root is not None and (self.path.exists() or self.path.is_symlink()):
-            # Don't write through a symlink to a file outside the project
-            if not in_project(self.root, self.path):
-                raise TransitionError(f"{self.path} isn't a file in the project")
-        self.path.write_text(json.dumps(self.data, indent=2) + "\n", encoding="utf-8")
+        try:
+            self.db.save_state(self.data, {phase.key: phase.number for phase in PHASES})
+        except ProjectMemoryError as err:
+            raise TransitionError(f"Unable to save the project: {err}")
 
     @property
     def idea(self):
@@ -227,20 +270,27 @@ class Orchestrator:
         self.coder = coder
         self.io = coder.io
         self.root = Path(coder.root)
-        self.state = state if state is not None else ProjectState.load(self.root)
+        self.memory = ProjectMemory(self.root, self.io)
+        self.state = state if state is not None else ProjectState.load(self.root, self.memory.db)
         # Phases whose document links outside the project, which loom has warned about
         self.outside_warned = set()
 
     # Starting and running
 
     def new_project(self, idea):
-        self.state = ProjectState.new(self.root, idea)
+        try:
+            # A new idea starts with an empty memory
+            self.memory.clear()
+        except ProjectMemoryError as err:
+            raise TransitionError(f"Unable to start the project: {err}")
+        self.state = ProjectState.new(self.root, idea, self.memory.db)
         self.state.save()
+        self.memory.index_text("idea", "idea", None, "idea", self.state.idea, "The project idea")
 
     def run(self):
-        """Run the phases from the current one, asking the user to approve each document,
-        until the project is complete, the user stops or a phase fails. Returns whether
-        the project is complete."""
+        """Run the phases from the current one, stopping at each one's checkpoint for the
+        founder, until the project is complete, the founder stops or a phase fails. Returns
+        whether the project is complete."""
         if not self.can_run():
             return False
         try:
@@ -321,6 +371,7 @@ class Orchestrator:
 
         state.finish(phase.key, read_verdict(phase, self.document_text(phase)))
         state.save()
+        self.remember_document(phase)
         return True
 
     def stopped(self, agent):
@@ -331,13 +382,15 @@ class Orchestrator:
         from loom.coders.phase_coder import PhaseCoder
         from loom.sessions import Session
 
-        # A fresh conversation: everything the agent needs is in its task message
+        # A fresh conversation: everything the agent needs is in its task message, and in
+        # the project memory
         return Coder.create(
             from_coder=self.coder,
             coder_class=PhaseCoder,
             edit_format="agent",
             summarize_from_coder=False,
             phase=phase,
+            shared_memory=self.memory,
             fnames=[],
             read_only_fnames=[],
             done_messages=[],
@@ -370,11 +423,13 @@ class Orchestrator:
         return text.strip()
 
     def task_message(self, phase):
-        """The agent's first message: the idea, the documents it works from and its task."""
+        """The agent's first message: the idea, the documents it works from, the decisions
+        so far, related passages from the project memory and its task."""
         data = self.state.phase_data(phase.key)
         parts = [f"# The project idea\n\n{self.state.idea}"]
 
         inputs = list(phase.inputs) + [key for key in data.get("attach") or [] if key]
+        inline = []
         for key in dict.fromkeys(inputs):
             source = PHASES_BY_KEY[key]
             text = self.document_text(source)
@@ -385,6 +440,15 @@ class Orchestrator:
                 parts.append(f"{title}\n\nIt's too long to include here; read it with read_file.")
             else:
                 parts.append(f"{title}\n\n{text}")
+                inline.append(source.document)
+
+        feedback = data.get("feedback")
+        decisions = self.decisions_context()
+        if decisions:
+            parts.append(f"# Decisions so far\n\n{decisions}")
+        recalled = self.recalled_context(phase, inline, feedback)
+        if recalled:
+            parts.append(recalled)
 
         task = [f"You are the {phase.agent}."]
         if phase.key == "building":
@@ -395,7 +459,6 @@ class Orchestrator:
         else:
             task.append(f"Write the {phase.document_title} to {phase.document}.")
 
-        feedback = data.get("feedback")
         if self.document_text(phase):
             if feedback:
                 why = "the feedback below asks for changes."
@@ -419,14 +482,135 @@ class Orchestrator:
         parts.append("# Your task\n\n" + "\n\n".join(task))
         return "\n\n".join(parts)
 
-    # Reviewing a phase's document
+    # The project memory
+
+    def decide(self, phase, kind, text, reason="", source=FOUNDER):
+        """Record the outcome of a checkpoint, or another decision of the founder's."""
+        try:
+            return self.memory.record_decision(
+                phase.key if phase else None, text, reason, source=source, kind=kind
+            )
+        except ProjectMemoryError as err:
+            raise TransitionError(f"Unable to record the decision: {err}")
+
+    def checkpoint_source(self):
+        """Who answered the checkpoint: the founder, or --yes-always for them."""
+        return FOUNDER if self.io.yes is None else "loom (--yes-always)"
+
+    def remember_document(self, phase):
+        """Index the phase's document in the project memory, if it changed."""
+        text = self.document_text(phase)
+        if not text:
+            return
+        try:
+            self.memory.index_document(phase, text)
+        except ProjectMemoryError as err:
+            self.io.tool_warning(f"Unable to add {phase.document} to the project memory: {err}")
+
+    def describe_decision(self, decision):
+        phase = PHASES_BY_KEY.get(decision["phase"])
+        where = phase.title if phase else "Project"
+        who = "the founder" if decision["source"] == FOUNDER else decision["source"]
+        line = f"{where}, {who}: {decision['text']}"
+        if decision.get("reason"):
+            line += f" (Why: {decision['reason']})"
+        return line
+
+    def decisions_context(self):
+        """The decisions so far, as the agents see them."""
+        try:
+            decisions = self.memory.decisions(CONTEXT_KINDS)
+        except ProjectMemoryError:
+            return ""
+        lines = [f"- {self.describe_decision(d)}" for d in decisions[-MAX_DECISIONS:]]
+        if len(decisions) > MAX_DECISIONS:
+            lines.insert(0, f"(The latest {MAX_DECISIONS}; use recall to find older ones.)")
+        return "\n".join(lines)
+
+    def recalled_context(self, phase, inline, feedback=None):
+        """Passages of earlier phases' documents that aren't in the agent's message but may
+        matter for its task, from the project memory."""
+        earlier = [p.key for p in PHASES if p.number < phase.number]
+        query = " ".join(text for text in (phase.recall, feedback) if text)
+        if not earlier or not query:
+            return ""
+        try:
+            hits = self.memory.search(
+                query, MAX_RECALLED, phases=earlier, kinds=["document"], exclude_sources=inline
+            )
+        except ProjectMemoryError:
+            return ""
+        if not hits:
+            return ""
+        parts = [
+            "# Related passages from the project memory\n\nFrom earlier documents that aren't"
+            " included above. Use recall to look up more."
+        ]
+        for hit in hits:
+            source = PHASES_BY_KEY[hit.phase]
+            title = f" > {hit.title}" if hit.title else ""
+            parts.append(f"## The {source.document_title} ({hit.source}){title}\n\n{hit.text}")
+        return "\n\n".join(parts)
+
+    # The approval checkpoint after each phase
 
     def review(self, phase):
-        """Ask the user to approve the phase's document. Returns whether to carry on: the
-        phase was approved, or it (or an earlier one) is to be redone."""
+        """The checkpoint after a phase: the founder approves its document, edits it or
+        rejects it with feedback for the agent. A failing test report can go back to the
+        Building agent instead. Returns whether to carry on: the phase was approved, or it
+        (or an earlier one) is to be redone."""
         state = self.state
-        verdict = state.phase_data(phase.key).get("verdict")
-        lines = len(self.document_text(phase).splitlines())
+        while True:
+            # Read again each time round: the founder may have edited it
+            text = self.document_text(phase)
+            verdict = read_verdict(phase, text)
+            if state.phase_data(phase.key).get("verdict") != verdict:
+                state.phase_data(phase.key)["verdict"] = verdict
+                state.save()
+            self.remember_document(phase)
+            self.show_review(phase, text, verdict)
+            choice = self.checkpoint(phase, verdict)
+            if choice != "edit":
+                break
+            self.edit_document(phase)
+
+        if choice == "reject":
+            return self.ask_feedback(phase)
+        if choice == "send back":
+            rounds = state.data.get("fix_rounds", 0) + 1
+            state.back("building", phase_prompts.fix_test_failures, attach=[phase.key])
+            state.data["fix_rounds"] = rounds
+            state.save()
+            self.decide(
+                phase,
+                "sent back",
+                f"Sent the failing test report back to the Building agent to fix (round {rounds})",
+                source=self.checkpoint_source(),
+            )
+            return True
+
+        if choice == "approve anyway":
+            if phase.key == "idea":
+                text = (
+                    f"Carried on to {next_phase(phase).title} despite the Idea Check's NO-GO"
+                    " verdict"
+                )
+            else:
+                text = "Approved the test report although the tests fail"
+            self.decide(phase, "override", text, source=self.checkpoint_source())
+        else:
+            text = f"Approved the {phase.document_title}"
+            if verdict:
+                text += f" ({phase.verdict_label.lower()} {verdict})"
+            self.decide(phase, "approved", text, source=self.checkpoint_source())
+        state.approve(phase.key)
+        if phase.key == "testing":
+            state.data["fix_rounds"] = 0
+        state.save()
+        return True
+
+    def show_review(self, phase, text, verdict):
+        lines = len(text.splitlines())
         self.io.tool_output()
         summary = f"{phase.title} is ready for review: {phase.document} ({lines} lines)"
         if verdict:
@@ -436,53 +620,95 @@ class Orchestrator:
             self.io.tool_warning(
                 f"The {phase.document_title} has no {phase.verdict_label} line loom can read."
             )
+        try:
+            decisions = self.memory.decisions(["decision"], phase.key)
+        except ProjectMemoryError:
+            decisions = []
+        decisions = [d for d in decisions if d["source"] == phase.agent]
+        if decisions:
+            self.io.tool_output(f"The {phase.agent} recorded these decisions:")
+            for decision in decisions[-10:]:
+                self.io.tool_output(f"  - {decision['text']}")
 
+    def checkpoint(self, phase, verdict):
+        """Ask the founder what to do with the phase's document. Returns "approve",
+        "approve anyway", "edit", "reject" or "send back"."""
+        following = next_phase(phase)
         if phase.key == "idea" and verdict == "NO-GO":
-            if not self.io.confirm_ask(
-                "The Idea Check agent says NO-GO. Carry on to Planning anyway?",
-                default="n",
-                explicit_yes_required=True,
-            ):
-                return self.ask_feedback(phase)
+            self.io.tool_warning("The Idea Check agent says NO-GO.")
+            return self.io.choice_ask(
+                f"Carry on to {following.title} anyway?",
+                ["approve anyway", "edit", "reject"],
+                default="reject",
+                yes_choice="reject",
+            )
 
         if phase.key == "testing" and verdict == "FAIL":
-            rounds = state.data.get("fix_rounds", 0)
+            rounds = self.state.data.get("fix_rounds", 0)
             if rounds < MAX_FIX_ROUNDS:
-                if self.io.confirm_ask(
-                    "The tests failed. Send the test report back to the Building agent to fix?"
-                ):
-                    state.back("building", phase_prompts.fix_test_failures, attach=[phase.key])
-                    state.data["fix_rounds"] = rounds + 1
-                    state.save()
-                    return True
-            else:
-                self.io.tool_warning(f"The tests still fail after {rounds} rounds of fixes.")
-            if not self.io.confirm_ask(
-                "Approve the failing test report and move on to Launch anyway?",
-                default="n",
-                explicit_yes_required=True,
-            ):
-                return self.ask_feedback(phase)
-        else:
-            following = next_phase(phase)
-            if following:
-                question = f"Approve the {phase.document_title} and move on to {following.title}?"
-            else:
-                question = f"Approve the {phase.document_title} and finish the project?"
-            if not self.io.confirm_ask(question):
-                return self.ask_feedback(phase)
+                return self.io.choice_ask(
+                    "The tests failed. Send the test report back to the Building agent to fix?",
+                    ["send back", "edit", "approve anyway", "reject"],
+                    default="send back",
+                    no_choice="reject",
+                )
+            self.io.tool_warning(f"The tests still fail after {rounds} rounds of fixes.")
+            return self.io.choice_ask(
+                f"Approve the failing test report and move on to {following.title} anyway?",
+                ["approve anyway", "edit", "send back", "reject"],
+                default="reject",
+                yes_choice="reject",
+            )
 
-        state.approve(phase.key)
-        if phase.key == "testing":
-            state.data["fix_rounds"] = 0
-        state.save()
+        if following:
+            question = f"Approve the {phase.document_title} and move on to {following.title}?"
+        else:
+            question = f"Approve the {phase.document_title} and finish the project?"
+        return self.io.choice_ask(question, ["approve", "edit", "reject"])
+
+    def edit_document(self, phase):
+        """Open the phase's document in the founder's editor, and save their changes.
+        Returns whether it changed."""
+        path = self.document_path(phase)
+        try:
+            before = read_project_file(self.root, path)
+        except OSError as err:
+            before = None
+            self.io.tool_error(f"Unable to read {phase.document}: {err}")
+        if before is None:
+            self.io.tool_error(f"There is no {phase.document} in the project to edit.")
+            return False
+
+        commands = getattr(self.coder, "commands", None)
+        after = pipe_editor(before, suffix=".md", editor=getattr(commands, "editor", None))
+        if after.strip() == before.strip():
+            self.io.tool_output(f"The {phase.document_title} is unchanged.")
+            return False
+        if not in_project(self.root, path):
+            self.io.tool_error(f"{phase.document} isn't a file in the project any more.")
+            return False
+        path.resolve().write_text(after, encoding="utf-8")
+
+        changes = describe_changes(*count_changes(before, after))
+        self.io.tool_output(f"Saved your edit of {phase.document}: {changes}.")
+        self.decide(phase, "edited", f"Edited the {phase.document_title} by hand ({changes})")
+        self.commit(path, f"Edit {phase.document} at the {phase.title} checkpoint")
         return True
 
+    def commit(self, path, message):
+        coder = self.coder
+        if not coder.repo or not coder.auto_commits or coder.dry_run:
+            return
+        try:
+            coder.repo.commit(fnames=[str(path)], message=message, coder=coder)
+        except Exception as err:
+            self.io.tool_warning(f"Unable to commit {path}: {err}")
+
     def ask_feedback(self, phase):
-        """The user didn't approve: redo the phase with their feedback, or stop."""
+        """The founder rejected the document: redo the phase with their feedback, or stop."""
         stop_hint = (
-            "Stopped for review. Use /project approve, /project redo FEEDBACK or /project back"
-            " PHASE, then /project run."
+            "Stopped for review. Use /project approve, /project edit, /project reject FEEDBACK"
+            " or /project back PHASE, then /project run."
         )
         if self.io.yes is not None:
             # Not interactive: nobody to ask
@@ -496,16 +722,37 @@ class Orchestrator:
             return False
         self.state.reject(phase.key, feedback)
         self.state.save()
+        self.decide(
+            phase, "rejected", f"Asked for changes to the {phase.document_title}: {feedback}"
+        )
         return True
 
     # Commands that change the state without running anything
 
-    def approve(self):
+    def waiting_phase(self):
         phase = self.state.current
         if not phase or self.state.status(phase.key) != "review":
             raise TransitionError("No phase is waiting for review.")
+        return phase
+
+    def approve(self):
+        phase = self.waiting_phase()
+        self.remember_document(phase)
         self.state.approve(phase.key)
+        if phase.key == "testing":
+            self.state.data["fix_rounds"] = 0
         self.state.save()
+        self.decide(phase, "approved", f"Approved the {phase.document_title}")
+        return phase
+
+    def edit(self):
+        """Edit the document waiting for review. Returns the phase."""
+        phase = self.waiting_phase()
+        if self.edit_document(phase):
+            text = self.document_text(phase)
+            self.state.phase_data(phase.key)["verdict"] = read_verdict(phase, text)
+            self.state.save()
+            self.remember_document(phase)
         return phase
 
     def redo(self, feedback=""):
@@ -522,6 +769,10 @@ class Orchestrator:
             if feedback:
                 data["feedback"] = feedback
         self.state.save()
+        if feedback:
+            self.decide(
+                phase, "rejected", f"Asked for changes to the {phase.document_title}: {feedback}"
+            )
         return phase
 
     def back(self, name, feedback=""):
@@ -532,7 +783,26 @@ class Orchestrator:
             raise TransitionError(f"There is no phase {name!r}; use one of: {names}.")
         self.state.back(phase.key, feedback)
         self.state.save()
+        text = f"Went back to {phase.title} to redo it and the phases after it"
+        if feedback:
+            text += f": {feedback}"
+        self.decide(phase, "sent back", text)
         return phase
+
+    def record(self, text):
+        """A decision of the founder's, for the agents of the phases to come."""
+        if not text.strip():
+            raise TransitionError("Say what was decided: /project decide DECISION")
+        return self.decide(self.state.current, "decision", text)
+
+    def reset(self):
+        """Forget the project: its progress, decisions and memory. The documents and code
+        stay."""
+        try:
+            self.memory.clear()
+        except ProjectMemoryError as err:
+            raise TransitionError(f"Unable to reset the project: {err}")
+        self.state = None
 
     # Showing the project
 
@@ -570,7 +840,7 @@ class Orchestrator:
             if status == "review":
                 self.io.tool_output(
                     f"{current.title} is waiting for review: read {current.document}, then"
-                    " /project approve, /project redo FEEDBACK or /project run."
+                    " /project approve, /project edit, /project reject FEEDBACK or /project run."
                 )
             else:
                 self.io.tool_output(f"Next: {current.title}. Run it with /project run.")
@@ -581,3 +851,51 @@ class Orchestrator:
         for phase in PHASES:
             if self.document_text(phase):
                 self.io.tool_output(f"  {phase.document}  ({phase.produces})")
+
+    def show_decisions(self):
+        try:
+            decisions = self.memory.decisions()
+        except ProjectMemoryError as err:
+            raise TransitionError(str(err))
+        if not decisions:
+            self.io.tool_output("No decisions yet.")
+            return
+        for decision in decisions:
+            self.io.tool_output(
+                f"#{decision['id']:<3} {decision['kind']:<9}  {self.describe_decision(decision)}"
+            )
+
+    def show_recall(self, query):
+        from loom.tools import format_hits
+
+        if not query.strip():
+            raise TransitionError("Say what to look for: /project recall QUERY")
+        try:
+            hits = self.memory.search(query, 5)
+        except ProjectMemoryError as err:
+            raise TransitionError(str(err))
+        if not hits:
+            self.io.tool_output("Nothing in the project memory matches that.")
+            return
+        self.io.tool_output(format_hits(hits))
+
+    def show_memory(self):
+        stats = self.memory.stats()
+        self.io.tool_output(f"Project memory: {self.memory.root / DB_FILE}", bold=True)
+        self.io.tool_output(f"  Search: {self.memory.backend}")
+        self.io.tool_output(
+            f"  {stats['decisions']} decisions, {stats['chunks']} indexed passages of the"
+            " idea, documents and decisions"
+        )
+        if self.memory.store == "keyword" or chroma_installed() or self.io.yes is not None:
+            return
+        from loom import utils
+
+        if utils.check_pip_install_extra(
+            self.io,
+            "chromadb",
+            "Searching the project memory by meaning needs ChromaDB, from loom's memory extra.",
+            utils.loom_extra("memory"),
+        ):
+            self.memory = ProjectMemory(self.root, self.io)
+            self.io.tool_output(f"Project memory now searches with the {self.memory.backend}.")

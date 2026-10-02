@@ -2,7 +2,7 @@ from loom import tools as agent_tools
 from loom.tools import glob_match
 
 from .agent_coder import AgentCoder
-from .phase_prompts import PhasePrompts
+from .phase_prompts import PhasePrompts, memory_brief
 
 
 class PhaseCoder(AgentCoder):
@@ -11,11 +11,14 @@ class PhaseCoder(AgentCoder):
     it; it isn't a chat mode."""
 
     phase = None
+    # The project's shared memory (loom/memory.py), which recall and record_decision use
+    shared_memory = None
     # Why the phase can't run, like the provider rejecting tools
     failed = None
 
-    def __init__(self, main_model, io, phase=None, **kwargs):
+    def __init__(self, main_model, io, phase=None, shared_memory=None, **kwargs):
         self.phase = phase
+        self.shared_memory = shared_memory
         if phase.tools is not None:
             # Building keeps the coding agent's own prompt
             self.gpt_prompts = PhasePrompts()
@@ -23,11 +26,12 @@ class PhaseCoder(AgentCoder):
 
     @property
     def tools(self):
+        project = agent_tools.project_schemas() if self.shared_memory else []
         if self.phase.tools is None:
-            return super().tools
+            return super().tools + project
         return [
             schema
-            for schema in agent_tools.schemas()
+            for schema in agent_tools.schemas() + project
             if schema["function"]["name"] in self.phase.tools
         ]
 
@@ -41,7 +45,7 @@ class PhaseCoder(AgentCoder):
         lines = [f"# Your phase: {phase.number}. {phase.title}", "", phase.brief, ""]
         lines.append("## Your tools")
         if phase.tools is None:
-            lines.append("All of the coding agent's tools.")
+            lines.append("All of the coding agent's tools, and recall and record_decision.")
         else:
             lines.append(", ".join(phase.tools))
         lines += ["", "## What you may write"]
@@ -50,6 +54,8 @@ class PhaseCoder(AgentCoder):
             lines.append("- Any file in the project")
         else:
             lines += [f"- {pattern}" for pattern in phase.writable]
+        if self.shared_memory:
+            lines += ["", memory_brief]
         return "\n".join(lines)
 
     def refuse_action(self, name, action):

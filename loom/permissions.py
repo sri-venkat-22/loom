@@ -440,8 +440,8 @@ class Permissions:
     def decide(self, action, hook_allowed=False):
         """Returns "allow", "ask" or "deny" for an action, without asking anyone.
         hook_allowed means a PreToolUse hook approved it, which works like an allow rule."""
-        if action.kind == "todo" or self.mode == "bypass":
-            # Only changes loom's own to-do list, or the user said to stop asking
+        if action.kind in ("todo", "memory") or self.mode == "bypass":
+            # Only loom's own to-do list or project memory, or the user said to stop asking
             return "allow"
         if action.kind == "read":
             if action.inside or hook_allowed or self.is_allowed(action):

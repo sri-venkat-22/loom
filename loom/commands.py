@@ -28,7 +28,21 @@ from loom.utils import is_image_file
 
 from .dump import dump  # noqa: F401
 
-PROJECT_SUBCOMMANDS = ("new", "run", "status", "approve", "redo", "back", "reset")
+PROJECT_SUBCOMMANDS = (
+    "new",
+    "run",
+    "status",
+    "approve",
+    "edit",
+    "reject",
+    "redo",
+    "back",
+    "decide",
+    "decisions",
+    "recall",
+    "memory",
+    "reset",
+)
 
 
 class SwitchCoder(Exception):
@@ -1445,7 +1459,7 @@ class Commands:
         return list(PROJECT_SUBCOMMANDS) + [phase.key for phase in PHASES]
 
     def cmd_project(self, args):
-        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, redo [FEEDBACK], back PHASE [FEEDBACK], reset"  # noqa
+        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, reset"  # noqa
         from loom.orchestrator import Orchestrator, TransitionError
 
         words = args.strip().split(maxsplit=1)
@@ -1491,7 +1505,17 @@ class Commands:
                 phase = orchestrator.approve()
                 self.io.tool_output(f"Approved the {phase.document_title}.")
                 orchestrator.show_status()
-            elif sub == "redo":
+            elif sub == "edit":
+                phase = orchestrator.edit()
+                self.io.tool_output(
+                    f"{phase.title} is still waiting for review: /project approve when it's ready."
+                )
+            elif sub in ("reject", "redo"):
+                if sub == "reject":
+                    orchestrator.waiting_phase()
+                    if not rest:
+                        self.io.tool_error("Say what should change: /project reject FEEDBACK")
+                        return
                 phase = orchestrator.redo(rest)
                 self.io.tool_output(f"Redoing {phase.title}.")
                 orchestrator.run()
@@ -1505,11 +1529,27 @@ class Commands:
                 phase = orchestrator.back(name, feedback.strip())
                 self.io.tool_output(f"Back to {phase.title}; the phases after it will run again.")
                 orchestrator.show_status()
+            elif sub == "decide":
+                decision = orchestrator.record(rest)
+                self.io.tool_output(
+                    f"Recorded decision #{decision['id']}; the agents of the phases to come will"
+                    " see it."
+                )
+            elif sub == "decisions":
+                orchestrator.show_decisions()
+            elif sub == "recall":
+                orchestrator.show_recall(rest)
+            elif sub == "memory":
+                orchestrator.show_memory()
             elif sub == "reset":
                 if self.io.confirm_ask(
-                    "Forget the project's progress? (its documents and code stay)", default="n"
+                    (
+                        "Forget the project's progress, decisions and memory? (its documents and"
+                        " code stay)"
+                    ),
+                    default="n",
                 ):
-                    state.path.unlink()
+                    orchestrator.reset()
                     self.io.tool_output("The project was reset.")
         except TransitionError as err:
             self.io.tool_error(str(err))

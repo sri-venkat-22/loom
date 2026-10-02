@@ -12,6 +12,7 @@ Each agent produces a document. The user reviews and approves it before the next
 
 Work like this:
 1. Read your inputs: the project idea and the approved documents of earlier phases, in the user's message. If the project already has code, explore what's relevant with glob, grep, list_dir and read_file.
+   The message also lists the decisions made so far. They stand unless the user's feedback changes them.
 2. For work with several steps, keep a to-do list with todo_write.
 3. Write your document with write_file, at exactly the path given. Follow your phase's template: fill in every section, replace every <placeholder>, and leave no TODOs.
 4. If you are revising your document, read the current version first, change what the feedback asks for and keep the rest.
@@ -170,6 +171,12 @@ LAUNCH = """You are the Launch agent. Get the tested project ready to deploy, an
 <- [ ] items.>
 ## Files added
 <What each deployment file does, and what you checked locally.>"""
+
+
+memory_brief = """## Project memory
+The project has a shared memory of the earlier phases' documents and of the decisions the founder and the agents made.
+- recall searches it. Use it when you need something from an earlier phase that isn't in your message, and before you decide something an earlier phase may already have decided.
+- record_decision records a significant decision you make, like a technology choice, a scope cut, an assumption or a trade-off, with the reason. Record each one when you make it: the agents of later phases and the founder see them. Don't record routine details."""
 
 
 missing_document = """You finished without writing {document} with write_file, and the phase isn't done until that file exists. Write it now, at exactly that path, following your phase's template."""
