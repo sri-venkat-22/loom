@@ -49,7 +49,8 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--commit] [--commit-prompt] [--dry-run | --no-dry-run]
             [--skip-sanity-check-repo]
             [--watch-files | --no-watch-files]
-            [--agent | --no-agent] [--permission-mode] [--allow]
+            [--agent | --no-agent] [--permission-mode]
+            [--agent-diffs | --no-agent-diffs] [--allow]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--lint]
@@ -519,9 +520,17 @@ Aliases:
   - `--no-agent`
 
 ### `--permission-mode VALUE`
-What the agent may do without asking: ask (reads only), accept-edits (reads and edits) or plan (reads only, and it can't edit or run commands) (default: ask)  
+What the agent may do without asking: ask (reads only), accept-edits (reads and edits), plan (reads only, and it can't edit or run commands) or bypass (everything, and loom never asks) (default: ask)  
 Default: ask  
 Environment variable: `LOOM_PERMISSION_MODE`  
+
+### `--agent-diffs`
+Show the full diff of each agent edit, instead of the file and how many lines changed (default: False)  
+Default: False  
+Environment variable: `LOOM_AGENT_DIFFS`  
+Aliases:
+  - `--agent-diffs`
+  - `--no-agent-diffs`
 
 ### `--allow RULE`
 Let the agent do something without asking, eg: 'bash(pytest*)', 'edit(src/**)' (can be used multiple times)  

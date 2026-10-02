@@ -1135,6 +1135,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         # Like the rules in .loom.permissions.json, they need the user's approval
         source = Path(project_options["allow"]).name
         allow, project_allow = [], [(text, source) for text in args.allow]
+    io.agent_diffs = args.agent_diffs
     try:
         permissions = Permissions(
             io,

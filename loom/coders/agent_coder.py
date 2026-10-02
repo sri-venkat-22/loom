@@ -430,7 +430,7 @@ class AgentCoder(Coder):
         """Show the outcome of a tool call compactly, under the call."""
         if action.kind == "edit":
             self.io.tool_result(action.summary or result.split("\n", 1)[0])
-            if action.preview and not diff_shown:
+            if action.preview and not diff_shown and self.io.agent_diffs:
                 self.io.diff_output(action.preview, indent="     ")
         elif action.kind == "bash":
             self.show_command_output(result)

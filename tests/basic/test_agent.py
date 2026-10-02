@@ -1124,6 +1124,65 @@ class TestPermissions(unittest.TestCase):
     def test_cycle_mode(self):
         perms = Permissions(InputOutput(yes=None))
         self.assertEqual([perms.cycle_mode() for _ in range(3)], ["accept-edits", "plan", "ask"])
+        # Bypass is never cycled into, and cycling out of it goes back to asking
+        perms.mode = "bypass"
+        self.assertEqual(perms.cycle_mode(), "ask")
+        self.assertFalse(perms.io.bypass_permissions)
+
+    def test_bypass_answer_stops_every_question(self):
+        io = InputOutput(yes=None)
+        io.permission_ask = MagicMock(return_value="bypass")
+        perms = Permissions(io)
+        self.assertEqual(perms.request(action("bash", "rm -rf build"))[0], "allow")
+        self.assertEqual(perms.mode, "bypass")
+        self.assertTrue(io.bypass_permissions)
+        self.assertTrue(io.permission_ask.call_args[1]["bypass"])
+
+        # Everything is allowed from now on, without asking
+        io.permission_ask.reset_mock()
+        for act in [
+            action("bash", "make deploy"),
+            action("edit", "a.py"),
+            action("edit", "/etc/hosts", inside=False),
+            action("edit", ".git/hooks/pre-commit"),
+            action("read", "/etc/passwd", inside=False),
+            action("mcp", "github__create_issue"),
+        ]:
+            self.assertEqual(perms.request(act)[0], "allow", act.target)
+        io.permission_ask.assert_not_called()
+
+        # loom's other questions are answered yes too
+        del io.permission_ask
+        self.assertEqual(io.permission_ask("Trust these hooks?", explicit_yes_required=True), "yes")
+        self.assertTrue(io.confirm_ask("Add file to the chat?", explicit_yes_required=True))
+
+        # And /permissions ask turns it off again
+        perms.mode = "ask"
+        self.assertFalse(io.bypass_permissions)
+        self.assertEqual(perms.decide(action("bash", "make deploy")), "ask")
+
+    def test_edit_questions_show_line_counts_not_the_diff(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            Path("a.py").write_text("one\ntwo\nthree\n")
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="yes")
+            coder = make_coder(io, Permissions(io))
+            edit = tools.prepare(
+                coder, "edit_file", dict(path="a.py", old_string="two\n", new_string="2\n2b\n")
+            )
+            coder.permissions.request(edit)
+            self.assertEqual(
+                io.permission_ask.call_args[1]["subject"], "a.py: 2 additions and 1 removal"
+            )
+            write = tools.prepare(coder, "write_file", dict(path="b.py", content="x\ny\n"))
+            coder.permissions.request(write)
+            self.assertEqual(io.permission_ask.call_args[1]["subject"], "b.py: new file, 2 lines")
+
+            # --agent-diffs brings the diff back
+            io.agent_diffs = True
+            coder.permissions.request(edit)
+            self.assertTrue(io.permission_ask.call_args[1]["subject"].startswith("--- a/a.py"))
 
     def test_shift_tab_cycles_the_mode_at_the_prompt(self):
         from prompt_toolkit.input import create_pipe_input
@@ -1162,6 +1221,11 @@ class TestPermissions(unittest.TestCase):
                 self.assertEqual(io.permission_ask("Run?", always="always allow"), expected)
         # (A)lways is only offered when there's something to always allow
         with patch("builtins.input", side_effect=["a", "y"]):
+            self.assertEqual(io.permission_ask("Run?"), "yes")
+        # So is (B)ypass permissions
+        with patch("builtins.input", return_value="b"):
+            self.assertEqual(io.permission_ask("Run?", bypass="stop asking"), "bypass")
+        with patch("builtins.input", side_effect=["b", "y"]):
             self.assertEqual(io.permission_ask("Run?"), "yes")
 
 
