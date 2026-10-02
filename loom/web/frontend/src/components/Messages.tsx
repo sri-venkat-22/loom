@@ -1,0 +1,134 @@
+import { useState } from "react";
+
+import { send } from "../lib/socket";
+import type { Entry } from "../store/session";
+
+type Of<K extends Entry["kind"]> = Extract<Entry, { kind: K }>;
+
+const LEVEL_CLASS = {
+  info: "text-dim",
+  warning: "text-warning",
+  error: "text-destructive",
+};
+
+function UserMessage({ entry }: { entry: Of<"user"> }) {
+  return (
+    <div>
+      <div className="mb-1 text-[12px] text-dim">user</div>
+      <div className="whitespace-pre-wrap break-words text-muted-foreground">{entry.text}</div>
+    </div>
+  );
+}
+
+function Thinking({ text, active }: { text: string; active: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-1 text-[13px] text-dim">
+      <button onClick={() => setOpen((o) => !o)} className="hover:text-foreground">
+        {active ? <span className="blink">∴ Thinking…</span> : "∴ Thinking"} {open ? "▾" : "▸"}
+      </button>
+      {open && (
+        <div className="ml-4 mt-1 whitespace-pre-wrap break-words border-l border-border pl-3">
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoomMessage({ entry }: { entry: Of<"loom"> }) {
+  return (
+    <div>
+      <div className="mb-1 text-[12px] text-primary">loom</div>
+      {entry.reasoning && (
+        <Thinking text={entry.reasoning} active={entry.streaming && !entry.text} />
+      )}
+      {(entry.text || !entry.reasoning) && (
+        <div className="whitespace-pre-wrap break-words text-[16px] leading-6">
+          {entry.text}
+          {entry.streaming && <span className="blink text-primary">▍</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SystemMessage({ entry }: { entry: Of<"system"> }) {
+  return (
+    <pre
+      className={`whitespace-pre-wrap break-words font-mono text-[13px] ${LEVEL_CLASS[entry.level]}`}
+    >
+      {entry.text}
+    </pre>
+  );
+}
+
+function PromptAnswer({ askId, initial }: { askId: string; initial: string }) {
+  const [text, setText] = useState(initial);
+  return (
+    <input
+      autoFocus
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          send({ type: "answer", ask_id: askId, value: text });
+        }
+      }}
+      placeholder="type an answer, then ↵"
+      className="mt-2 w-full border-b border-border bg-transparent pb-1 outline-none placeholder:text-dim"
+    />
+  );
+}
+
+function AskMessage({ entry }: { entry: Of<"ask"> }) {
+  const { ask, answer } = entry;
+  const pending = answer === undefined;
+  const answered = ask.choices.find((choice) => choice.value === answer)?.label ?? answer;
+
+  return (
+    <div className="border-l-2 border-primary pl-3">
+      <div className="mb-1 text-[12px] text-primary">{ask.kind}</div>
+      <div className="whitespace-pre-wrap break-words">{ask.question}</div>
+      {pending && ask.kind === "prompt" && (
+        <PromptAnswer askId={ask.ask_id} initial={ask.default} />
+      )}
+      {pending && ask.kind !== "prompt" && (
+        <div className="mt-2 flex flex-wrap gap-x-4 text-[13px]">
+          {ask.choices.map((choice) => (
+            <button
+              key={choice.value}
+              onClick={() => send({ type: "answer", ask_id: ask.ask_id, value: choice.value })}
+              className={
+                choice.value === ask.default
+                  ? "text-primary hover:underline"
+                  : "text-muted-foreground hover:text-foreground"
+              }
+            >
+              {choice.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {!pending && (
+        <div className="mt-2 text-[13px] text-dim">
+          {answer === null ? "cancelled" : `› ${answered || "(empty)"}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Message({ entry }: { entry: Entry }) {
+  switch (entry.kind) {
+    case "user":
+      return <UserMessage entry={entry} />;
+    case "loom":
+      return <LoomMessage entry={entry} />;
+    case "system":
+      return <SystemMessage entry={entry} />;
+    case "ask":
+      return <AskMessage entry={entry} />;
+  }
+}

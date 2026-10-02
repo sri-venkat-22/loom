@@ -18,3 +18,7 @@ tmp.benchmarks/
 .docker_bash_history
 .loom*
 .idea/
+
+# loom --web: the built frontend and its node modules
+loom/web/static/
+loom/web/frontend/node_modules/

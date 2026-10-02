@@ -1,0 +1,103 @@
+@import "tailwindcss";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-700.css";
+
+/* Dark by default, like Claude Code. /theme adds .light to <html>. */
+:root {
+  --background: #1a1a1a;
+  --foreground: #e5e5e5;
+  --card: oklch(22% 0 0);
+  --popover: oklch(24% 0 0);
+  --primary: #d97757;
+  --muted-foreground: #8a8a8a;
+  --dim: oklch(48% 0.004 75);
+  --border: #2a2a2a;
+  --destructive: oklch(65% 0.17 25);
+  --warning: oklch(80% 0.12 80);
+  --success: oklch(74% 0.13 150);
+  --add: oklch(78% 0.12 150);
+  --add-bg: oklch(42% 0.08 150 / 0.22);
+  --del: oklch(72% 0.14 25);
+  --del-bg: oklch(45% 0.12 25 / 0.22);
+  color-scheme: dark;
+}
+
+:root.light {
+  --background: oklch(97.5% 0.006 85);
+  --foreground: oklch(25% 0.01 60);
+  --card: oklch(95.5% 0.006 85);
+  --popover: oklch(99% 0.004 85);
+  --primary: oklch(60% 0.14 40);
+  --muted-foreground: oklch(48% 0.01 60);
+  --dim: oklch(60% 0.008 60);
+  --border: oklch(88% 0.008 85);
+  --destructive: oklch(50% 0.17 25);
+  --warning: oklch(55% 0.13 70);
+  --success: oklch(50% 0.13 150);
+  --add: oklch(45% 0.13 150);
+  --add-bg: oklch(85% 0.08 150 / 0.4);
+  --del: oklch(50% 0.17 25);
+  --del-bg: oklch(88% 0.07 25 / 0.45);
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-primary: var(--primary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-dim: var(--dim);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --color-add: var(--add);
+  --color-add-bg: var(--add-bg);
+  --color-del: var(--del);
+  --color-del-bg: var(--del-bg);
+  /* Monospace everywhere: there is no sans-serif in the UI */
+  --font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button {
+    cursor: pointer;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 35%, transparent);
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.blink {
+  animation: blink 1s steps(2, start) infinite;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}

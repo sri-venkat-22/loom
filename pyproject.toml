@@ -35,6 +35,7 @@ help = { file = "requirements/requirements-help.txt" }
 browser = { file = "requirements/requirements-browser.txt" }
 playwright = { file = "requirements/requirements-playwright.txt" }
 memory = { file = "requirements/requirements-memory.txt" }
+web = { file = "requirements/requirements-web.txt" }
 
 [tool.setuptools]
 include-package-data = true
@@ -50,7 +51,7 @@ build-backend = "setuptools.build_meta"
 write_to = "loom/_version.py"
 
 [tool.codespell]
-skip = "*.svg,tests/fixtures/*"
+skip = "*.svg,tests/fixtures/*,*/package-lock.json"
 write-changes = true
 # ChromaDB's $nin ("not in") filter operator
 ignore-words-list = "nin"

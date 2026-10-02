@@ -1,1 +1,4 @@
 global-exclude .DS_Store
+
+# The built web frontend (loom/web/frontend), which git ignores
+graft loom/web/static

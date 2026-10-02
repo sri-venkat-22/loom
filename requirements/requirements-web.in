@@ -1,0 +1,2 @@
+# The web server for `loom --web` (loom/web/backend). FastAPI itself is a base requirement.
+uvicorn[standard]
