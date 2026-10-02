@@ -1,3 +1,4 @@
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from loom.io import InputOutput
 from loom.llm import litellm
 from loom.models import Model
 from loom.orchestrator import (
+    MAX_DOC_BYTES,
     MAX_FIX_ROUNDS,
     STATE_FILE,
     Orchestrator,
@@ -19,7 +21,7 @@ from loom.orchestrator import (
 from loom.permissions import Permissions
 from loom.phases import PHASES, PHASES_BY_KEY, get_phase, read_verdict
 from loom.sendchat import sanity_check_messages
-from loom.utils import GitTemporaryDirectory
+from loom.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
 
 from .test_agent import FakeLLM, call, make_repo, reply
 
@@ -262,7 +264,8 @@ class TestPhaseCoder(unittest.TestCase):
             self.assertIsInstance(agent, PhaseCoder)
             names = [tool["function"]["name"] for tool in agent.tools]
             self.assertEqual(
-                names, ["read_file", "list_dir", "glob", "grep", "edit_file", "write_file", "todo_write"]
+                names,
+                ["read_file", "list_dir", "glob", "grep", "edit_file", "write_file", "todo_write"],
             )
             system = agent.format_messages().all_messages()[0]["content"]
             self.assertIn("loom's project pipeline", system)
@@ -547,6 +550,67 @@ class TestOrchestrator(unittest.TestCase):
                 agent.run(with_message=orchestrator.task_message(PHASES_BY_KEY["idea"]))
             sanity_check_messages(agent.done_messages + [dict(role="user", content="next")])
             self.assertIsNot(agent.session, coder.session)
+
+
+@unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+class TestProjectFilesStayInTheProject(unittest.TestCase):
+    def test_documents_linked_outside_the_project_are_ignored(self):
+        with GitTemporaryDirectory(), IgnorantTemporaryDirectory() as outside:
+            make_repo()
+            secret = Path(outside) / "credentials"
+            secret.write_text("aws_secret_access_key = SECRET\n")
+            io = InputOutput(yes=True)
+            io.tool_warning = MagicMock()
+            orchestrator = Orchestrator(make_coder(io))
+            orchestrator.new_project(IDEA)
+
+            prd = get_phase("planning")
+            Path(prd.document).parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(secret, prd.document)
+            self.assertEqual(orchestrator.document_text(prd), "")
+            self.assertNotIn("SECRET", orchestrator.task_message(get_phase("design")))
+            self.assertNotIn("SECRET", orchestrator.task_message(prd))
+            # Warned about once
+            warnings = [
+                c[0][0] for c in io.tool_warning.call_args_list if "links outside" in c[0][0]
+            ]
+            self.assertEqual(len(warnings), 1)
+
+            # Not a regular file
+            os.unlink(prd.document)
+            os.symlink("/dev/zero", prd.document)
+            self.assertEqual(orchestrator.document_text(prd), "")
+
+            # A link to another file in the project is fine
+            os.unlink(prd.document)
+            Path("notes.md").write_text("# PRD\n\nThe plan.\n")
+            os.symlink(os.path.abspath("notes.md"), prd.document)
+            self.assertIn("The plan.", orchestrator.document_text(prd))
+
+    def test_long_documents_are_capped(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = Orchestrator(make_coder())
+            orchestrator.new_project(IDEA)
+            prd = get_phase("planning")
+            Path(prd.document).parent.mkdir(parents=True, exist_ok=True)
+            Path(prd.document).write_text("x" * (MAX_DOC_BYTES * 2))
+            self.assertEqual(len(orchestrator.document_text(prd)), MAX_DOC_BYTES)
+
+    def test_project_file_linked_outside_the_project(self):
+        with GitTemporaryDirectory() as root, IgnorantTemporaryDirectory() as outside:
+            target = Path(outside) / "bashrc"
+            target.write_text("export PATH=$PATH\n")
+            Path(STATE_FILE).parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(target, STATE_FILE)
+            with self.assertRaises(TransitionError):
+                ProjectState.load(root)
+
+            # Saving doesn't write through the link
+            state = ProjectState.new(root, IDEA)
+            with self.assertRaises(TransitionError):
+                state.save()
+            self.assertEqual(target.read_text(), "export PATH=$PATH\n")
 
 
 class TestProjectCommand(unittest.TestCase):

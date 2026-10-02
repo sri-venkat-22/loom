@@ -1,6 +1,8 @@
 import json
 import os
+import signal
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,7 +26,14 @@ from loom.coders.agent_coder import MAX_OLD_TOOL_RESULT_CHARS
 from loom.io import InputOutput
 from loom.llm import litellm
 from loom.models import Model
-from loom.permissions import SETTINGS_FILE, Permissions, Rule, split_command
+from loom.permissions import (
+    SETTINGS_FILE,
+    Permissions,
+    Rule,
+    approvals_file,
+    canonical_path,
+    split_command,
+)
 from loom.sendchat import sanity_check_messages
 from loom.utils import (
     GitTemporaryDirectory,
@@ -643,15 +652,268 @@ def action(kind, target, inside=True):
     return tools.Action(kind, target, inside, "title", run=lambda: "")
 
 
+class TestMcpPermissionsHardened(unittest.TestCase):
+    def setUp(self):
+        self.home = IgnorantTemporaryDirectory()
+        self.home_patcher = patch("pathlib.Path.home", return_value=Path(self.home.name))
+        self.home_patcher.start()
+
+    def tearDown(self):
+        self.home_patcher.stop()
+        self.home.cleanup()
+
+    def _mcp_action(self, server_name, tool_name_, read_only=False):
+        """A fake MCP Action that carries the (server, tool) in extra, like the real
+        mcp_tool() builds."""
+        from types import SimpleNamespace
+
+        server = SimpleNamespace(name=server_name)
+        tool = dict(name=tool_name_)
+        return tools.Action(
+            "mcp",
+            f"{server_name}__{tool_name_}",
+            True,
+            "t",
+            run=lambda: "",
+            extra=dict(read_only=read_only, server=server, tool=tool),
+        )
+
+    def test_rule_for_github_does_not_cover_a_server_whose_name_starts_with_github(self):
+        """mcp(github) matched \'github__issues__get\' through the old glob fallback."""
+        perms = Permissions(InputOutput(yes=None), allow=["mcp(github)"])
+        self.assertEqual(perms.decide(self._mcp_action("github", "get_issue")), "allow")
+        self.assertEqual(perms.decide(self._mcp_action("githubsneaky", "wipe")), "ask")
+
+    def test_an_always_approval_for_one_tool_does_not_cover_a_sibling(self):
+        from loom.permissions import exact_rule
+
+        perms = Permissions(InputOutput(yes=None), allow=[])
+        # The user said "always" to github\'s get_issue
+        perms.add_rule(exact_rule("mcp", "github__get_issue"), "test")
+        self.assertEqual(perms.decide(self._mcp_action("github", "get_issue")), "allow")
+        # But a sibling tool still asks
+        self.assertEqual(perms.decide(self._mcp_action("github", "delete_repo")), "ask")
+
+    def test_plan_mode_ignores_server_declared_readonly(self):
+        io = InputOutput(yes=None)
+        perms = Permissions(io, mode="plan")
+        destructive = self._mcp_action("db", "drop_table", read_only=True)
+        # Server lied about readOnlyHint; plan mode no longer trusts it
+        self.assertEqual(perms.decide(destructive), "ask")
+
+    def test_plan_mode_allows_tools_from_user_mcp_readonly_file(self):
+        from loom.permissions import mcp_readonly_file
+
+        readonly = mcp_readonly_file()
+        readonly.parent.mkdir(parents=True, exist_ok=True)
+        readonly.write_text(json.dumps(dict(allow=["mcp(github__get_*)"])))
+        perms = Permissions(InputOutput(yes=None), mode="plan")
+        self.assertEqual(perms.decide(self._mcp_action("github", "get_issue")), "allow")
+        self.assertEqual(perms.decide(self._mcp_action("github", "delete_repo")), "ask")
+
+    def test_mcp_server_name_with_double_underscore_is_rejected(self):
+        from loom.mcp import McpError, load_config_file
+
+        with GitTemporaryDirectory():
+            Path("c.json").write_text(
+                json.dumps(dict(mcpServers={"evil__shadow": dict(command="x")}))
+            )
+            with self.assertRaises(McpError) as cm:
+                load_config_file("c.json")
+            self.assertIn("__", str(cm.exception))
+
+
+class TestToolCallFailuresDoNotBrickSession(unittest.TestCase):
+    def test_an_unexpected_exception_still_gets_a_matching_tool_reply(self):
+        from unittest.mock import MagicMock
+
+        from loom import tools as agent_tools
+
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            coder = make_coder(io)
+            # A tool that raises something that\'s neither ToolError nor OSError
+            boom = MagicMock(side_effect=OverflowError("int too large"))
+            call = dict(
+                id="call_1",
+                type="function",
+                function=dict(name="read_file", arguments='{"path": "ok.py"}'),
+            )
+            with patch.object(agent_tools, "prepare", boom):
+                coder.run_tool_calls([call])
+            # Pairing is intact: the assistant\'s tool_calls message would be followed by
+            # a tool reply for id "call_1", so a /continue won\'t 400
+            replies = [m for m in coder.cur_messages if m.get("role") == "tool"]
+            self.assertEqual(len(replies), 1)
+            self.assertEqual(replies[0]["tool_call_id"], "call_1")
+            self.assertIn("OverflowError", replies[0]["content"])
+            # And the agent isn\'t stopped
+            self.assertFalse(coder.stop_requested)
+
+    def test_a_tool_whose_run_raises_still_gets_a_reply(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            coder = make_coder(io, Permissions(io, mode="accept-edits", allow=["bash"]))
+            # bash timeout=1e400 → float overflow when int() is called on it
+            call = dict(
+                id="call_r1",
+                type="function",
+                function=dict(
+                    name="bash",
+                    arguments='{"command": "echo hi", "timeout": 1e400}',
+                ),
+            )
+            coder.run_tool_calls([call])
+            replies = [m for m in coder.cur_messages if m.get("role") == "tool"]
+            self.assertEqual(len(replies), 1)
+            self.assertEqual(replies[0]["tool_call_id"], "call_r1")
+            self.assertFalse(coder.stop_requested)
+
+
+class TestToolSafety(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "needs os.setsid")
+    def test_a_process_in_a_new_session_cannot_hold_the_timeout(self):
+        with IgnorantTemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "pid"
+            script = (
+                f"import os, time; os.setsid(); open({str(pid_file)!r},"
+                " 'w').write(str(os.getpid())); time.sleep(60)"
+            )
+            command = f'{sys.executable} -c "{script}" & echo done'
+            try:
+                with patch.object(tools, "KILL_GRACE", 0.5):
+                    start = time.time()
+                    code, output = tools.run_command(command, tmp, 1)
+                    elapsed = time.time() - start
+                self.assertIsNone(code)
+                self.assertIn("done", output)
+                self.assertLess(elapsed, 10)
+            finally:
+                for _ in range(50):
+                    if pid_file.exists() and pid_file.read_text():
+                        break
+                    time.sleep(0.1)
+                if pid_file.exists() and pid_file.read_text():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_commands_do_not_get_api_keys(self):
+        secrets = dict(
+            OPENAI_API_KEY="sk-1",
+            ANTHROPIC_API_KEY="sk-2",
+            GITHUB_TOKEN="ghp",
+            AWS_SECRET_ACCESS_KEY="aws",
+            DB_PASSWORD="pw",
+        )
+        with IgnorantTemporaryDirectory() as tmp, patch.dict(os.environ, secrets, LOOM_KEEP="1"):
+            script = "import os; print(sorted(os.environ))"
+            code, output = tools.run_command(f'{sys.executable} -c "{script}"', tmp, 30)
+        self.assertEqual(code, 0, output)
+        for name in secrets:
+            self.assertNotIn(name, output)
+        self.assertIn("LOOM_KEEP", output)
+        self.assertIn("PATH", output)
+
+    @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
+    def test_search_skips_symlinks_out_of_the_project(self):
+        with GitTemporaryDirectory(), IgnorantTemporaryDirectory() as outside:
+            secret = Path(outside) / "host_key"
+            secret.write_text("SECRET-KEY-MATERIAL\n")
+            make_repo()
+            os.symlink(secret, "notes.txt")
+            os.symlink(outside, "linked_dir")
+            Path("inside.txt").write_text("SECRET-KEY-MATERIAL is mentioned here\n")
+            os.symlink("inside.txt", "alias.txt")
+            repo = git.Repo(".")
+            repo.git.add("notes.txt", "alias.txt")
+            repo.git.commit("-m", "links")
+            os.symlink(secret, "untracked_link.txt")
+            coder = make_coder()
+
+            found = tools.prepare(coder, "grep", dict(pattern="SECRET")).run()
+            self.assertIn("inside.txt", found)
+            self.assertIn("alias.txt", found)
+            self.assertNotIn("notes.txt", found)
+            self.assertNotIn("untracked_link.txt", found)
+            listed = tools.prepare(coder, "glob", dict(pattern="**/*")).run()
+            self.assertNotIn("notes.txt", listed)
+            self.assertNotIn("host_key", listed)
+
+            # Reading through the link asks, as reading outside the project does
+            for name, args in [
+                ("read_file", dict(path="notes.txt")),
+                ("grep", dict(pattern="SECRET", path="notes.txt")),
+                ("grep", dict(pattern="SECRET", path="linked_dir")),
+            ]:
+                action = tools.prepare(coder, name, args)
+                self.assertFalse(action.inside, name)
+                self.assertEqual(coder.permissions.decide(action), "ask", name)
+            self.assertFalse(tools.is_inside(coder, Path("notes.txt").absolute()))
+            self.assertTrue(tools.is_inside(coder, Path("alias.txt").absolute()))
+
+            # Once the user allows reading outside, the folder they named can be searched
+            action = tools.prepare(coder, "grep", dict(pattern="SECRET", path=outside))
+            self.assertIn("host_key", action.run())
+
+
 class TestPermissions(unittest.TestCase):
+    def setUp(self):
+        # Approvals of the project's rules are saved in the home directory
+        self.home = IgnorantTemporaryDirectory()
+        self.home_patcher = patch("pathlib.Path.home", return_value=Path(self.home.name))
+        self.home_patcher.start()
+
+    def tearDown(self):
+        self.home_patcher.stop()
+        self.home.cleanup()
+
     def test_split_command(self):
         self.assertEqual(split_command("pytest -q && git status"), ["pytest -q", "git status"])
         self.assertEqual(split_command("echo 'a; b' | wc -l"), ["echo 'a; b'", "wc -l"])
         self.assertEqual(split_command("pytest 2>&1"), ["pytest"])
+        self.assertEqual(split_command("pytest >/dev/null 2>&1; ls"), ["pytest", "ls"])
         self.assertIsNone(split_command("pytest $(rm -rf x)"))
         self.assertIsNone(split_command('echo "`rm -rf x`"'))
         self.assertIsNone(split_command("pytest > out.txt"))
         self.assertIsNone(split_command("echo 'unbalanced"))
+        # >&WORD writes a file called WORD
+        self.assertIsNone(split_command("pytest >&1.txt"))
+        self.assertIsNone(split_command("pytest >/dev/null.txt"))
+
+    def test_split_command_fails_closed_on_quoting_it_does_not_parse(self):
+        # In $'...' a \' doesn't end the string, so this is ls with one argument followed
+        # by touch
+        self.assertIsNone(split_command("ls $'\\'' ; touch PWNED ; #'"))
+        self.assertIsNone(split_command("echo $'a' && ls"))
+        self.assertIsNone(split_command('echo $"a" && ls'))
+        self.assertIsNone(split_command("cat <<EOF"))
+        self.assertIsNone(split_command("cat <<'EOF'"))
+        self.assertIsNone(split_command("diff <(ls a) <(ls b)"))
+        self.assertIsNone(split_command("tee >(wc -l)"))
+
+        perms = Permissions(InputOutput(yes=None), allow=["bash(ls*)"])
+        self.assertEqual(perms.decide(action("bash", "ls $'\\'' ; touch PWNED ; #'")), "ask")
+        self.assertEqual(perms.decide(action("bash", "ls -la")), "allow")
+
+    def test_split_command_for_cmd_exe(self):
+        def split(command):
+            return split_command(command, windows=True)
+
+        self.assertEqual(
+            split("pytest tests\\basic && git status"), ["pytest tests\\basic", "git status"]
+        )
+        self.assertEqual(split("pytest 2>&1 >NUL"), ["pytest"])
+        # cmd.exe doesn't treat ' or \\ as quoting, so the & runs a second command
+        self.assertIsNone(split("ls 'a & touch PWNED'"))
+        self.assertIsNone(split('echo "\\" & touch PWNED"'))
+        self.assertIsNone(split("echo ^& touch PWNED"))
+        self.assertIsNone(split("echo %PATH%"))
+        self.assertIsNone(split("pytest > out.txt"))
+        self.assertIsNone(split("pytest >NUL.txt"))
 
     def test_modes(self):
         io = InputOutput(yes=None)
@@ -704,10 +966,85 @@ class TestPermissions(unittest.TestCase):
             saved = json.loads(Path(SETTINGS_FILE).read_text())["allow"]
             self.assertEqual(len(saved), 1)
 
-            # The saved rule covers exactly that command, in a new session too
-            perms = Permissions(InputOutput(yes=None), settings_file=SETTINGS_FILE)
+            # The saved rule covers exactly that command, in a new session too, without
+            # asking to approve it: the user chose it
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock()
+            perms = Permissions(io, settings_file=SETTINGS_FILE)
+            perms.start()
+            io.permission_ask.assert_not_called()
             self.assertEqual(perms.decide(action("bash", command)), "allow")
             self.assertEqual(perms.decide(action("bash", "pytest -k 'ab' && ls")), "ask")
+
+    def test_project_rules_need_approval(self):
+        with GitTemporaryDirectory():
+            # A cloned repo's rules
+            rules = ["bash", "edit(**)", "read"]
+            Path(SETTINGS_FILE).write_text(json.dumps(dict(allow=rules)))
+
+            def session(answer, yes=None):
+                io = InputOutput(yes=yes)
+                io.permission_ask = MagicMock(return_value=answer)
+                perms = Permissions(io, settings_file=SETTINGS_FILE)
+                # Not used before the user says so
+                self.assertEqual(perms.decide(action("bash", "curl x")), "ask")
+                perms.start()
+                return perms, io.permission_ask
+
+            perms, ask = session("no")
+            ask.assert_called_once()
+            self.assertTrue(ask.call_args[1]["explicit_yes_required"])
+            self.assertIn(SETTINGS_FILE, ask.call_args[0][0])
+            self.assertEqual(perms.decide(action("bash", "curl x")), "ask")
+            self.assertEqual(perms.decide(action("read", "/etc/hosts", inside=False)), "ask")
+            # Asked once per session
+            perms.start()
+            ask.assert_called_once()
+
+            # --yes-always doesn't approve them
+            perms, ask = session("no", yes=True)
+            self.assertEqual(perms.decide(action("bash", "curl x")), "ask")
+
+            # "yes" is for this session only
+            perms, ask = session("yes")
+            self.assertEqual(perms.decide(action("bash", "curl x")), "allow")
+            self.assertFalse(approvals_file().exists())
+
+            # "always" is remembered
+            perms, ask = session("always")
+            self.assertEqual(perms.decide(action("bash", "curl x")), "allow")
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock()
+            perms = Permissions(io, settings_file=SETTINGS_FILE)
+            perms.start()
+            io.permission_ask.assert_not_called()
+            self.assertEqual(perms.decide(action("bash", "curl x")), "allow")
+
+            # Until a new rule shows up: only that one asks
+            Path(SETTINGS_FILE).write_text(json.dumps(dict(allow=rules + ["mcp"])))
+            io.permission_ask = MagicMock(return_value="no")
+            perms = Permissions(io, settings_file=SETTINGS_FILE)
+            self.assertEqual(perms.decide(action("bash", "curl x")), "allow")
+            perms.start()
+            self.assertEqual(
+                io.permission_ask.call_args[1]["subject"], "mcp  [.loom.permissions.json]"
+            )
+            self.assertEqual(perms.decide(action("mcp", "github__get_issue")), "ask")
+
+    def test_project_config_rules_need_approval(self):
+        with GitTemporaryDirectory():
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            perms = Permissions(
+                io,
+                allow=["bash(pytest*)"],
+                project_allow=[("bash", ".loom.conf.yml")],
+                settings_file=SETTINGS_FILE,
+            )
+            perms.start()
+            self.assertIn(".loom.conf.yml", io.permission_ask.call_args[0][0])
+            self.assertEqual(perms.decide(action("bash", "pytest")), "allow")
+            self.assertEqual(perms.decide(action("bash", "curl x")), "ask")
 
     def test_always_for_edits_accepts_edits_for_the_session(self):
         io = InputOutput(yes=None)
@@ -734,6 +1071,55 @@ class TestPermissions(unittest.TestCase):
         io = InputOutput(yes=True)
         perms = Permissions(io, mode="accept-edits")
         self.assertEqual(perms.request(action("edit", ".git/hooks/pre-commit"))[0], "user-deny")
+
+    def test_protected_files_in_other_cases_and_spellings(self):
+        # On APFS and NTFS these are the real .git, .loom and .env files
+        perms = Permissions(InputOutput(yes=None), mode="accept-edits", allow=["edit"])
+        for path in [
+            ".GIT/hooks/pre-commit",
+            ".Git/config",
+            "sub/.gIt",
+            ".Loom.conf.yml",
+            ".LOOM/hooks.json",
+            ".Loom.Permissions.json",
+            ".ENV",
+            ".Env.local",
+            "sub\\.GIT\\hooks\\pre-commit",
+            ".git./hooks/pre-commit",
+            ".git /hooks/pre-commit",
+            ".git::$INDEX_ALLOCATION/hooks/pre-commit",
+            ".g\u200cit/hooks/pre-commit",
+            "/abs/project/.GIT/hooks/pre-commit",
+        ]:
+            self.assertEqual(perms.decide(action("edit", path)), "ask", path)
+            self.assertEqual(perms.decide(action("edit", path), hook_allowed=True), "ask", path)
+        self.assertEqual(perms.decide(action("edit", "src/gitx.py")), "allow")
+        self.assertEqual(perms.decide(action("edit", ".github/workflows/ci.yml")), "allow")
+
+        # The real path counts too
+        edit = action("edit", "docs/x")
+        edit.path = Path("/abs/project/.GIT/hooks/x")
+        self.assertEqual(perms.decide(edit), "ask")
+
+        self.assertEqual(canonical_path("A\\.GIT.\\Hooks"), "a/.git/hooks")
+        self.assertEqual(canonical_path("dir\u0065\u0301/.Env"), "dir\u00e9/.env")
+
+    def test_write_file_to_a_case_variant_of_git_asks(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=None)
+            coder = make_coder(io, Permissions(io, mode="accept-edits"))
+            write = tools.prepare(
+                coder, "write_file", dict(path=".GIT/hooks/pre-commit", content="x")
+            )
+            self.assertEqual(coder.permissions.decide(write), "ask")
+            # Through a symlink as well
+            os.symlink(".git", "notgit")
+            write = tools.prepare(
+                coder, "write_file", dict(path="notgit/hooks/post-commit", content="x")
+            )
+            self.assertEqual(write.target, ".git/hooks/post-commit")
+            self.assertEqual(coder.permissions.decide(write), "ask")
 
     def test_cycle_mode(self):
         perms = Permissions(InputOutput(yes=None))
@@ -891,34 +1277,31 @@ class NoToolsLLM:
 
 
 class TestToolCallingFallback(unittest.TestCase):
-    def run_without_tools(self, error):
-        from loom.commands import SwitchCoder
-
+    def run_without_tools(self, error, mode="ask"):
+        """The provider rejects the tools: the agent stops instead of switching to an edit
+        format, whose edits don't go through Permissions."""
         with GitTemporaryDirectory():
             make_repo()
+            before = Path("calc.py").read_text()
             io = InputOutput(yes=True)
-            io.tool_warning = MagicMock()
-            coder = make_coder(io)
+            io.tool_error = MagicMock()
+            io.tool_output = MagicMock()
+            coder = make_coder(io, Permissions(io, mode=mode))
             llm = NoToolsLLM(error, "calc.py\n```\ndef add(a, b):\n    return a + b\n```\n")
 
             with patch.object(litellm, "completion", llm):
-                with self.assertRaises(SwitchCoder) as switch:
-                    coder.run(with_message="fix add in calc.py")
+                coder.run(with_message="fix add in calc.py")
 
-            # Not retried
+            # Not retried, and not sent again without tools
             self.assertEqual(llm.tool_requests, 1)
-            self.assertIn("can't use the agent's tools", io.tool_warning.call_args[0][0])
-
-            # The model's edit format took over and redid the request
-            fallback = switch.exception.kwargs["from_coder"]
-            self.assertEqual(fallback.edit_format, coder.main_model.edit_format)
-            self.assertEqual(switch.exception.kwargs["edit_format"], fallback.edit_format)
-            sent = [m["content"] for m in llm.chat_requests[0]["messages"] if m["role"] == "user"]
-            self.assertIn("fix add in calc.py", sent)
+            self.assertEqual(llm.chat_requests, [])
+            self.assertEqual(coder.edit_format, "agent")
+            self.assertEqual(Path("calc.py").read_text(), before)
+            self.assertIn("can't use the agent's tools", io.tool_error.call_args[0][0])
+            # The request got no reply, so it isn't kept
             self.assertEqual(coder.cur_messages, [])
-            requests = [m["content"] for m in fallback.done_messages if m["role"] == "user"]
-            self.assertIn("fix add in calc.py", requests)
-            self.assertIn("a + b", Path("calc.py").read_text())
+            self.assertNotIn("fix add in calc.py", str(coder.done_messages))
+            return io.tool_output.call_args[0][0]
 
     def test_provider_without_tool_calling(self):
         self.run_without_tools(
@@ -935,6 +1318,21 @@ class TestToolCallingFallback(unittest.TestCase):
                 message="model does not support parameters: ['tools']", llm_provider="x"
             )
         )
+
+    def test_says_how_to_switch_but_not_in_plan_mode(self):
+        def error():
+            return litellm.UnsupportedParamsError(
+                message="model does not support parameters: ['tools']", llm_provider="x"
+            )
+
+        hint = self.run_without_tools(error())
+        self.assertIn("/chat-mode", hint)
+        self.assertIn("without asking", hint)
+
+        # Plan mode doesn't edit, so it only points at /ask
+        hint = self.run_without_tools(error(), mode="plan")
+        self.assertIn("/ask", hint)
+        self.assertNotIn("/chat-mode", hint)
 
     def test_other_errors_do_not_fall_back(self):
         with GitTemporaryDirectory():

@@ -225,6 +225,67 @@ class TestProjectApproval(HomeDirMixin, unittest.TestCase):
             self.assertEqual(len(hooks.active()), 1)
 
 
+class TestApprovalTracksReferencedScript(HomeDirMixin, unittest.TestCase):
+    def test_editing_the_hook_script_invalidates_the_approval(self):
+        with GitTemporaryDirectory() as root:
+            Path("scripts").mkdir()
+            Path("scripts/check.py").write_text('print("before")\n')
+            Path(PROJECT_CONFIG).parent.mkdir(exist_ok=True)
+            Path(PROJECT_CONFIG).write_text(
+                json.dumps(dict(PreToolUse=[dict(command="python scripts/check.py")]))
+            )
+            io = InputOutput(yes=True)
+            io.permission_ask = MagicMock(return_value="always")
+
+            hooks = Hooks.from_config(io, root)
+            hooks.start()
+            self.assertEqual(io.permission_ask.call_count, 1)
+            self.assertEqual(len(hooks.active()), 1)
+
+            # A second session doesn\'t ask again
+            io.permission_ask.reset_mock()
+            hooks = Hooks.from_config(io, root)
+            hooks.start()
+            self.assertEqual(io.permission_ask.call_count, 0)
+
+            # Agent (in accept-edits) edits the referenced script. The hook string hasn\'t
+            # changed, but its payload has — loom must ask again.
+            Path("scripts/check.py").write_text('import os; os.system("touch PWNED")\n')
+            io.permission_ask.return_value = "no"
+            hooks = Hooks.from_config(io, root)
+            hooks.start()
+            self.assertEqual(io.permission_ask.call_count, 1)
+            self.assertEqual(hooks.active(), [])
+
+    def test_a_script_outside_the_project_is_not_hashed(self):
+        """A system python interpreter name doesn\'t accidentally trigger hashing."""
+        from loom.hooks import referenced_script_hash
+
+        with GitTemporaryDirectory() as root:
+            # Common bare commands shouldn\'t have anything to hash
+            self.assertEqual(referenced_script_hash("echo hi", root), "")
+            self.assertEqual(referenced_script_hash('python -c "print(1)"', root), "")
+            # A script inside the project does get hashed
+            Path("fmt.sh").write_text("#!/bin/sh\necho ok\n")
+            h1 = referenced_script_hash("bash fmt.sh", root)
+            self.assertIn("fmt.sh:", h1)
+            Path("fmt.sh").write_text("#!/bin/sh\necho CHANGED\n")
+            h2 = referenced_script_hash("bash fmt.sh", root)
+            self.assertIn("fmt.sh:", h2)
+            self.assertNotEqual(h1, h2)
+
+
+class TestHookDescribeSanitized(unittest.TestCase):
+    def test_escape_sequences_in_a_hook_command_are_shown_literally(self):
+        from loom.hooks import Hook
+
+        spoof = "touch PWNED #\x1b[2K\x1b[1G● harmless"
+        hook = Hook("PreToolUse", "bash", spoof, 60, "x")
+        described = hook.describe()
+        self.assertNotIn("\x1b", described)
+        self.assertIn("\\x1b[2K", described)
+
+
 class TestHooksInTheAgent(unittest.TestCase):
     def run_agent(self, io, hooks, *replies, permissions=None, message="go"):
         coder = make_coder(io, permissions, hooks=hooks)

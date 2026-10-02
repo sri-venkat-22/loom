@@ -31,6 +31,16 @@ MAX_GREP_FILE_BYTES = 1_000_000
 BASH_TIMEOUT = 120
 MAX_BASH_TIMEOUT = 600
 MAX_PREVIEW_LINES = 60
+# How long to wait for a killed command's output pipe to close
+KILL_GRACE = 5
+
+# Environment variables the agent's commands don't get: API keys and other credentials,
+# which the code those commands run (a repo's tests, say) could otherwise read
+SECRET_ENV_RE = re.compile(
+    r"(KEY|TOKEN|PASSWORD|PASSWD|PASSPHRASE|CREDENTIALS?|AUTH|(^|_)PAT)$"
+    r"|API_?KEY|SECRET|^AWS_.*(KEY|TOKEN)",
+    re.IGNORECASE,
+)
 
 SKIP_DIRS = {
     ".git",
@@ -86,17 +96,22 @@ def resolve_path(coder, path):
     return p.resolve()
 
 
+def is_within(path, root):
+    return path == root or root in path.parents
+
+
 def is_inside(coder, abs_path):
-    root = project_root(coder)
-    return abs_path == root or root in abs_path.parents
+    """Whether abs_path is in the project, after following symlinks."""
+    return is_within(Path(abs_path).resolve(), project_root(coder))
 
 
 def display_path(coder, abs_path):
     """Project-relative posix path for files inside the project, else the absolute path."""
-    if is_inside(coder, abs_path):
-        rel = abs_path.relative_to(project_root(coder)).as_posix()
-        return rel or "."
-    return abs_path.as_posix()
+    root = project_root(coder)
+    for path in (Path(abs_path), Path(abs_path).resolve()):
+        if is_within(path, root):
+            return path.relative_to(root).as_posix() or "."
+    return Path(abs_path).as_posix()
 
 
 def check_ignored(coder, abs_path):
@@ -166,9 +181,20 @@ def glob_match(pattern, path):
 
 
 def list_files(coder, base):
-    """(display path, absolute path) for files under base, skipping git-ignored files and
-    junk directories. Uses git's view of the repo when base is inside it."""
+    """(display path, absolute path) for files under base, skipping git-ignored files, junk
+    directories and symlinks that lead out of the project (or out of base, outside it), whose
+    contents reading them would need permission for. Uses git's view of the repo when base
+    is inside it."""
     root = project_root(coder)
+    limit = root if is_inside(coder, base) else Path(base).resolve()
+    return [
+        (shown, abs_path)
+        for shown, abs_path in _list_files(coder, base, root)
+        if is_within(abs_path.resolve(), limit)
+    ]
+
+
+def _list_files(coder, base, root):
     if coder.repo and is_inside(coder, base):
         names = set(coder.repo.get_tracked_files())
         try:
@@ -560,6 +586,34 @@ def kill_process_tree(proc):
         pass
 
 
+def scrub_env(env=None):
+    """A copy of the environment without API keys, tokens, passwords and other secrets."""
+    env = os.environ if env is None else env
+    return {name: value for name, value in env.items() if not SECRET_ENV_RE.search(name)}
+
+
+def finish_killed(proc, grace=None):
+    """The output of a process after killing it. A process it started in a new session
+    survives the kill and can keep the pipes open, so wait at most grace seconds and then
+    close them. Returns (stdout, stderr) as bytes, with whatever was read."""
+    grace = KILL_GRACE if grace is None else grace
+    try:
+        return proc.communicate(timeout=grace)
+    except subprocess.TimeoutExpired as err:
+        out, errout = err.output, err.stderr
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe:
+            try:
+                pipe.close()
+            except OSError:
+                pass
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    return out or b"", errout or b""
+
+
 def run_command(command, cwd, timeout):
     """Run a shell command without stdin. Returns (exit code or None on timeout, output)."""
     kwargs = {}
@@ -569,7 +623,7 @@ def run_command(command, cwd, timeout):
         # Own process group, so a timeout or ^C can kill everything the command started
         kwargs["start_new_session"] = True
 
-    env = dict(os.environ, PAGER="cat", GIT_PAGER="cat")
+    env = dict(scrub_env(), PAGER="cat", GIT_PAGER="cat")
     proc = subprocess.Popen(
         command,
         shell=True,
@@ -585,11 +639,11 @@ def run_command(command, cwd, timeout):
         code = proc.returncode
     except subprocess.TimeoutExpired:
         kill_process_tree(proc)
-        out, _ = proc.communicate()
+        out, _ = finish_killed(proc)
         code = None
     except KeyboardInterrupt:
         kill_process_tree(proc)
-        proc.communicate()
+        finish_killed(proc)
         raise
     return code, out.decode("utf-8", errors="replace")
 
@@ -893,17 +947,17 @@ def describe_mcp_args(args):
 
 
 def mcp_tool(coder, server, tool, args):
-    from loom.mcp import McpError, format_result
+    from loom.mcp import McpError, format_result, mget
 
-    target = f"{server.name}__{tool['name']}"
+    tool_name = tool["name"]
+    target = f"{server.name}__{tool_name}"
     preview = json.dumps(args, indent=2, ensure_ascii=False)
     if len(preview) > 3000:
         preview = preview[:3000] + "\n..."
-    annotations = tool.get("annotations") or {}
 
     def run():
         try:
-            result = server.call_tool(tool["name"], args)
+            result = server.call_tool(tool_name, args)
         except McpError as err:
             raise ToolError(str(err))
         text, is_error = format_result(result)
@@ -915,11 +969,15 @@ def mcp_tool(coder, server, tool, args):
         "mcp",
         target,
         True,
-        f"Use {server.name} MCP tool {tool['name']}",
+        f"Use {server.name} MCP tool {tool_name}",
         run,
         preview=preview,
-        extra=dict(read_only=annotations.get("readOnlyHint") is True),
-        name=f"{server.name} - {tool.get('title') or tool['name']} (MCP)",
+        extra=dict(
+            read_only=mget(tool.get("annotations"), "readOnlyHint") is True,
+            server=server,
+            tool=tool,
+        ),
+        name=f"{server.name} - {mget(tool, 'title') or tool_name} (MCP)",
         detail=describe_mcp_args(args),
     )
 

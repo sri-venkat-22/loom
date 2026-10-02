@@ -1414,7 +1414,7 @@ class Commands:
             else:
                 status = server.status + (f": {server.error}" if server.error else "")
             self.io.tool_output(f"{server.name}: {status}")
-            self.io.tool_output(f"  {server.describe()}  (from {server.source})")
+            self.io.tool_output(f"  {server.describe(details=False)}  (from {server.source})")
         self.io.tool_output()
         self.io.tool_output(
             "Allow a server's tools without asking with /permissions allow mcp(SERVER)."

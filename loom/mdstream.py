@@ -11,6 +11,7 @@ from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.text import Text
 
+from loom.display import sanitize_for_display
 from loom.dump import dump  # noqa: F401
 
 _text_prefix = """
@@ -163,6 +164,8 @@ class MarkdownStream:
         Markdown going to the console works better in terminal scrollback buffers.
         The live window doesn't play nice with terminal scrollback.
         """
+        text = sanitize_for_display(text)
+
         # On the first call, stop the spinner and start the Live renderer
         if not getattr(self, "_live_started", False):
             self.live = Live(Text(""), refresh_per_second=1.0 / self.min_delay)

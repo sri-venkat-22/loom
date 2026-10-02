@@ -574,6 +574,131 @@ class TestMain(TestCase):
                 self.assertEqual(kwargs["main_model"].name, "gpt-3.5-turbo")
                 self.assertEqual(kwargs["map_tokens"], 1024)
 
+    def test_repo_config_cannot_grant_permissions_or_start_mcp_servers(self):
+        with GitTemporaryDirectory() as git_dir:
+            git_dir = Path(git_dir)
+            fake_home = Path(self.homedir_obj.name)
+            server = json.dumps(dict(mcpServers=dict(tools=dict(command="no-such-loom-cmd"))))
+            Path("tools.json").write_text(server)
+            Path(".loom.conf.yml").write_text(
+                "allow:\n  - bash\n  - edit(**)\nmcp-config: tools.json\n"
+            )
+
+            def run(*args):
+                with patch("pathlib.Path.home", return_value=fake_home):
+                    return main(
+                        ["--exit", "--yes", *args],
+                        input=DummyInput(),
+                        output=DummyOutput(),
+                        return_coder=True,
+                    )
+
+            coder = run()
+            # The rules wait for an approval --yes-always doesn't give
+            self.assertEqual(coder.permissions.rules, [])
+            pending = [(str(rule), source) for rule, source in coder.permissions.pending]
+            self.assertEqual(pending, [("bash", ".loom.conf.yml"), ("edit(**)", ".loom.conf.yml")])
+            coder.permissions.start()
+            self.assertEqual(coder.permissions.rules, [])
+            tools = coder.mcp.servers["tools"]
+            self.assertTrue(tools.is_project_server)
+            self.assertEqual(tools.status, "not approved")
+            coder.mcp.close()
+
+            # The same from the project's .env
+            Path(".loom.conf.yml").unlink()
+            Path(".env").write_text("LOOM_ALLOW=bash\nLOOM_MCP_CONFIG=tools.json\n")
+            coder = run()
+            self.assertEqual(coder.permissions.rules, [])
+            self.assertEqual([str(rule) for rule, _ in coder.permissions.pending], ["bash"])
+            self.assertTrue(coder.mcp.servers["tools"].project)
+            coder.mcp.close()
+            Path(".env").unlink()
+            os.environ.pop("LOOM_ALLOW", None)
+            os.environ.pop("LOOM_MCP_CONFIG", None)
+
+            # The user's own config and command line are trusted
+            outside = fake_home / "tools.json"
+            outside.write_text(server)
+            (fake_home / ".loom.conf.yml").write_text(
+                f"allow: bash(pytest*)\nmcp-config: {outside}\n"
+            )
+            coder = run()
+            self.assertEqual([str(rule) for rule, _ in coder.permissions.rules], ["bash(pytest*)"])
+            self.assertEqual(coder.permissions.pending, [])
+            self.assertFalse(coder.mcp.servers["tools"].is_project_server)
+            coder.mcp.close()
+
+            coder = run("--allow", "bash(ls*)", "--mcp-config", str(outside))
+            self.assertEqual([str(rule) for rule, _ in coder.permissions.rules], ["bash(ls*)"])
+            self.assertFalse(coder.mcp.servers["tools"].is_project_server)
+            coder.mcp.close()
+
+    def test_plan_mode_without_the_agent_starts_in_ask_mode(self):
+        with GitTemporaryDirectory():
+            # The classic edit formats apply edits without asking Permissions
+            coder = main(
+                ["--exit", "--yes", "--no-agent", "--permission-mode", "plan"],
+                input=DummyInput(),
+                output=DummyOutput(),
+                return_coder=True,
+            )
+            self.assertEqual(coder.edit_format, "ask")
+
+    def test_repo_config_commands_need_approval(self):
+        with GitTemporaryDirectory():
+            fake_home = Path(self.homedir_obj.name)
+            Path("cmds.txt").write_text("/run touch LOADED\n")
+            Path(".loom.conf.yml").write_text(
+                "lint-cmd:\n  - 'python: touch PWNED #'\ntest-cmd: touch TESTED\nauto-test: true\n"
+                "load: cmds.txt\neditor: touch EDITED\n"
+            )
+
+            def run(*args):
+                with patch("pathlib.Path.home", return_value=fake_home):
+                    return main(
+                        ["--exit", "--yes", *args],
+                        input=DummyInput(),
+                        output=DummyOutput(),
+                        return_coder=True,
+                    )
+
+            # --yes-always doesn't approve them, so they go back to their defaults
+            coder = run()
+            self.assertEqual(coder.lint_cmds, {})
+            self.assertFalse(coder.test_cmd)
+            self.assertFalse(coder.auto_test)
+            self.assertIsNone(coder.commands.editor)
+            for name in ["PWNED", "TESTED", "LOADED", "EDITED"]:
+                self.assertFalse(Path(name).exists(), name)
+
+            # "always" keeps them, and is remembered until they change
+            with patch.object(InputOutput, "permission_ask", return_value="always") as ask:
+                coder = run()
+            subject = ask.call_args[1]["subject"]
+            self.assertIn("lint-cmd: python: touch PWNED #", subject)
+            self.assertIn("test-cmd: touch TESTED", subject)
+            self.assertIn("load: cmds.txt", subject)
+            self.assertIn(".loom.conf.yml", ask.call_args[0][0])
+            self.assertTrue(ask.call_args[1]["explicit_yes_required"])
+            self.assertEqual(coder.lint_cmds, {"python": "touch PWNED #"})
+            self.assertEqual(coder.test_cmd, "touch TESTED")
+
+            coder = run()
+            self.assertEqual(coder.test_cmd, "touch TESTED")
+
+            Path(".loom.conf.yml").write_text("test-cmd: touch OTHER\n")
+            coder = run()
+            self.assertFalse(coder.test_cmd)
+
+            # The user's own config and command line are trusted
+            Path(".loom.conf.yml").unlink()
+            (fake_home / ".loom.conf.yml").write_text("test-cmd: pytest\n")
+            self.assertEqual(run().test_cmd, "pytest")
+            self.assertEqual(
+                run("--lint-cmd", "python: ruff check").lint_cmds, {"python": "ruff check"}
+            )
+
     def test_map_tokens_option(self):
         with GitTemporaryDirectory():
             with patch("loom.coders.base_coder.RepoMap") as MockRepoMap:

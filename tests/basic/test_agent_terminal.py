@@ -143,6 +143,49 @@ class TestCompactDisplay(unittest.TestCase):
         self.assertEqual(tools.plural(3, "entry", "entries"), "3 entries")
 
 
+class TestEscapeSequences(unittest.TestCase):
+    SPOOF = "touch PWNED #\x1b[2K\x1b[1G● Bash(pytest -q)"
+
+    def test_sanitize_for_display(self):
+        from loom.display import sanitize_for_display
+
+        self.assertEqual(
+            sanitize_for_display(self.SPOOF, show_escapes=True),
+            "touch PWNED #\\x1b[2K\\x1b[1G● Bash(pytest -q)",
+        )
+        self.assertEqual(sanitize_for_display("\x1b[31mred\x1b[0m"), "red")
+        self.assertEqual(sanitize_for_display("50%\r100%"), "50%\n100%")
+        self.assertEqual(sanitize_for_display("a\x1b]0;title\x07b\x9b2Kc"), "abc")
+        self.assertEqual(sanitize_for_display("x\x08\x7f\u202ey"), "x\\x08\\x7f\\u202ey")
+        self.assertEqual(sanitize_for_display("tab\tand\nnewline"), "tab\tand\nnewline")
+        self.assertEqual(sanitize_for_display("over\rwrite", show_escapes=True), "over\\x0dwrite")
+
+    def test_a_command_cannot_disguise_itself_in_the_approval(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            script = [reply("Running the tests.\x1b[8m", call("bash", command=self.SPOOF))]
+            coder, llm, out = run_script("ask", script)
+            self.assertNotIn("\x1b", out)
+            self.assertIn("touch PWNED #\\x1b[2K\\x1b[1G", out)
+            self.assertIn("Running the tests.", out)
+            self.assertFalse(Path("PWNED").exists())
+
+    def test_results_and_diffs_cannot_control_the_terminal(self):
+        io = InputOutput(yes=True, pretty=False)
+        out = stdio.StringIO()
+        with contextlib.redirect_stdout(out):
+            io.tool_result("\x1b[31mred\x1b[0m\x1b[1A\x1b[2K")
+            io.diff_output("--- a/x.py\n+++ b/x.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\x1b[8m hidden\n")
+            io.tool_warning("warn\x1b[2J")
+            io.tool_output("note\x1b]52;c;Zm9v\x07")
+            io.permission_ask("Run this command?", subject="ls\x1b[2K\nrm x")
+        printed = out.getvalue()
+        self.assertNotIn("\x1b", printed)
+        self.assertIn("red", printed)
+        self.assertIn("a = 2\\x1b[8m hidden", printed)
+        self.assertIn("ls\\x1b[2K", printed)
+
+
 class TestTodos(unittest.TestCase):
     def test_the_todo_list_is_shown_and_kept(self):
         with GitTemporaryDirectory():

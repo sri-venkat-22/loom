@@ -46,3 +46,20 @@ lint-cmd:
 test-cmd: pytest -q
 auto-test: true
 ```
+
+A `.loom.conf.yml` or `.env` in the project comes with the repo, so before running
+commands it sets (`lint-cmd`, `test-cmd`, `load`, `notifications-command`, `editor`)
+loom asks:
+
+```
+lint-cmd: python: ruff check
+test-cmd: pytest -q
+Run the commands set in this project's .loom.conf.yml? (Y)es/(N)o/(A)lways: trust them in this project [Yes]:
+```
+
+**Always** remembers them in `~/.loom/config-approvals.json` until they change. **No**,
+or `--yes-always`, leaves them unset for the session. Commands from the command line,
+`--config` or `~/.loom.conf.yml` are yours, so they run without asking.
+
+The built-in Python linter runs flake8 in isolated mode, so a `flake8` package in the
+project can't run in its place.

@@ -31,6 +31,7 @@ from rich.console import Console
 from loom import __version__, models, prompts, tools, urls, utils
 from loom.analytics import Analytics
 from loom.commands import Commands
+from loom.display import sanitize_for_display
 from loom.exceptions import LiteLLMExceptions
 from loom.history import ChatSummary
 from loom.io import ConfirmGroup, InputOutput
@@ -1163,6 +1164,13 @@ class Coder:
             self.summarized_done_messages = self.summarizer.summarize(self.summarizing_messages)
         except ValueError as err:
             self.io.tool_warning(err.args[0])
+        except Exception as err:
+            # Network error, provider refused, pydantic rejected the shape — don\'t take
+            # the chat history with us
+            self.io.tool_warning(
+                f"Unable to summarize the chat history ({err.__class__.__name__}: {err})."
+                " Keeping the full history for now."
+            )
 
         if self.verbose:
             self.io.tool_output("Finished summarizing chat history.")
@@ -1174,7 +1182,9 @@ class Coder:
         self.summarizer_thread.join()
         self.summarizer_thread = None
 
-        if self.summarizing_messages == self.done_messages:
+        # Only replace the history if the summary made it back. An empty summary means the
+        # summarizer failed; keep what we had so the saved session isn\'t wiped.
+        if self.summarizing_messages == self.done_messages and self.summarized_done_messages:
             self.done_messages = self.summarized_done_messages
         self.summarizing_messages = None
         self.summarized_done_messages = []
@@ -2209,6 +2219,7 @@ class Coder:
             elif text:
                 # Apply reasoning tag formatting
                 text = replace_reasoning_tags(text, self.reasoning_tag_name)
+                text = sanitize_for_display(text)
                 try:
                     sys.stdout.write(text)
                 except UnicodeEncodeError:

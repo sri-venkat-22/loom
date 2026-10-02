@@ -125,7 +125,9 @@ it edits files by replying with edit blocks ([Edit formats](#edit-formats)):
   format. `--no-agent` does the same for any model, and `/chat-mode diff` or `/code`
   switch mid-session.
 - If the provider rejects the tools anyway (errors like "does not support tools"), loom
-  switches to the model's edit format and sends the request again.
+  stops and suggests `/chat-mode` with the model's edit format. It doesn't switch by
+  itself, because edits in the classic formats are applied without asking, even in plan
+  mode.
 - If the model writes a tool call as text instead of making it, loom asks it once to use
   tool calling, then suggests `/chat-mode diff`.
 

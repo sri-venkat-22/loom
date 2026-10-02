@@ -32,6 +32,13 @@ priority:
 Run `loom --verbose` to see which config and `.env` files were loaded, and `/settings`
 in the chat to print the settings in effect.
 
+A `.loom.conf.yml` or `.env` in the project can come with a repo you cloned, so loom
+asks before using the settings from it that would let it act without asking you:
+`allow` rules ([agent.md](agent.md#the-projects-rules)), `mcp-config` files
+([mcp.md](mcp.md#project-servers)) and commands it would run (`lint-cmd`, `test-cmd`,
+`load`, `notifications-command`, `editor`; see [lint-test.md](lint-test.md#in-a-config-file)).
+Settings from the command line, `--config` and your home directory don't ask.
+
 ## Files loom creates
 
 Loom writes chat and input history to `.loom.chat.history.md` and

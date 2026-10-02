@@ -137,6 +137,8 @@ class Linter:
         fatal = "E9,F821,F823,F831,F406,F407,F701,F702,F704,F706"
         flake8_cmd = [
             sys.executable,
+            # Isolated, so a flake8 package in the project can't run instead of the real one
+            "-I",
             "-m",
             "flake8",
             f"--select={fatal}",

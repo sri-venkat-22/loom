@@ -37,8 +37,12 @@ Otherwise loom falls back to the model's edit format. `--no-agent` turns the age
 and `/code` sends one message (or switches) to the classic edit mode described in
 [usage.md](usage.md#chat-modes). `/agent` switches back.
 
-If the provider turns out to reject tool calling, loom switches to the model's edit
-format by itself and sends your request again. If the model writes a tool call as text
+If the provider turns out to reject tool calling, loom stops and says how to carry on:
+`/chat-mode diff` (or the model's edit format) has it edit files with edit blocks, which
+are applied without asking you, so loom doesn't switch by itself. In plan mode it points
+at `/ask` instead. Starting in plan mode without the agent (`--no-agent`, or a model
+that can't call tools) starts in ask mode, where the model can't change files. If the
+model writes a tool call as text
 instead of making it, loom asks it once to use tool calling, then suggests
 `/chat-mode diff`. [models.md](models.md#models-in-agent-mode) lists the models checked
 with the agent, and how to check another.
@@ -61,8 +65,18 @@ The model can call these tools, several at once when they don't depend on each o
 Tools from [MCP servers](mcp.md) you connect are added to these.
 
 Commands run without stdin and time out after 2 minutes (the model can ask for up to 10),
-so interactive programs and servers don't hang the agent. After each edit loom lints the
-file (see [lint-test.md](lint-test.md)) and shows any errors to the model.
+so interactive programs and servers don't hang the agent. A process a command leaves
+running in the background can't hold that up: after the timeout loom gives it 5 more
+seconds, then returns what the command printed. After each edit loom lints the file (see
+[lint-test.md](lint-test.md)) and shows any errors to the model.
+
+Commands get your environment without its secrets: variables whose names look like
+credentials (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_KEY`, `AWS_*_KEY` and the
+like) are left out, so the code a command runs, like a repo's tests, can't read your API
+keys. Run a command that needs one yourself with `/run`.
+
+`grep` and `glob` skip symlinks that lead out of the project, and reading a file through
+one asks, as reading outside the project does.
 
 ## Watching it work
 
@@ -70,6 +84,10 @@ Each tool call is one line, `● Tool(what)`, with its outcome indented under it
 many lines it read, how many files matched, the end of a command's output (and its exit
 code if it failed). Every edit shows its diff once, with line numbers: in the question
 when loom asks, or under the call when it doesn't. The model gets the full results.
+
+Terminal control characters in what the model or a repo wrote can't move the cursor, erase
+lines or hide text: in commands and diffs they're shown as `\x1b` and the like, so a
+question shows exactly what would run, and in other output escape sequences are dropped.
 
 While the model thinks, the spinner shows what it's working on and for how long.
 
@@ -170,8 +188,10 @@ allow:
 
 - `bash(PATTERN)` matches commands, where `*` matches anything. A command joined with
   `&&`, `;`, `|` and the like is allowed only when every part matches a rule, and one
-  that uses `$(...)`, backticks or redirection (other than `2>&1` and `>/dev/null`)
-  always asks. `bash` alone allows every command.
+  that uses `$(...)`, backticks, redirection (other than `2>&1` and `>/dev/null`),
+  `$'...'` quoting, here-documents or process substitution always asks. On Windows,
+  where commands run in `cmd.exe`, so does one with quotes, `^`, `%` or `!`. `bash` alone
+  allows every command.
 - `edit(GLOB)` matches files relative to the project root: `*` stays within a
   directory, `**` crosses directories. `edit` alone allows every edit.
 - `read(GLOB)` allows reading matching files outside the project.
@@ -179,6 +199,23 @@ allow:
   `mcp(SERVER__TOOL)` one tool (with `*` wildcards).
 
 `/permissions` lists the mode and every rule with where it came from.
+
+#### The project's rules
+
+`.loom.permissions.json`, and `allow:` in a `.loom.conf.yml` or `.env` inside the
+project, can come with a repo you cloned. So before the first request loom asks before
+using rules from them that you haven't approved:
+
+```
+bash  [.loom.permissions.json]
+Use the allow rules from this project's .loom.permissions.json? (Y)es/(N)o/(A)lways: trust them in this project [Yes]:
+```
+
+**Yes** uses them for this session and **No** ignores them. **Always** remembers them in
+`~/.loom/permissions-approvals.json`; a rule added to the file later asks again. Rules
+you save yourself, by answering "always" or with `/permissions allow`, are approved as
+they're saved. `--yes-always` doesn't approve them. Rules from `--allow`, `--config` and
+`~/.loom.conf.yml` are yours, so they apply without asking.
 
 Allowing a command lets the agent run code it wrote: an allowed test command runs
 whatever tests the agent adds. Allow what you'd be comfortable running unreviewed.
@@ -188,7 +225,9 @@ whatever tests the agent adds. Allow what you'd be comfortable running unreviewe
 Edits to git's internals (`.git/`, where a hook runs on the next commit) and to loom's
 config (`.loom*` files, the `.loom/` directory with [hooks](hooks.md) and
 [custom commands](custom-commands.md), and `.env`, which can grant rules) always ask,
-whatever the mode, rules or hooks.
+whatever the mode, rules or hooks. Paths are compared the way case-insensitive file
+systems like APFS and NTFS see them, so `.GIT/hooks/pre-commit` and `.Loom.conf.yml` are
+protected too, and so is a file reached through a symlink into `.git/`.
 
 ### Scripting
 

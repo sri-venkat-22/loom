@@ -20,7 +20,8 @@ only write deployment files (`Dockerfile`, `docker-compose.yml`, `.github/workfl
 `Procfile`, `README.md`, ...).
 
 Each agent starts a fresh conversation with the idea and the documents of the earlier
-phases it needs. Permissions work as usual: you approve edits and commands (writing the
+phases it needs. loom only reads documents that are files in the project, up to 1 MB: one
+that's a symlink out of the project is ignored, with a warning. Permissions work as usual: you approve edits and commands (writing the
 phase's own document needs no approval, since you review it next), and loom commits each
 phase's work to git.
 

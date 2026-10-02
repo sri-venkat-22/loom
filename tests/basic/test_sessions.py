@@ -381,3 +381,112 @@ class TestCompaction(unittest.TestCase):
         coder = make_coder()
         ask = Coder.create(from_coder=coder, edit_format="ask")
         self.assertIs(ask.session, coder.session)
+
+
+class TestSummarizerFailuresKeepHistory(unittest.TestCase):
+    def test_summarizer_exception_leaves_done_messages_alone(self):
+        """A network error or 401 from the summarizer must not wipe the chat history."""
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            coder = make_coder(io)
+            before = [
+                dict(role="user", content="first question"),
+                dict(role="assistant", content="first answer"),
+                dict(role="user", content="second question"),
+                dict(role="assistant", content="second answer"),
+            ]
+            coder.done_messages = list(before)
+            coder.summarizer.too_big = lambda messages: True
+            coder.summarizer.summarize = lambda messages: (_ for _ in ()).throw(
+                ConnectionError("provider unreachable")
+            )
+            captured = []
+            coder.io.tool_warning = lambda msg, *a, **kw: captured.append(msg)
+
+            coder.summarize_start()
+            coder.summarize_end()
+
+            self.assertEqual(coder.done_messages, before)
+            self.assertTrue(any("Unable to summarize" in m for m in captured))
+
+    def test_a_successful_summary_still_replaces_history(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            coder = make_coder(io)
+            coder.done_messages = [
+                dict(role="user", content="q1"),
+                dict(role="assistant", content="a1"),
+            ]
+            summary = [dict(role="user", content="summary of the chat so far")]
+            coder.summarizer.too_big = lambda messages: True
+            coder.summarizer.summarize = lambda messages: summary
+
+            coder.summarize_start()
+            coder.summarize_end()
+            self.assertEqual(coder.done_messages, summary)
+
+
+class TestSessionFilesStayInsideTheProject(unittest.TestCase):
+    def test_add_session_files_drops_entries_outside_the_project(self):
+        from loom.main import add_session_files
+
+        with GitTemporaryDirectory() as root, IgnorantTemporaryDirectory() as outside:
+            Path("README.md").write_text("# ok\n")
+            Path("src").mkdir()
+            Path("src/x.py").write_text("x = 1\n")
+            secret = Path(outside) / "id_rsa"
+            secret.write_text("PRIVATE KEY\n")
+            outside_abs = Path(outside) / "notes.txt"
+            outside_abs.write_text("outside\n")
+
+            session = Session(
+                data=dict(
+                    files=[
+                        "README.md",
+                        "../" + Path(outside).name + "/id_rsa",
+                        "src/x.py",
+                        "/etc/passwd",
+                    ],
+                    read_only_files=[str(outside_abs), "src/x.py", str(secret)],
+                )
+            )
+            io = InputOutput(yes=True)
+            captured = []
+            io.tool_warning = lambda msg, *a, **kw: captured.append(msg)
+
+            fnames, read_only = add_session_files(session, root, [], [], io=io)
+
+            # Nothing from the attacker set reached the lists (match by resolved path)
+            def inside(path):
+                resolved = Path(path).resolve()
+                return resolved == Path(root).resolve() or Path(root).resolve() in resolved.parents
+
+            for lst in (fnames, read_only):
+                for f in lst:
+                    self.assertTrue(inside(f), f)
+            self.assertNotIn(
+                str(secret.resolve()), [str(Path(f).resolve()) for f in fnames + read_only]
+            )
+            self.assertNotIn(
+                str(outside_abs.resolve()), [str(Path(f).resolve()) for f in read_only]
+            )
+
+            # Warning mentions what was skipped
+            self.assertTrue(captured)
+            text = captured[0]
+            self.assertIn("id_rsa", text)
+            self.assertIn("/etc/passwd", text)
+
+    def test_add_session_files_keeps_working_for_a_normal_session(self):
+        from loom.main import add_session_files
+
+        with GitTemporaryDirectory() as root:
+            Path("a.py").write_text("x = 1\n")
+            Path("b.py").write_text("y = 1\n")
+            abs_b = str((Path(root) / "b.py").resolve())
+            session = Session(data=dict(files=["a.py"], read_only_files=[abs_b]))
+            fnames, read_only = add_session_files(session, root, [], [])
+            self.assertEqual(len(fnames), 1)
+            self.assertEqual(len(read_only), 1)
