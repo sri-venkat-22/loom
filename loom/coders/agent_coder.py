@@ -139,14 +139,18 @@ class AgentCoder(Coder):
             if msg["role"] == "user" and isinstance(msg.get("content"), str)
         )
 
-    def format_chat_chunks(self):
-        chunks = super().format_chat_chunks()
+    def system_prompt_extras(self):
+        """Text added to the end of the system prompt."""
         extra = []
         if self.mcp:
             extra.append(self.mcp.instructions())
         if self.permissions.mode == "plan":
             extra.append(self.gpt_prompts.plan_mode_prompt)
-        extra = [text for text in extra if text]
+        return extra
+
+    def format_chat_chunks(self):
+        chunks = super().format_chat_chunks()
+        extra = [text for text in self.system_prompt_extras() if text]
         if extra and chunks.system:
             msg = chunks.system[0]
             content = "\n\n".join([msg["content"]] + extra)
@@ -199,6 +203,7 @@ class AgentCoder(Coder):
         except KeyboardInterrupt:
             # Between steps: still commit what was done and keep the history
             self.keyboard_interrupt()
+            self.interrupted = True
         finally:
             self.in_agent_loop = False
 
@@ -336,7 +341,12 @@ class AgentCoder(Coder):
             return f"Error: {err}"
 
         self.io.tool_call(action.name or name, action.detail)
-        hook_allowed = False
+        refusal = self.refuse_action(name, action)
+        if refusal:
+            self.io.tool_result(f"Refused: {refusal}", error=True)
+            return f"Refused: {refusal}"
+
+        hook_allowed = self.preapproved(action)
         if self.hooks:
             hook = self.hooks.run("PreToolUse", self, name, args, action)
             if hook.decision == "block":
@@ -346,7 +356,7 @@ class AgentCoder(Coder):
                     f"Blocked by the user's PreToolUse hook: {hook.message}\nDon't retry the"
                     " same call; do something else or ask the user."
                 )
-            hook_allowed = hook.decision == "allow"
+            hook_allowed = hook_allowed or hook.decision == "allow"
 
         # When the user is asked, the question shows the diff or the command
         asked = self.permissions.decide(action, hook_allowed) == "ask"
@@ -382,6 +392,16 @@ class AgentCoder(Coder):
                 self.show_hook_feedback(hook.message)
                 result += f"\n\nThe user's PostToolUse hook says:\n{hook.message}"
         return result
+
+    def refuse_action(self, name, action):
+        """Why this coder won't let the model use tool name for action, or None. Subclasses
+        with a limited tool set refuse the rest."""
+        return None
+
+    def preapproved(self, action):
+        """Whether action runs without asking, like an allow rule. Protected files and plan
+        mode still win."""
+        return False
 
     def show_hook_feedback(self, message):
         """Show what a PostToolUse hook told the model, under the tool's result."""

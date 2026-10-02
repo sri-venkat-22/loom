@@ -137,6 +137,8 @@ class Coder:
     chat_language = None
     commit_language = None
     file_watcher = None
+    # The user interrupted the last request with Esc or ^C
+    interrupted = False
 
     @classmethod
     def create(
@@ -146,8 +148,11 @@ class Coder:
         io=None,
         from_coder=None,
         summarize_from_coder=True,
+        coder_class=None,
         **kwargs,
     ):
+        """Make a coder for edit_format, or of coder_class (a Coder subclass that isn't a
+        chat mode, like a project phase agent), carrying over from_coder's state."""
         import loom.coders as coders
 
         if not main_model:
@@ -207,6 +212,11 @@ class Coder:
 
             kwargs = use_kwargs
             from_coder.ok_to_warm_cache = False
+
+        if coder_class:
+            res = coder_class(main_model, io, **kwargs)
+            res.original_kwargs = dict(kwargs)
+            return res
 
         for coder in coders.__all__:
             if hasattr(coder, "edit_format") and coder.edit_format == edit_format:
@@ -915,6 +925,7 @@ class Coder:
         self.loom_edited_files = set()
         self.reflected_message = None
         self.num_reflections = 0
+        self.interrupted = False
         self.lint_outcome = None
         self.test_outcome = None
         self.shell_commands = []
@@ -1767,6 +1778,7 @@ class Coder:
                 interrupted = True
 
         if interrupted:
+            self.interrupted = True
             if self.cur_messages and self.cur_messages[-1]["role"] == "user":
                 self.cur_messages[-1]["content"] += "\n^C KeyboardInterrupt"
             else:

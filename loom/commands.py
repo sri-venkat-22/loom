@@ -28,6 +28,8 @@ from loom.utils import is_image_file
 
 from .dump import dump  # noqa: F401
 
+PROJECT_SUBCOMMANDS = ("new", "run", "status", "approve", "redo", "back", "reset")
+
 
 class SwitchCoder(Exception):
     def __init__(self, placeholder=None, **kwargs):
@@ -1436,6 +1438,81 @@ class Commands:
         done = sum(1 for todo in todos if todo.get("status") == "completed")
         self.io.tool_call("Todos", f"{done} of {len(todos)} done")
         self.io.todo_output(todos)
+
+    def completions_project(self):
+        from loom.phases import PHASES
+
+        return list(PROJECT_SUBCOMMANDS) + [phase.key for phase in PHASES]
+
+    def cmd_project(self, args):
+        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, redo [FEEDBACK], back PHASE [FEEDBACK], reset"  # noqa
+        from loom.orchestrator import Orchestrator, TransitionError
+
+        words = args.strip().split(maxsplit=1)
+        sub = words[0].lower() if words else "status"
+        rest = words[1].strip() if len(words) > 1 else ""
+
+        try:
+            orchestrator = Orchestrator(self.coder)
+        except TransitionError as err:
+            self.io.tool_error(str(err))
+            return
+        state = orchestrator.state
+
+        if sub == "new":
+            if not rest:
+                self.io.tool_error("Describe the idea: /project new IDEA")
+                return
+            if state and not state.complete:
+                if not self.io.confirm_ask(
+                    "There is already an unfinished project. Start a new one instead?", default="n"
+                ):
+                    return
+            orchestrator.new_project(rest)
+            orchestrator.run()
+            return
+
+        if sub not in PROJECT_SUBCOMMANDS:
+            self.io.tool_error(
+                f"Unknown subcommand {sub!r}. Use /project {'|'.join(PROJECT_SUBCOMMANDS)}"
+            )
+            return
+
+        if not state:
+            self.io.tool_output("There is no project here. Start one with /project new IDEA.")
+            return
+
+        try:
+            if sub == "status":
+                orchestrator.show_status()
+            elif sub == "run":
+                orchestrator.run()
+            elif sub == "approve":
+                phase = orchestrator.approve()
+                self.io.tool_output(f"Approved the {phase.document_title}.")
+                orchestrator.show_status()
+            elif sub == "redo":
+                phase = orchestrator.redo(rest)
+                self.io.tool_output(f"Redoing {phase.title}.")
+                orchestrator.run()
+            elif sub == "back":
+                name, _, feedback = rest.partition(" ")
+                if not name:
+                    self.io.tool_error(
+                        "Name the phase to go back to: /project back PHASE [FEEDBACK]"
+                    )
+                    return
+                phase = orchestrator.back(name, feedback.strip())
+                self.io.tool_output(f"Back to {phase.title}; the phases after it will run again.")
+                orchestrator.show_status()
+            elif sub == "reset":
+                if self.io.confirm_ask(
+                    "Forget the project's progress? (its documents and code stay)", default="n"
+                ):
+                    state.path.unlink()
+                    self.io.tool_output("The project was reset.")
+        except TransitionError as err:
+            self.io.tool_error(str(err))
 
     def cmd_ok(self, args):
         "Alias for `/code Ok, please go ahead and make those changes.` (any args are appended)"
