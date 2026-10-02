@@ -12,7 +12,8 @@
 | 6 | Launch | read, search, run commands, write deployment files | deployment files (Dockerfile, CI workflow, ...) and `loom-project/6-deployment.md` |
 
 The Building agent is loom's coding agent with a brief to build what the PRD and the
-architecture describe. The other agents have their own prompt and fewer tools: an
+architecture describe. Every agent also has two [project memory](#shared-memory) tools:
+`recall` and `record_decision`. The other agents have their own prompt and fewer tools: an
 agent's tool calls outside its set, and writes outside the files it may write, are
 refused. Testing may only write test files (`tests/`, `test_*`, `*_test.*`,
 `*.test.*`, `*.spec.*`, ...), so it reports bugs instead of fixing them, and Launch may
@@ -31,24 +32,44 @@ phase's work to git.
 agent> /project new A web app where students swap used textbooks
 ```
 
-The orchestrator runs the phases in order. After each one it names the document to read
-and asks you to approve it:
+The orchestrator runs the phases in order, and stops at an approval checkpoint after
+each one.
+
+## Approval checkpoints
+
+At each checkpoint loom names the document to read, lists the decisions the agent
+recorded, and asks what to do with it:
 
 ```
 Planning is ready for review: loom-project/2-prd.md (84 lines).
-Approve the PRD and move on to Design? (Y)es/(N)o [Yes]:
+The Planning agent recorded these decisions:
+  - Leave payments out of the MVP: students settle in person
+Approve the PRD and move on to Design? (A)pprove/(E)dit/(R)eject [Approve]:
 ```
 
-Answer no and loom asks what the agent should change, then runs the phase again with
-your feedback. Leave the feedback empty to stop; the project waits for you.
+- **Approve** moves on to the next phase, whose agent works from the document.
+- **Edit** opens the document in your editor (`--editor`, or `$VISUAL`/`$EDITOR`). loom
+  saves and commits your changes, then asks again. Edits count: the later agents work
+  from your version, a changed verdict line (say FAIL to PASS) changes what happens
+  next, and the edit is recorded as a decision.
+- **Reject** asks what the agent should change, then runs the phase again with your
+  feedback. Leave the feedback empty to stop; the project waits for you.
 
-Two verdicts change the flow:
+For Building, the output is the code: read the build summary and the commits, edit the
+code yourself if you like, and approve, edit the summary, or reject with feedback.
 
-- **NO-GO** from the Idea Check agent stops the project unless you tell loom to carry on
-  anyway.
-- **FAIL** from the Testing agent offers to send the test report back to the Building
-  agent, which fixes the code; then Testing runs again. That happens at most 3 times
-  in a row before loom stops and asks you.
+Two verdicts change the question:
+
+- **NO-GO** from the Idea Check agent stops the project unless you choose
+  `approve anyway`. The default is to reject.
+- **FAIL** from the Testing agent: the default, `send back`, sends the test report back
+  to the Building agent, which fixes the code; then Testing runs again. You can also
+  edit the report, approve it anyway or reject it. After 3 rounds of fixes in a row the
+  default becomes reject, so a project can't loop forever.
+
+Every checkpoint's outcome (approved, edited, rejected with feedback, sent back,
+overridden) is recorded in the project's [shared memory](#shared-memory), with who
+decided: `founder`, or `loom (--yes-always)` when loom answered for you.
 
 ## Commands
 
@@ -58,9 +79,15 @@ Two verdicts change the flow:
 | `/project run` | Carry on from the phase the project is in |
 | `/project` or `/project status` | Show each phase's status |
 | `/project approve` | Approve the document waiting for review |
+| `/project edit` | Edit the document waiting for review in your editor |
+| `/project reject FEEDBACK` | Reject the document waiting for review, and run its phase again with your feedback |
 | `/project redo [FEEDBACK]` | Run the current phase again, with feedback |
 | `/project back PHASE [FEEDBACK]` | Go back to an earlier phase (like `planning` or `2`); the phases after it run again |
-| `/project reset` | Forget the project's progress; its documents and code stay |
+| `/project decide DECISION` | Record a decision of yours, like `Use PostgreSQL`, for the agents to come |
+| `/project decisions` | List every decision: yours, the agents' and the checkpoints' |
+| `/project recall QUERY` | Search the project memory, as the agents' `recall` tool does |
+| `/project memory` | Show where the memory is and how it searches |
+| `/project reset` | Forget the project's progress, decisions and memory; its documents and code stay |
 
 `/project status` shows where the project is:
 
@@ -74,10 +101,42 @@ Project: A web app where students swap used textbooks
   ○ 6. Launch      deployment        pending
 ```
 
+## Shared memory
+
+The project keeps a shared memory in `.loom/memory/`, which git ignores:
+
+- **A database** (`project.db`, SQLite) of the project's state (see
+  [the state machine](#the-state-machine)) and its decisions. A decision is one of yours
+  (`/project decide`), one an agent recorded with `record_decision` (a technology
+  choice, a scope cut, a trade-off, with its reason), or a checkpoint's outcome.
+- **A vector store** of the idea, every phase document (split at its headings) and every
+  decision, for looking up earlier context. Documents are indexed when their phase
+  finishes and again when you edit or approve them.
+
+The agents use it in three ways:
+
+1. Each agent's task message lists the decisions so far, except plain approvals, so
+   the Launch agent knows what the founder told the Design agent.
+2. The orchestrator looks up passages of earlier documents that aren't in the agent's
+   message but matter for its phase. The Launch agent, for one, gets the PRD's
+   requirements on hosting, privacy and scale, though not the whole PRD.
+3. Every agent can search the memory with `recall`, and record its decisions with
+   `record_decision`. Neither touches project files, so they never need approval.
+
+Search uses [ChromaDB](https://www.trychroma.com/) with its default embedding model
+(all-MiniLM-L6-v2, an 80 MB download the first time) when the `memory` extra is
+installed; `/project memory` offers to install it. Without it, or when the model can't
+be downloaded, loom searches a BM25 keyword index in the database instead, so the
+memory works with no extra packages. Set `LOOM_MEMORY_STORE=keyword` to always use the
+keyword index. The database is the source of truth: the ChromaDB collection is rebuilt
+from it when it's missing or out of date.
+
 ## The state machine
 
-The project's state is saved in `.loom/project.json`, so you can quit loom and carry on
-later with `/project run`. Each phase moves through these states:
+The project's state is saved in the shared memory's database, so you can quit loom and
+carry on later with `/project run`. A project from an older loom, in
+`.loom/project.json`, moves into the database the first time loom reads it. Each phase
+moves through these states:
 
 ```
 pending ──start──▶ running ──finish──▶ review ──approve──▶ approved
@@ -101,5 +160,7 @@ history of every step.
   rule, like `/permissions allow bash(pytest*)`.
 - With `--yes-always` loom approves each document by itself, but it still stops on
   NO-GO and on a failing test report it can't fix. Commands need allow rules, as usual.
-- The documents are plain Markdown. You can edit them yourself before you approve them,
-  and the later agents work from your version.
+- The documents are plain Markdown. Besides **Edit** at the checkpoint, you can change
+  them in any editor before you approve them; the later agents work from your version.
+- Record the constraints you already know before the phases that need them run, like
+  `/project decide Deploy on Fly.io; we already pay for it`.

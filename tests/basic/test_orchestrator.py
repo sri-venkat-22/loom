@@ -28,6 +28,18 @@ from .test_agent import FakeLLM, call, make_repo, reply
 PYTEST = f"{sys.executable} -m pytest -q -p no:cacheprovider tests"
 IDEA = "A command-line tool that adds two numbers"
 
+# The project memory searches by keyword here, even where chromadb is installed (see
+# test_memory.py for ChromaDB)
+memory_store = patch.dict(os.environ, {"LOOM_MEMORY_STORE": "keyword"})
+
+
+def setUpModule():
+    memory_store.start()
+
+
+def tearDownModule():
+    memory_store.stop()
+
 
 def make_coder(io=None, allow=()):
     io = io or InputOutput(yes=True)
@@ -265,7 +277,17 @@ class TestPhaseCoder(unittest.TestCase):
             names = [tool["function"]["name"] for tool in agent.tools]
             self.assertEqual(
                 names,
-                ["read_file", "list_dir", "glob", "grep", "edit_file", "write_file", "todo_write"],
+                [
+                    "read_file",
+                    "list_dir",
+                    "glob",
+                    "grep",
+                    "edit_file",
+                    "write_file",
+                    "todo_write",
+                    "recall",
+                    "record_decision",
+                ],
             )
             system = agent.format_messages().all_messages()[0]["content"]
             self.assertIn("loom's project pipeline", system)
@@ -275,6 +297,8 @@ class TestPhaseCoder(unittest.TestCase):
             building = self.make_agent("building")
             names = [tool["function"]["name"] for tool in building.tools]
             self.assertIn("bash", names)
+            self.assertIn("recall", names)
+            self.assertIn("record_decision", names)
             system = building.format_messages().all_messages()[0]["content"]
             # The coding agent's own prompt, with the Building brief
             self.assertIn("Act as an expert software engineer", system)
@@ -333,15 +357,31 @@ class TestPhaseCoder(unittest.TestCase):
                 self.assertEqual(launch.refuse_action("write_file", action) is None, ok, path)
 
 
+def run_project(*scripts, io=None):
+    coder = make_coder(io, allow=[f"bash({sys.executable} -m pytest*)"])
+    llm = FakeLLM(*[step for script in scripts for step in script])
+    orchestrator = Orchestrator(coder)
+    orchestrator.new_project(IDEA)
+    with patch.object(litellm, "completion", llm):
+        done = orchestrator.run()
+    return coder, orchestrator, llm, done
+
+
+def first_messages(llm):
+    """The task message each phase's agent got first."""
+    first = {}
+    for request in llm.requests:
+        first.setdefault(phase_of(request), user_messages(request)[0])
+    return first
+
+
+def kinds(orchestrator):
+    return [(d["phase"], d["kind"]) for d in orchestrator.memory.decisions()]
+
+
 class TestOrchestrator(unittest.TestCase):
     def run_project(self, *scripts, io=None):
-        coder = make_coder(io, allow=[f"bash({sys.executable} -m pytest*)"])
-        llm = FakeLLM(*[step for script in scripts for step in script])
-        orchestrator = Orchestrator(coder)
-        orchestrator.new_project(IDEA)
-        with patch.object(litellm, "completion", llm):
-            done = orchestrator.run()
-        return coder, orchestrator, llm, done
+        return run_project(*scripts, io=io)
 
     def test_runs_the_six_phases(self):
         with GitTemporaryDirectory():
@@ -459,6 +499,17 @@ class TestOrchestrator(unittest.TestCase):
             self.assertIn(("building", "back"), events)
             self.assertEqual(orchestrator.state.data["fix_rounds"], 0)
 
+            # The checkpoint's outcome is a decision the Building agent saw
+            self.assertIn(("testing", "sent back"), kinds(orchestrator))
+            self.assertIn("# Decisions so far", fix_request)
+            self.assertIn(
+                (
+                    "Testing, loom (--yes-always): Sent the failing test report back to the"
+                    " Building agent to fix (round 1)"
+                ),
+                fix_request,
+            )
+
     def test_fix_rounds_are_limited(self):
         with GitTemporaryDirectory():
             make_repo()
@@ -519,8 +570,8 @@ class TestOrchestrator(unittest.TestCase):
         with GitTemporaryDirectory():
             make_repo()
             io = InputOutput(yes=None)
-            # No to the first idea report, then stop at the PRD's review
-            io.confirm_ask = MagicMock(side_effect=[False, True, False])
+            # Reject the first idea report, then stop at the PRD's review
+            io.choice_ask = MagicMock(side_effect=["reject", "approve", "reject"])
             io.prompt_ask = MagicMock(side_effect=["Target students", ""])
             revised = IDEA_REPORT + "For students.\n"
             coder, orchestrator, llm, done = self.run_project(
@@ -550,6 +601,194 @@ class TestOrchestrator(unittest.TestCase):
                 agent.run(with_message=orchestrator.task_message(PHASES_BY_KEY["idea"]))
             sanity_check_messages(agent.done_messages + [dict(role="user", content="next")])
             self.assertIsNot(agent.session, coder.session)
+
+
+class TestCheckpoints(unittest.TestCase):
+    def test_the_founder_edits_the_document(self):
+        with GitTemporaryDirectory():
+            repo = make_repo()
+            io = InputOutput(yes=None)
+            io.choice_ask = MagicMock(side_effect=["edit", "approve", "reject"])
+            io.prompt_ask = MagicMock(return_value="")
+            edited = IDEA_REPORT + "Founder: aim it at students first.\n"
+            with patch("loom.orchestrator.pipe_editor", return_value=edited) as editor:
+                coder, orchestrator, llm, done = run_project(SCRIPT_IDEA, SCRIPT_PLANNING, io=io)
+            self.assertFalse(done)
+
+            editor.assert_called_once()
+            self.assertEqual(editor.call_args[0][0], IDEA_REPORT)
+            self.assertEqual(Path(PHASES_BY_KEY["idea"].document).read_text(), edited)
+            # Asked again after the edit, then approved
+            questions = [c[0][0] for c in io.choice_ask.call_args_list]
+            self.assertEqual(questions[0], questions[1])
+            self.assertEqual(io.choice_ask.call_args_list[0][0][1], ["approve", "edit", "reject"])
+            self.assertEqual(orchestrator.state.status("idea"), "approved")
+            self.assertEqual(orchestrator.state.status("planning"), "review")
+
+            # The edit was committed, and recorded
+            messages = [commit.message for commit in repo.iter_commits()]
+            self.assertTrue(any("at the Idea Check checkpoint" in m for m in messages), messages)
+            self.assertEqual(kinds(orchestrator), [("idea", "edited"), ("idea", "approved")])
+            self.assertEqual(orchestrator.memory.decisions()[0]["source"], "founder")
+
+            # The Planning agent worked from the edited report, and knew it was edited
+            planning = first_messages(llm)["planning"]
+            self.assertIn("Founder: aim it at students first.", planning)
+            self.assertIn(
+                "- Idea Check, the founder: Edited the idea report by hand (1 addition)", planning
+            )
+
+    def test_an_edit_can_change_the_verdict(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=None)
+            io.choice_ask = MagicMock(side_effect=["edit", "approve"])
+            coder = make_coder(io)
+            state = ProjectState.new(coder.root, IDEA)
+            for phase in PHASES[:4]:
+                state.start(phase.key)
+                state.finish(phase.key)
+                state.approve(phase.key)
+            state.start("testing")
+            state.finish("testing", "FAIL")
+            testing = PHASES_BY_KEY["testing"]
+            Path(testing.document).parent.mkdir()
+            Path(testing.document).write_text(TEST_FAIL)
+
+            orchestrator = Orchestrator(coder, state)
+            with patch("loom.orchestrator.pipe_editor", return_value=TEST_PASS):
+                self.assertTrue(orchestrator.review(testing))
+            first, second = [c[0] for c in io.choice_ask.call_args_list]
+            self.assertIn("The tests failed", first[0])
+            self.assertEqual(first[1], ["send back", "edit", "approve anyway", "reject"])
+            self.assertEqual(second[0], "Approve the test report and move on to Launch?")
+            self.assertEqual(state.status("testing"), "approved")
+            self.assertEqual(state.phase_data("testing")["verdict"], "PASS")
+            self.assertEqual(state.current.key, "launch")
+            decisions = orchestrator.memory.decisions()
+            self.assertEqual(
+                decisions[0]["text"], "Edited the test report by hand (2 additions and 2 removals)"
+            )
+            self.assertEqual(decisions[1]["text"], "Approved the test report (result PASS)")
+
+    def test_overriding_no_go(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=None)
+            io.choice_ask = MagicMock(side_effect=["approve anyway", "reject"])
+            io.prompt_ask = MagicMock(return_value="")
+            report = IDEA_REPORT.replace("GO", "NO-GO")
+            coder, orchestrator, llm, done = run_project(
+                [reply(None, write_doc("idea", report)), reply("NO-GO.")],
+                SCRIPT_PLANNING,
+                io=io,
+            )
+            self.assertEqual(io.choice_ask.call_args_list[0][0][0], "Carry on to Planning anyway?")
+            self.assertEqual(orchestrator.state.status("idea"), "approved")
+            decision = orchestrator.memory.decisions()[0]
+            self.assertEqual(decision["kind"], "override")
+            self.assertIn("despite the Idea Check's NO-GO verdict", decision["text"])
+            self.assertIn("despite the Idea Check's NO-GO", first_messages(llm)["planning"])
+
+
+class TestSharedMemory(unittest.TestCase):
+    def test_agents_share_decisions_and_recall(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            idea = [
+                reply(
+                    None,
+                    call(
+                        "record_decision",
+                        decision="Start with a CLI, not a web app",
+                        reason="Smallest MVP",
+                    ),
+                    write_doc("idea", IDEA_REPORT),
+                ),
+                reply("GO."),
+            ]
+            planning = [
+                reply(None, call("recall", query="web app or CLI?")),
+                reply(None, write_doc("planning", PRD)),
+                reply("PRD written."),
+            ]
+            # Design never writes its document, so the run stops there
+            coder, orchestrator, llm, done = run_project(idea, planning, [reply("Thinking.")] * 2)
+            self.assertFalse(done)
+
+            decisions = orchestrator.memory.decisions()
+            self.assertEqual(decisions[0]["source"], "Idea Check agent")
+            self.assertEqual(decisions[0]["reason"], "Smallest MVP")
+            self.assertEqual(
+                kinds(orchestrator),
+                [("idea", "decision"), ("idea", "approved"), ("planning", "approved")],
+            )
+            self.assertEqual(decisions[1]["source"], "loom (--yes-always)")
+
+            first = first_messages(llm)
+            self.assertIn(
+                (
+                    "- Idea Check, Idea Check agent: Start with a CLI, not a web app (Why: Smallest"
+                    " MVP)"
+                ),
+                first["planning"],
+            )
+            # Approvals are on record but aren't context for the agents
+            self.assertNotIn("Approved the", first["design"])
+
+            # The recall tool found the decision
+            requests = [r for r in llm.requests if phase_of(r) == "planning"]
+            results = [m["content"] for m in requests[1]["messages"] if m["role"] == "tool"]
+            self.assertIn("[1] Decision (Idea Check, by the Idea Check agent)", results[0])
+            self.assertIn("Start with a CLI, not a web app", results[0])
+
+            # The approved documents are indexed
+            hits = orchestrator.memory.search("functional requirements add integers")
+            self.assertEqual(hits[0].phase, "planning")
+
+            # The checkpoint lists the agent's own decisions
+            orchestrator.memory.record_decision("idea", "A founder decision")
+            orchestrator.io.tool_output = MagicMock()
+            orchestrator.show_review(PHASES_BY_KEY["idea"], IDEA_REPORT, "GO")
+            shown = [c[0][0] for c in orchestrator.io.tool_output.call_args_list if c[0]]
+            self.assertIn("The Idea Check agent recorded these decisions:", shown)
+            self.assertIn("  - Start with a CLI, not a web app", shown)
+            self.assertNotIn("  - A founder decision", shown)
+
+            # The memory lasts: a new session sees the same decisions
+            again = Orchestrator(make_coder())
+            self.assertEqual(len(again.memory.decisions()), 4)
+            self.assertEqual(again.state.current.key, "design")
+
+    def test_agents_get_related_passages_of_earlier_documents(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = Orchestrator(make_coder())
+            orchestrator.new_project(IDEA)
+            prd = (
+                PRD
+                + "## Non-functional requirements\n"
+                "NFR-1: Hosting must keep user data private and secure.\n"
+            )
+            for key, text in [("idea", IDEA_REPORT), ("planning", prd), ("design", ARCHITECTURE)]:
+                phase = PHASES_BY_KEY[key]
+                Path(phase.document).parent.mkdir(exist_ok=True)
+                Path(phase.document).write_text(text)
+                orchestrator.remember_document(phase)
+
+            # Launch doesn't get the PRD, but the memory finds what matters for deploying
+            launch = orchestrator.task_message(PHASES_BY_KEY["launch"])
+            self.assertIn("# Related passages from the project memory", launch)
+            self.assertIn(
+                "## The PRD (loom-project/2-prd.md) > PRD: adder > Non-functional requirements",
+                launch,
+            )
+            self.assertIn("NFR-1: Hosting must keep user data private", launch)
+
+            # Documents already in the message aren't repeated
+            design = orchestrator.task_message(PHASES_BY_KEY["design"])
+            self.assertNotIn("Related passages", design)
+            self.assertEqual(design.count("NFR-1"), 1)
 
 
 @unittest.skipIf(os.name == "nt", "symlinks need extra rights on Windows")
@@ -669,6 +908,68 @@ class TestProjectCommand(unittest.TestCase):
             commands.cmd_project("reset")
             # --yes-always answers yes; the documents stay
             self.assertIsNone(ProjectState.load("."))
+
+    def test_checkpoint_and_memory_commands(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            coder = make_coder(io)
+            commands = Commands(io, coder)
+            io.tool_output = MagicMock()
+            io.tool_error = MagicMock()
+
+            def shown():
+                return "\n".join(str(c[0][0]) for c in io.tool_output.call_args_list if c[0])
+
+            orchestrator = Orchestrator(coder)
+            orchestrator.new_project(IDEA)
+            commands.cmd_project("decisions")
+            io.tool_output.assert_called_with("No decisions yet.")
+
+            commands.cmd_project("decide Use Python 3.12 and argparse")
+            self.assertIn("Recorded decision #1", io.tool_output.call_args[0][0])
+            commands.cmd_project("decisions")
+            self.assertIn("#1   decision   Idea Check, the founder: Use Python 3.12", shown())
+
+            commands.cmd_project("recall argparse")
+            self.assertIn("[1] Decision (Idea Check, by the founder)", shown())
+            commands.cmd_project("recall")
+            io.tool_error.assert_called_with("Say what to look for: /project recall QUERY")
+            commands.cmd_project("memory")
+            self.assertIn("Search: keyword index (BM25)", shown())
+            self.assertIn("1 decisions", shown())
+
+            for sub in ("edit", "reject Make it smaller"):
+                commands.cmd_project(sub)
+                io.tool_error.assert_called_with("No phase is waiting for review.")
+
+            # The idea report waits for review
+            state = ProjectState.load(".")
+            state.start("idea")
+            state.finish("idea", "GO")
+            state.save()
+            Path(PHASES_BY_KEY["idea"].document).parent.mkdir()
+            Path(PHASES_BY_KEY["idea"].document).write_text(IDEA_REPORT)
+
+            commands.cmd_project("reject")
+            io.tool_error.assert_called_with("Say what should change: /project reject FEEDBACK")
+            edited = IDEA_REPORT.replace("**Verdict:** GO", "**Verdict:** NO-GO")
+            with patch("loom.orchestrator.pipe_editor", return_value=edited):
+                commands.cmd_project("edit")
+            state = ProjectState.load(".")
+            self.assertEqual(state.status("idea"), "review")
+            self.assertEqual(state.phase_data("idea")["verdict"], "NO-GO")
+
+            commands.cmd_project("approve")
+            memory = Orchestrator(coder).memory
+            self.assertEqual(
+                [(d["kind"], d["source"]) for d in memory.decisions()],
+                [("decision", "founder"), ("edited", "founder"), ("approved", "founder")],
+            )
+
+            commands.cmd_project("reset")
+            self.assertIsNone(ProjectState.load("."))
+            self.assertEqual(memory.stats(), dict(decisions=0, chunks=0))
 
     def test_completions(self):
         with GitTemporaryDirectory():

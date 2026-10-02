@@ -64,7 +64,7 @@ class ToolError(Exception):
 class Action:
     """Something a tool is about to do, for Permissions to decide on."""
 
-    kind: str  # "read", "edit", "bash", "todo" or "mcp"
+    kind: str  # "read", "edit", "bash", "todo", "mcp" or "memory"
     target: str  # what allow rules match: a path (relative if inside the project) or a command
     inside: bool  # the target is inside the project
     title: str  # a short description, like "Edit loom/io.py"
@@ -731,6 +731,106 @@ def todo_write(coder, todos):
     return Action("todo", "todos", True, "Update the to-do list", run, name="Update Todos")
 
 
+# Project memory (loom/memory.py), for the phase agents of a /project
+
+MAX_RECALL = 20
+
+
+def shared_memory(coder):
+    memory = getattr(coder, "shared_memory", None)
+    if memory is None:
+        raise ToolError("there is no project memory: only the agents of a /project have one")
+    return memory
+
+
+def format_hits(hits):
+    """Search results from the project memory, as the model sees them."""
+    from loom.phases import PHASES_BY_KEY
+
+    parts = []
+    for num, hit in enumerate(hits, 1):
+        phase = PHASES_BY_KEY.get(hit.phase)
+        where = phase.title if phase else "Project"
+        if hit.kind == "decision":
+            head = f"[{num}] Decision ({where}, by the {hit.source})"
+        elif hit.kind == "idea":
+            head = f"[{num}] The project idea"
+        else:
+            head = f"[{num}] {where}: {phase.document_title if phase else hit.source}"
+            head += f" ({hit.source})"
+            if hit.title:
+                head += f" > {hit.title}"
+        parts.append(f"{head}\n{hit.text}")
+    return "\n\n".join(parts)
+
+
+def recall(coder, query, phase=None, limit=5):
+    memory = shared_memory(coder)
+    if not query.strip():
+        raise ToolError("query must say what to look for")
+    phases = None
+    if phase:
+        from loom.phases import get_phase
+
+        try:
+            phases = [get_phase(phase).key]
+        except KeyError:
+            raise ToolError(f"there is no phase {phase!r}")
+    limit = max(1, min(limit, MAX_RECALL))
+
+    def run():
+        hits = memory.search(query, limit, phases)
+        action.summary = f"Found {plural(len(hits), 'passage')}"
+        if not hits:
+            return "Nothing in the project memory matches that."
+        return truncate(format_hits(hits))
+
+    action = Action(
+        "memory",
+        "project memory",
+        True,
+        f"Search the project memory for {query}",
+        run,
+        name="Recall",
+        detail=query,
+    )
+    return action
+
+
+def record_decision(coder, decision, reason=""):
+    memory = shared_memory(coder)
+    phase = getattr(coder, "phase", None)
+    if not decision.strip():
+        raise ToolError("decision must say what was decided")
+
+    def run():
+        saved = memory.record_decision(
+            phase.key if phase else None,
+            decision,
+            reason,
+            source=phase.agent if phase else "agent",
+        )
+        action.summary = f"Recorded decision #{saved['id']}"
+        return (
+            f"Recorded decision #{saved['id']}. The agents of later phases and the founder"
+            " will see it."
+        )
+
+    shown = " ".join(decision.split())
+    if len(shown) > 60:
+        shown = shown[:59] + "…"
+    action = Action(
+        "memory",
+        "project memory",
+        True,
+        "Record a decision",
+        run,
+        name="Record Decision",
+        detail=shown,
+    )
+    return action
+
+
 def tool(name, prepare, description, properties, required):
     return dict(
         name=name,
@@ -890,8 +990,58 @@ TOOLS = {
 }
 
 
+# Only the phase agents of a /project have these, with their project's memory
+PROJECT_TOOLS = {
+    t["name"]: t
+    for t in [
+        tool(
+            "recall",
+            recall,
+            (
+                "Search the project's shared memory: the documents of the earlier phases (idea"
+                " report, PRD, architecture, build summary, test report, deployment) and the"
+                " decisions the founder and the agents made. Returns the most relevant"
+                " passages. Use it to check what was decided before you decide something."
+            ),
+            dict(
+                query=dict(type="string", description="What to look for, in plain words."),
+                phase=dict(
+                    type="string",
+                    description="Only search this phase, like planning or design.",
+                ),
+                limit=dict(
+                    type="integer",
+                    description=f"How many passages to return (default 5, max {MAX_RECALL}).",
+                ),
+            ),
+            ["query"],
+        ),
+        tool(
+            "record_decision",
+            record_decision,
+            (
+                "Record a significant decision in the project's shared memory, like a"
+                " technology choice, a scope cut or a trade-off, so the agents of later phases"
+                " and the founder see it. One decision per call."
+            ),
+            dict(
+                decision=dict(type="string", description="What was decided, in one sentence."),
+                reason=dict(type="string", description="Why, briefly."),
+            ),
+            ["decision"],
+        ),
+    ]
+}
+
+ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS}
+
+
 def schemas():
     return [t["schema"] for t in TOOLS.values()]
+
+
+def project_schemas():
+    return [t["schema"] for t in PROJECT_TOOLS.values()]
 
 
 DISPLAY_NAMES = dict(
@@ -903,6 +1053,8 @@ DISPLAY_NAMES = dict(
     write_file="Write",
     bash="Bash",
     todo_write="Update Todos",
+    recall="Recall",
+    record_decision="Record Decision",
 )
 
 
@@ -917,7 +1069,7 @@ def display_name(name):
 def coerce_args(name, args):
     """Check the model's arguments against the tool's schema, converting near misses like
     "10" for an integer. Unknown arguments are dropped."""
-    parameters = TOOLS[name]["schema"]["function"]["parameters"]
+    parameters = ALL_TOOLS[name]["schema"]["function"]["parameters"]
     properties = parameters["properties"]
     missing = [arg for arg in parameters["required"] if arg not in args]
     if missing:
@@ -991,8 +1143,8 @@ def mcp_tool(coder, server, tool, args):
 def prepare(coder, name, args):
     if not isinstance(args, dict):
         raise ToolError("arguments must be a JSON object")
-    if name in TOOLS:
-        return TOOLS[name]["prepare"](coder, **coerce_args(name, args))
+    if name in TOOLS or (name in PROJECT_TOOLS and getattr(coder, "shared_memory", None)):
+        return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
 
     mcp = getattr(coder, "mcp", None)
     found = mcp.find(name) if mcp else None

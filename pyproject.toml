@@ -34,6 +34,7 @@ dev = { file = "requirements/requirements-dev.txt" }
 help = { file = "requirements/requirements-help.txt" }
 browser = { file = "requirements/requirements-browser.txt" }
 playwright = { file = "requirements/requirements-playwright.txt" }
+memory = { file = "requirements/requirements-memory.txt" }
 
 [tool.setuptools]
 include-package-data = true
@@ -51,3 +52,5 @@ write_to = "loom/_version.py"
 [tool.codespell]
 skip = "*.svg,tests/fixtures/*"
 write-changes = true
+# ChromaDB's $nin ("not in") filter operator
+ignore-words-list = "nin"

@@ -1134,6 +1134,50 @@ class InputOutput:
             self.tool_output(hist)
         return res
 
+    @pause_esc
+    @restore_multiline
+    def choice_ask(self, question, choices, default=None, yes_choice=None, no_choice=None):
+        """Ask the user to pick one of choices, like ["approve", "edit", "reject"], whose
+        first letters must differ. Any prefix of a choice picks it, and Enter picks default
+        (the first choice if None). With --yes-always the answer is yes_choice (default if
+        None), and with --no it's no_choice (the last choice if None)."""
+        default = default or choices[0]
+        self.num_user_asks += 1
+        self.ring_bell()
+        question = sanitize_for_display(question, show_escapes=True)
+        options = "/".join(f"({choice[0].upper()}){choice[1:]}" for choice in choices)
+        question += f" {options} [{default.capitalize()}]: "
+
+        if self.yes is True:
+            res = yes_choice or default
+        elif self.yes is False:
+            res = no_choice or choices[-1]
+        else:
+            style = self._get_style()
+            while True:
+                try:
+                    if self.prompt_session:
+                        res = self.prompt_session.prompt(
+                            question, style=style, complete_while_typing=False
+                        )
+                    else:
+                        res = input(question)
+                except EOFError:
+                    res = no_choice or choices[-1]
+                    break
+                res = res.strip().lower() or default
+                matches = [choice for choice in choices if choice.startswith(res)]
+                if matches:
+                    res = matches[0]
+                    break
+                self.tool_error(f"Please answer with one of: {', '.join(choices)}")
+
+        hist = f"{question.strip()} {res}"
+        self.append_chat_history(hist, linebreak=True, blockquote=True)
+        if self.yes in (True, False):
+            self.tool_output(hist)
+        return res
+
     def diff_output(self, diff, indent=""):
         """Show a unified diff with line numbers, removed lines in red and added lines in
         green."""

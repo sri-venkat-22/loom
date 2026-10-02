@@ -5,7 +5,7 @@ of tools and one document it produces. The orchestrator (loom/orchestrator.py) r
 
 The Building agent is the coding agent itself (every tool, MCP included) with a brief;
 the others write a document, and Testing and Launch may also write test and deployment
-files.
+files. Every phase agent can search the project's shared memory and record decisions in it.
 """
 
 import re
@@ -17,6 +17,8 @@ DOCS_DIR = "loom-project"
 
 READ_TOOLS = ("read_file", "list_dir", "glob", "grep")
 WRITE_TOOLS = ("write_file", "edit_file")
+# The project's shared memory (loom/memory.py)
+MEMORY_TOOLS = ("recall", "record_decision")
 
 TEST_FILES = (
     "**/tests/**",
@@ -74,6 +76,8 @@ class Phase:
     # A line like "**Verdict:** GO" that loom reads from the document
     verdict_label: str = None
     verdicts: tuple = ()
+    # What the orchestrator looks up in the earlier documents not in the agent's message
+    recall: str = ""
 
     @property
     def agent(self):
@@ -89,7 +93,7 @@ PHASES = [
         "idea report",
         "idea report",
         phase_prompts.IDEA,
-        tools=READ_TOOLS + WRITE_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         verdict_label="Verdict",
         verdicts=("GO WITH CHANGES", "NO-GO", "GO"),
     ),
@@ -101,8 +105,9 @@ PHASES = [
         "PRD",
         "PRD",
         phase_prompts.PLANNING,
-        tools=READ_TOOLS + WRITE_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         inputs=("idea",),
+        recall="users problem scope MVP assumptions risks",
     ),
     Phase(
         3,
@@ -112,8 +117,9 @@ PHASES = [
         "architecture document",
         "architecture doc",
         phase_prompts.DESIGN,
-        tools=READ_TOOLS + WRITE_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         inputs=("idea", "planning"),
+        recall="constraints performance security scale platforms risks",
     ),
     Phase(
         4,
@@ -126,6 +132,7 @@ PHASES = [
         tools=None,
         writable=None,
         inputs=("planning", "design"),
+        recall="constraints technical risks assumptions out of scope",
     ),
     Phase(
         5,
@@ -135,11 +142,12 @@ PHASES = [
         "test report",
         "test report",
         phase_prompts.TESTING,
-        tools=READ_TOOLS + WRITE_TOOLS + ("bash", "todo_write"),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("bash", "todo_write"),
         writable=TEST_FILES,
         inputs=("planning", "design", "building"),
         verdict_label="Result",
         verdicts=("PASS", "FAIL"),
+        recall="acceptance criteria edge cases errors performance security",
     ),
     Phase(
         6,
@@ -149,9 +157,10 @@ PHASES = [
         "deployment document",
         "deployment",
         phase_prompts.LAUNCH,
-        tools=READ_TOOLS + WRITE_TOOLS + ("bash", "todo_write"),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("bash", "todo_write"),
         writable=DEPLOYMENT_FILES,
         inputs=("design", "building", "testing"),
+        recall="hosting deployment users scale performance security privacy configuration",
     ),
 ]
 
