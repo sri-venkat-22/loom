@@ -47,6 +47,8 @@ export interface SessionEvent {
   // The phase the project is in, or null when there's none or it's complete
   phase: string | null;
   phases: Phase[];
+  // The id of the saved conversation the chat is
+  conversation: string | null;
   busy: boolean;
 }
 
@@ -156,6 +158,14 @@ export interface AskResolvedEvent {
   value: string | null;
 }
 
+// The chat is now another conversation, like one /resume continues: clear it, and the
+// messages that follow show that one
+export interface ConversationEvent {
+  type: "conversation";
+  id: string;
+  title: string;
+}
+
 // Output of a command like /run, for the side pane's terminal
 export interface TerminalEvent {
   type: "terminal";
@@ -178,7 +188,8 @@ export type ServerEvent =
   | DiffEvent
   | AskEvent
   | AskResolvedEvent
-  | TerminalEvent;
+  | TerminalEvent
+  | ConversationEvent;
 
 export type ClientEvent =
   | { type: "input"; text: string }

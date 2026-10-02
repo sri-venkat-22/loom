@@ -44,8 +44,8 @@ export function DiffView({ diff }: { diff: DiffEvent }) {
       {diff.lines.map((line, i) => {
         if (line.kind === "gap") {
           return (
-            <div key={i} className="select-none pl-[4.5rem] text-dim">
-              ⋮
+            <div key={i} className="select-none bg-card pl-[4.5rem] text-dim">
+              ⋮{line.text && <span className="pl-3">{line.text}</span>}
             </div>
           );
         }

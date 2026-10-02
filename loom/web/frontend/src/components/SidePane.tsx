@@ -1,14 +1,22 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { type Alias, type Files, type Memory, api } from "../lib/api";
+import {
+  type Alias,
+  type Changes,
+  type FileChange,
+  type Files,
+  type Memory,
+  api,
+} from "../lib/api";
 import { answer } from "../lib/asks";
 import { send } from "../lib/socket";
 import { pendingAsk, useSession } from "../store/session";
 import { type Pane, useUi } from "../store/ui";
+import { DiffView } from "./DiffView";
 
 const MonacoView = lazy(() => import("./MonacoView"));
 
-const TABS: Pane[] = ["files", "memory", "terminal", "model"];
+const TABS: Pane[] = ["changes", "files", "memory", "terminal", "model"];
 
 // Commands from the pane run only when loom is ready for one
 function useIdle() {
@@ -26,6 +34,135 @@ function Editor(props: React.ComponentProps<typeof MonacoView>) {
     <Suspense fallback={<div className="p-4 text-dim">loading editor…</div>}>
       <MonacoView {...props} />
     </Suspense>
+  );
+}
+
+// Changes
+
+const STATUS_LABEL: Record<FileChange["status"], string> = {
+  added: "new",
+  modified: "",
+  deleted: "deleted",
+  renamed: "renamed",
+};
+
+function ChangesTab() {
+  const [base, setBase] = useState<"session" | "branch">("session");
+  const [changes, setChanges] = useState<Changes | null>(null);
+  const [error, setError] = useState("");
+  const [folded, setFolded] = useState<Set<string>>(new Set());
+  const busy = useSession((state) => state.session?.busy ?? false);
+  // Each tool call that ends may have changed files
+  const finished = useSession(
+    (state) => state.entries.filter((e) => e.kind === "tool" && e.status !== "running").length,
+  );
+  const openInViewer = useUi((state) => state.openInViewer);
+
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(() => {
+      api
+        .changes(base)
+        .then((found) => live && (setChanges(found), setError("")))
+        .catch((err: Error) => live && setError(err.message));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [base, busy, finished]);
+
+  const files = changes?.files ?? [];
+  const added = files.reduce((n, f) => n + f.added, 0);
+  const removed = files.reduce((n, f) => n + f.removed, 0);
+
+  function fold(path: string) {
+    setFolded((before) => {
+      const next = new Set(before);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center gap-4 border-b border-border px-4 py-2 text-[12px]">
+        {(["session", "branch"] as const).map((which) => (
+          <button
+            key={which}
+            onClick={() => setBase(which)}
+            className={which === base ? "text-foreground" : "text-dim hover:text-foreground"}
+          >
+            {which === "session" ? "since loom started" : "since main"}
+          </button>
+        ))}
+        {files.length > 0 && (
+          <span className="ml-auto text-dim">
+            {files.length} file{files.length === 1 ? "" : "s"}{" "}
+            <span className="text-add">+{added}</span> <span className="text-del">-{removed}</span>
+          </span>
+        )}
+      </div>
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
+        {error && <div className="text-destructive">{error}</div>}
+        {changes && !changes.available && (
+          <div className="text-dim">
+            {base === "branch"
+              ? "There's no main or master branch to compare with."
+              : "Changes show here in a git repo."}
+          </div>
+        )}
+        {changes?.available && !files.length && (
+          <div className="text-dim">No changes {changes.label}.</div>
+        )}
+        {files.map((file) => {
+          const open = !folded.has(file.path);
+          return (
+            <div key={file.path} className="mb-4">
+              <div className="flex items-baseline gap-2">
+                <button onClick={() => fold(file.path)} className="w-4 shrink-0 text-dim">
+                  {open ? "▾" : "▸"}
+                </button>
+                <button
+                  onClick={() => file.status !== "deleted" && openInViewer(file.path)}
+                  title={file.status === "deleted" ? file.path : `view ${file.path}`}
+                  className="min-w-0 truncate text-left text-foreground hover:underline"
+                >
+                  {file.path}
+                </button>
+                {STATUS_LABEL[file.status] && (
+                  <span className="shrink-0 text-[12px] text-dim">
+                    {STATUS_LABEL[file.status]}
+                    {file.old_path && ` from ${file.old_path}`}
+                  </span>
+                )}
+                <span className="ml-auto shrink-0 text-[12px]">
+                  <span className="text-add">+{file.added}</span>{" "}
+                  <span className="text-del">-{file.removed}</span>
+                </span>
+              </div>
+              {open &&
+                (file.binary ? (
+                  <div className="ml-6 mt-1 text-dim">binary file</div>
+                ) : (
+                  file.lines.length > 0 && (
+                    <DiffView
+                      diff={{
+                        type: "diff",
+                        id: file.path,
+                        tool_id: null,
+                        file: file.path,
+                        lines: file.lines,
+                      }}
+                    />
+                  )
+                ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -417,7 +554,7 @@ export function SidePane() {
   if (!pane && !editing) return null;
 
   return (
-    <aside className="flex w-[420px] shrink-0 flex-col border-l border-border text-[13px]">
+    <aside className="flex w-[clamp(400px,38vw,680px)] shrink-0 flex-col border-l border-border text-[13px]">
       <div className="flex items-center gap-4 border-b border-border px-4 py-2 text-[12px]">
         {editing ? (
           <span className="text-primary">editor</span>
@@ -441,6 +578,8 @@ export function SidePane() {
       <div className="min-h-0 flex-1">
         {editing ? (
           <DocumentEditor />
+        ) : pane === "changes" ? (
+          <ChangesTab />
         ) : pane === "files" ? (
           <FilesTab />
         ) : pane === "memory" ? (

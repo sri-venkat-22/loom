@@ -16,9 +16,12 @@ from loom.display import sanitize_for_display
 from loom.io import HUNK_RE, InputOutput
 from loom.phases import PHASES, get_phase
 from loom.reasoning_tags import REASONING_END, REASONING_START
+from loom.sessions import get_title
 
 from .project import ProjectWatcher, project_state
+from .protocol import MAX_TOOL_OUTPUT
 from .session import WebSession
+from .transcript import transcript
 
 
 def split_reasoning(text):
@@ -97,10 +100,6 @@ class WebPrompt:
         )
 
 
-# Longest tool result the browser gets, for the expanded card
-MAX_TOOL_OUTPUT = 20_000
-
-
 def plain(message):
     if isinstance(message, Text):
         return message.plain
@@ -109,7 +108,8 @@ def plain(message):
 
 def parse_diff(diff):
     """The file a unified diff changes, and its lines as dicts of kind (add, del, ctx, gap
-    between hunks, or note), old and new line numbers, and text."""
+    for unchanged lines it leaves out, or note), old and new line numbers, and text. A
+    gap's text says how many lines it hides, like "26 unmodified lines"."""
     file = ""
     lines = []
     old = new = 0
@@ -117,10 +117,14 @@ def parse_diff(diff):
     for line in diff.splitlines():
         match = HUNK_RE.match(line)
         if match:
-            if in_hunk:
-                lines.append(dict(kind="gap", old=None, new=None, text=""))
+            start = int(match.group(1))
+            # The unchanged lines before the hunk; at the start, only if there are some
+            hidden = start - (old if in_hunk else 1)
+            if in_hunk or hidden > 0:
+                text = f"{hidden} unmodified line{'' if hidden == 1 else 's'}" if hidden else ""
+                lines.append(dict(kind="gap", old=None, new=None, text=text))
             in_hunk = True
-            old, new = int(match.group(1)), int(match.group(2))
+            old, new = start, int(match.group(2))
             continue
         if not in_hunk:
             if line.startswith("+++ "):
@@ -182,6 +186,13 @@ class WebIO(InputOutput):
         # The project's files, for the side pane's tree, as of the last prompt
         self.root = None
         self.files = dict(files=[], chat=[], read_only=[])
+        # The saved conversation the chat shows, and where conversations are saved
+        self.conversation_id = None
+        self.sessions_dir = None
+        # The git repo, and the commit it was at when the browser started talking to
+        # loom, which the changes pane diffs against
+        self.git = None
+        self.base_commit = None
         # The output of the /run command being shown, for its card
         self.run_output = None
         # The current card already ended, like a finished /run's
@@ -230,10 +241,13 @@ class WebIO(InputOutput):
                 cycle_mode,
             )
         self.end_tool()
+        self.web.end_turn()
         if not self.project_watcher:
             self.project_watcher = ProjectWatcher(self.web, root).start()
         coder = getattr(commands, "coder", None)
         self.remember_files(coder, root, rel_fnames, addable_rel_fnames)
+        self.follow_conversation(coder)
+        self.remember_repo(coder)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
         inp = self.web.wait_for_input()
         self.add_to_input_history(inp)
@@ -262,6 +276,34 @@ class WebIO(InputOutput):
             return ""
         return f"/project back {phase.key}"
 
+    def follow_conversation(self, coder):
+        """When the coder's conversation changed, by /resume or /clear, show it instead."""
+        session = getattr(coder, "session", None)
+        if not session:
+            return
+        self.sessions_dir = session.directory
+        if self.conversation_id is None:
+            # The one loom started with, which the chat already shows
+            self.conversation_id = session.id
+            return
+        if session.id == self.conversation_id:
+            return
+        self.conversation_id = session.id
+        title = session.title or get_title(coder.done_messages)
+        self.web.start_conversation(
+            session.id, title, list(transcript(coder.done_messages, self.web.next_id))
+        )
+
+    def remember_repo(self, coder):
+        repo = getattr(coder, "repo", None)
+        if not repo or self.git:
+            return
+        self.git = repo.repo
+        try:
+            self.base_commit = repo.get_head_commit_sha()
+        except Exception:
+            self.base_commit = None
+
     def remember_files(self, coder, root, rel_fnames, addable_rel_fnames):
         read_only = []
         if coder:
@@ -281,6 +323,7 @@ class WebIO(InputOutput):
             commands=list_commands(commands),
             tokens=dict(self.usage),
             cost=self.cost,
+            conversation=self.conversation_id,
             **project_state(root),
         )
         if coder:

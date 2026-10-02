@@ -185,6 +185,7 @@ export const useSession = create<SessionState>((set) => ({
   apply: (event) =>
     set((state) => {
       if (event.type === "session") return { session: event };
+      if (event.type === "conversation") return { entries: [] };
       if (event.type === "terminal") {
         const gap = event.start && state.terminal ? "\n" : "";
         return { terminal: (state.terminal + gap + event.text).slice(-MAX_TERMINAL) };
