@@ -4,7 +4,25 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Level = "info" | "warning" | "error";
-export type AskKind = "confirm" | "permission" | "choice" | "prompt";
+export type AskKind = "confirm" | "permission" | "choice" | "checkpoint" | "prompt";
+export type PhaseStatus = "pending" | "running" | "review" | "approved";
+
+export interface Phase {
+  key: string;
+  title: string;
+  status: PhaseStatus;
+}
+
+// The /project phase a checkpoint reviews
+export interface Checkpoint {
+  phase: string;
+  title: string;
+  document: string;
+  document_title: string;
+  verdict: string | null;
+  next: string | null;
+  next_title: string | null;
+}
 export type TurnStatus = "done" | "cancelled";
 
 export interface Command {
@@ -24,7 +42,11 @@ export interface SessionEvent {
   commands: Command[];
   tokens: { sent: number; received: number };
   cost: number;
+  // The /project idea, or null without a project
+  project: string | null;
+  // The phase the project is in, or null when there's none or it's complete
   phase: string | null;
+  phases: Phase[];
   busy: boolean;
 }
 
@@ -124,6 +146,7 @@ export interface AskEvent {
   subject: string | null;
   // The card of the tool call that needs the answer
   tool_id: string | null;
+  checkpoint: Checkpoint | null;
 }
 
 export interface AskResolvedEvent {

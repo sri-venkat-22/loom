@@ -13,8 +13,10 @@ from rich.text import Text
 from loom import __version__
 from loom.display import sanitize_for_display
 from loom.io import HUNK_RE, InputOutput
+from loom.phases import PHASES, get_phase
 from loom.reasoning_tags import REASONING_END, REASONING_START
 
+from .project import ProjectWatcher, project_state
 from .session import WebSession
 
 
@@ -90,6 +92,7 @@ class WebPrompt:
             default,
             subject=ask.get("subject"),
             tool_id=self.io.tool_id,
+            checkpoint=ask.get("checkpoint"),
         )
 
 
@@ -170,6 +173,11 @@ class WebIO(InputOutput):
         # The tool call being shown, whose results and diffs go on its card
         self.tool_id = None
         self.tool_failed = False
+        # Follows the /project orchestrator's progress, once the browser is talking to loom
+        self.project_watcher = None
+        # The tokens and cost of every request this session, the phase agents' included
+        self.usage = dict(sent=0, received=0)
+        self.cost = 0.0
 
     @property
     def prompt_session(self):
@@ -214,12 +222,36 @@ class WebIO(InputOutput):
                 cycle_mode,
             )
         self.end_tool()
+        if not self.project_watcher:
+            self.project_watcher = ProjectWatcher(self.web, root).start()
         coder = getattr(commands, "coder", None)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
         inp = self.web.wait_for_input()
         self.add_to_input_history(inp)
         self.user_input(inp)
-        return inp
+        return self.web_command(inp)
+
+    def web_command(self, inp):
+        """The command loom runs for the browser's input: the web UI's own /phase becomes
+        the /project command it stands for."""
+        words = inp.split()
+        if not words or words[0] != "/phase":
+            return inp
+        if len(words) == 1:
+            return "/project status"
+        try:
+            phase = get_phase(" ".join(words[1:]))
+        except KeyError:
+            names = ", ".join(phase.key for phase in PHASES)
+            self.tool_error(f"There is no phase {' '.join(words[1:])!r}; use one of: {names}.")
+            return ""
+        question = (
+            f"Go back to {phase.title}? It and the phases after it will be run again, so"
+            " their documents are redone."
+        )
+        if not self.confirm_ask(question, default="n"):
+            return ""
+        return f"/project back {phase.key}"
 
     def session_state(self, coder, root, rel_fnames, commands):
         state = dict(
@@ -227,6 +259,9 @@ class WebIO(InputOutput):
             cwd=str(root),
             files=sorted(rel_fnames),
             commands=list_commands(commands),
+            tokens=dict(self.usage),
+            cost=self.cost,
+            **project_state(root),
         )
         if coder:
             model = coder.main_model
@@ -235,8 +270,6 @@ class WebIO(InputOutput):
                 weak_model=model.weak_model.name if model.weak_model else "",
                 edit_format=coder.edit_format,
                 read_only_files=sorted(coder.get_rel_fname(f) for f in coder.abs_read_only_fnames),
-                tokens=dict(sent=coder.total_tokens_sent, received=coder.total_tokens_received),
-                cost=coder.total_cost,
             )
         return state
 
@@ -314,11 +347,23 @@ class WebIO(InputOutput):
                 bypass=bypass,
             )
 
-    def choice_ask(self, question, choices, default=None, yes_choice=None, no_choice=None):
+    def choice_ask(
+        self, question, choices, default=None, yes_choice=None, no_choice=None, checkpoint=None
+    ):
         labels = [(choice, choice.capitalize()) for choice in choices]
-        with self.asking("choice", question, labels, default or choices[0]):
+        kind = "checkpoint" if checkpoint else "choice"
+        with self.asking(kind, question, labels, default or choices[0]):
+            self.pending_ask["checkpoint"] = checkpoint
+            if checkpoint and self.project_watcher:
+                # The phase is waiting for review now
+                self.project_watcher.refresh()
             return super().choice_ask(
-                question, choices, default=default, yes_choice=yes_choice, no_choice=no_choice
+                question,
+                choices,
+                default=default,
+                yes_choice=yes_choice,
+                no_choice=no_choice,
+                checkpoint=checkpoint,
             )
 
     def prompt_ask(self, question, default="", subject=None):
@@ -340,9 +385,13 @@ class WebIO(InputOutput):
         super().tool_error(message, strip)
         self.emit_system("error", plain(message))
 
-    def usage_output(self, report):
-        # The status line shows the tokens
+    def usage_output(self, report, sent=0, received=0, cost=0.0):
+        # The status line shows the tokens, counted across every agent as they're used
         super().tool_output(report, log_only=True)
+        self.usage["sent"] += sent
+        self.usage["received"] += received
+        self.cost += cost
+        self.web.update(tokens=dict(self.usage), cost=self.cost)
 
     def emit_system(self, level, text):
         # InputOutput.__init__ can warn before the session exists
@@ -421,13 +470,19 @@ class WebIO(InputOutput):
             stream.update(message, final=True)
 
 
+# Commands only the web UI has, which web_command() turns into loom's own
+WEB_COMMANDS = [
+    dict(cmd="/phase", desc="Show the project's phases, or go back to one: /phase [PHASE]"),
+]
+
+
 def list_commands(commands):
     """The slash commands, with the first line of their help, for the browser to offer."""
     if not commands:
         return []
-    listed = []
+    listed = list(WEB_COMMANDS)
     for cmd in sorted(commands.get_commands()):
         method = getattr(commands, "cmd_" + cmd[1:].replace("-", "_"), None)
         doc = (method.__doc__ or "").strip().splitlines() if method else []
         listed.append(dict(cmd=cmd, desc=doc[0] if doc else ""))
-    return listed
+    return sorted(listed, key=lambda command: command["cmd"])

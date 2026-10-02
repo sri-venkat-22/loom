@@ -634,6 +634,15 @@ class Orchestrator:
         """Ask the founder what to do with the phase's document. Returns "approve",
         "approve anyway", "edit", "reject" or "send back"."""
         following = next_phase(phase)
+        info = dict(
+            phase=phase.key,
+            title=phase.title,
+            document=phase.document,
+            document_title=phase.document_title,
+            verdict=verdict,
+            next=following.key if following else None,
+            next_title=following.title if following else None,
+        )
         if phase.key == "idea" and verdict == "NO-GO":
             self.io.tool_warning("The Idea Check agent says NO-GO.")
             return self.io.choice_ask(
@@ -641,6 +650,7 @@ class Orchestrator:
                 ["approve anyway", "edit", "reject"],
                 default="reject",
                 yes_choice="reject",
+                checkpoint=info,
             )
 
         if phase.key == "testing" and verdict == "FAIL":
@@ -651,6 +661,7 @@ class Orchestrator:
                     ["send back", "edit", "approve anyway", "reject"],
                     default="send back",
                     no_choice="reject",
+                    checkpoint=info,
                 )
             self.io.tool_warning(f"The tests still fail after {rounds} rounds of fixes.")
             return self.io.choice_ask(
@@ -658,13 +669,14 @@ class Orchestrator:
                 ["approve anyway", "edit", "send back", "reject"],
                 default="reject",
                 yes_choice="reject",
+                checkpoint=info,
             )
 
         if following:
             question = f"Approve the {phase.document_title} and move on to {following.title}?"
         else:
             question = f"Approve the {phase.document_title} and finish the project?"
-        return self.io.choice_ask(question, ["approve", "edit", "reject"])
+        return self.io.choice_ask(question, ["approve", "edit", "reject"], checkpoint=info)
 
     def edit_document(self, phase):
         """Open the phase's document in the founder's editor, and save their changes.

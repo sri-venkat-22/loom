@@ -33,7 +33,9 @@ class WebSession:
             commands=[],
             tokens=dict(sent=0, received=0),
             cost=0.0,
+            project=None,
             phase=None,
+            phases=[],
             busy=False,
         )
         self.history = []
@@ -205,10 +207,20 @@ class WebSession:
             self.update(busy=False)
             self.emit("turn_end", turn_id=turn_id, status=status)
 
-    def ask(self, kind, question, choices=(), default="", subject=None, tool_id=None):
+    def ask(
+        self,
+        kind,
+        question,
+        choices=(),
+        default="",
+        subject=None,
+        tool_id=None,
+        checkpoint=None,
+    ):
         """Ask the browser a question and wait for its answer: one of the choices' values,
-        or free text for a prompt. subject is what it's about, like a command to run, and
-        tool_id the card of the tool call that needs the answer."""
+        or free text for a prompt. subject is what it's about, like a command to run,
+        tool_id the card of the tool call that needs the answer, and checkpoint the
+        project phase a checkpoint reviews."""
         ask_id = self.next_id("a")
         answers = queue.Queue(maxsize=1)
         with self.lock:
@@ -222,6 +234,7 @@ class WebSession:
             default=default,
             subject=subject,
             tool_id=tool_id,
+            checkpoint=checkpoint,
         )
         value = None
         try:

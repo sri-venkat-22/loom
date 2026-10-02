@@ -6,8 +6,12 @@ of this list is loom/web/frontend/src/lib/protocol.ts, and a test checks the two
 Server to browser:
 
   session        {version, model, weak_model, edit_format, cwd, files, read_only_files,
-                  commands: [{cmd, desc}], tokens: {sent, received}, cost, phase, busy}
+                  commands: [{cmd, desc}], tokens: {sent, received}, cost, project,
+                  phase, phases: [{key, title, status}], busy}
                  The current state. Sent first on every connection and again when it changes.
+                 project is the /project idea (null without one), phase the key of the
+                 phase it's in (null when there's none or it's complete), and each phase's
+                 status pending, running, review or approved.
   user           {text}                     A message the user sent, as loom received it.
   turn_start     {turn_id}                  loom started working on the user's message.
   turn_end       {turn_id, status}          It stopped: status is done or cancelled.
@@ -26,10 +30,12 @@ Server to browser:
                  A unified diff, on tool_id's card if it has one. kind is add, del, ctx,
                  gap (between hunks) or note; old and new are line numbers or null.
   ask            {ask_id, kind, question, choices: [{value, label}], default, subject,
-                  tool_id}
-                 loom waits for an answer. kind is confirm, permission, choice or prompt;
-                 a prompt's answer is free text and default prefills it. subject is what
-                 it's about, like a command, and tool_id the card it belongs on.
+                  tool_id, checkpoint}
+                 loom waits for an answer. kind is confirm, permission, choice, checkpoint
+                 or prompt; a prompt's answer is free text and default prefills it.
+                 subject is what it's about, like a command, and tool_id the card it
+                 belongs on. A checkpoint reviews a /project phase, and checkpoint is
+                 {phase, title, document, document_title, verdict, next, next_title}.
   ask_resolved   {ask_id, value}            The question was answered.
 
 Browser to server:
@@ -67,7 +73,8 @@ CLIENT_EVENTS = (
 )
 
 LEVELS = ("info", "warning", "error")
-ASK_KINDS = ("confirm", "permission", "choice", "prompt")
+ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "prompt")
+PHASE_STATUSES = ("pending", "running", "review", "approved")
 TURN_STATUSES = ("done", "cancelled")
 TOOL_STATUSES = ("done", "failed")
 DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")

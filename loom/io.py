@@ -1136,11 +1136,16 @@ class InputOutput:
 
     @pause_esc
     @restore_multiline
-    def choice_ask(self, question, choices, default=None, yes_choice=None, no_choice=None):
+    def choice_ask(
+        self, question, choices, default=None, yes_choice=None, no_choice=None, checkpoint=None
+    ):
         """Ask the user to pick one of choices, like ["approve", "edit", "reject"], whose
         first letters must differ. Any prefix of a choice picks it, and Enter picks default
         (the first choice if None). With --yes-always the answer is yes_choice (default if
-        None), and with --no it's no_choice (the last choice if None)."""
+        None), and with --no it's no_choice (the last choice if None).
+
+        checkpoint describes the project phase being reviewed, when the question is a
+        /project checkpoint, for UIs that show those differently."""
         default = default or choices[0]
         self.num_user_asks += 1
         self.ring_bell()
@@ -1287,8 +1292,9 @@ class InputOutput:
         """The agent's tool call finished, and result is what the model gets back. The
         terminal has already shown it compactly, with tool_result."""
 
-    def usage_output(self, report):
-        """Show the tokens and cost of a request."""
+    def usage_output(self, report, sent=0, received=0, cost=0.0):
+        """Show the tokens and cost of a request: report says them, and sent, received and
+        cost are the numbers, for UIs that add them up."""
         self.tool_output(report)
 
     def todo_output(self, todos):
