@@ -1,5 +1,16 @@
 # Release history
 
+### main branch
+
+- `/project new IDEA` takes an idea through six phases, each run by its own agent with
+  its own prompt, a limited tool set and a document it produces: Idea Check (idea
+  report), Planning (PRD), Design (architecture document), Building (the code, written by
+  the coding agent), Testing (test report) and Launch (deployment files and document).
+  You approve each document before the next phase starts, or send feedback to redo it.
+  A NO-GO idea verdict stops the project, and a failing test report goes back to the
+  Building agent. The project's state is saved in `.loom/project.json`; `/project run`,
+  `status`, `approve`, `redo` and `back` drive it. See `loom/docs/project.md`.
+
 ### Loom v0.88.0
 
 - Loom now works as an agent by default when the model supports tool calling. The model
