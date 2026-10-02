@@ -334,6 +334,29 @@ def check_streamlit_install(io):
     )
 
 
+def check_web_install(io):
+    return utils.check_pip_install_extra(
+        io,
+        "uvicorn",
+        "loom --web needs a web server, from loom's web extra.",
+        utils.loom_extra("web"),
+    )
+
+
+def start_web(io, args):
+    """Serve the web UI and hand the chat to the browser. Returns False if it can't."""
+    from loom.web.backend.server import ServerError, start_server
+
+    try:
+        url = start_server(io.web, port=args.port, open_browser=args.browser)
+    except ServerError as err:
+        io.tool_error(str(err))
+        return False
+    io.tool_output(f"loom is running at {url}")
+    io.tool_output("Chat in your browser. Press ^C twice here to stop loom.")
+    return True
+
+
 def write_streamlit_credentials():
     from streamlit.file_util import get_streamlit_file_path
 
@@ -693,8 +716,15 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     editing_mode = EditingMode.VI if args.vim else EditingMode.EMACS
 
+    if args.web:
+        from loom.web.backend.webio import WebIO
+
+        io_class = WebIO
+    else:
+        io_class = InputOutput
+
     def get_io(pretty):
-        return InputOutput(
+        return io_class(
             pretty,
             args.yes_always,
             args.input_history_file,
@@ -807,6 +837,14 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         analytics.enable()
 
     analytics.event("launched")
+
+    if args.web and args.gui:
+        io.tool_error("--web can't be used with --gui.")
+        return 1
+
+    if args.web and not return_coder and not check_web_install(io):
+        analytics.event("exit", reason="Web server not installed")
+        return 1
 
     if args.gui and not return_coder:
         if not check_streamlit_install(io):
@@ -1370,7 +1408,13 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         analytics.event("exit", reason="Exit flag set")
         return
 
-    analytics.event("cli session", main_model=main_model, edit_format=main_model.edit_format)
+    if args.web:
+        if not start_web(io, args):
+            analytics.event("exit", reason="Web server didn't start")
+            return 1
+        analytics.event("web session", main_model=main_model, edit_format=main_model.edit_format)
+    else:
+        analytics.event("cli session", main_model=main_model, edit_format=main_model.edit_format)
 
     while True:
         try:

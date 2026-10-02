@@ -37,7 +37,7 @@ grep -Ev '^(tree-sitter|numpy|scipy)=' tmp.requirements.txt \
     > requirements.txt
 
 # Compile additional requirements files
-SUFFIXES=(dev help browser playwright memory)
+SUFFIXES=(dev help browser playwright memory web)
 
 for SUFFIX in "${SUFFIXES[@]}"; do
     uv pip compile \

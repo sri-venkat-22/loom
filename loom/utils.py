@@ -235,7 +235,7 @@ LOOM_GIT_URL = "git+https://github.com/sri-venkat-22/loom.git"
 
 def loom_extra(extra):
     """
-    Pip requirements for one of loom's optional extras (help, browser, playwright, memory).
+    Pip requirements for one of loom's optional extras (help, browser, playwright, memory, web).
 
     loom is not published on PyPI (the "loom" name there is an unrelated project), so
     `pip install loom[extra]` must never be used. Install the extra's own dependencies,

@@ -63,8 +63,8 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--check-update | --no-check-update]
             [--show-release-notes | --no-show-release-notes]
             [--install-main-branch] [--upgrade] [--version]
-            [--message] [--message-file]
-            [--gui | --no-gui | --browser | --no-browser]
+            [--message] [--message-file] [--gui | --no-gui] [--web]
+            [--port] [--browser | --no-browser]
             [--copy-paste | --no-copy-paste] [--apply]
             [--apply-clipboard-edits] [--exit] [--show-repo-map]
             [--show-prompts] [--voice-format] [--voice-language]
@@ -694,12 +694,28 @@ Aliases:
   - `-f MESSAGE_FILE`
 
 ### `--gui`
-Run loom in your browser (default: False)  
+Run loom's older Streamlit GUI in your browser (default: False)  
 Default: False  
 Environment variable: `LOOM_GUI`  
 Aliases:
   - `--gui`
   - `--no-gui`
+
+### `--web`
+Chat with loom in your browser, served on 127.0.0.1 (default: False)  
+Default: False  
+Environment variable: `LOOM_WEB`  
+
+### `--port PORT`
+Port for --web to listen on (default: 8765)  
+Default: 8765  
+Environment variable: `LOOM_PORT`  
+
+### `--browser`
+Open the web UI in your browser when --web starts (default: True)  
+Default: True  
+Environment variable: `LOOM_BROWSER`  
+Aliases:
   - `--browser`
   - `--no-browser`
 
