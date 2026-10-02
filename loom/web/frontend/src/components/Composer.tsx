@@ -5,6 +5,7 @@ import { LOCAL_COMMANDS, runLocal } from "../lib/localCommands";
 import type { Command } from "../lib/protocol";
 import { send } from "../lib/socket";
 import { useSession } from "../store/session";
+import { useUi } from "../store/ui";
 import { SlashMenu, matchingCommands } from "./SlashMenu";
 
 const MAX_HEIGHT = 240;
@@ -41,6 +42,14 @@ export function Composer() {
   useEffect(() => {
     if (!busy) input.current?.focus();
   }, [busy]);
+
+  // ⌘K: every command, in the menu above the input
+  const paletteRequests = useUi((state) => state.paletteRequests);
+  useEffect(() => {
+    if (!paletteRequests) return;
+    change("/");
+    input.current?.focus();
+  }, [paletteRequests]);
 
   function change(value: string) {
     setText(value);

@@ -52,6 +52,7 @@ loom. Put project rules the model should always follow in a `LOOM.md` file.
 
 - [agent.md](agent.md): the agent, its tools, permissions, and `LOOM.md` project memory
 - [project.md](project.md): `/project` takes an idea through six phase agents, from idea check to launch, with approval checkpoints and a shared project memory
+- [web.md](web.md): `loom --web`, chatting with loom in your browser
 - [sessions.md](sessions.md): continuing conversations with `--continue`, and long ones
 - [mcp.md](mcp.md): giving the agent tools from MCP servers
 - [custom-commands.md](custom-commands.md): your own `/commands` from Markdown files

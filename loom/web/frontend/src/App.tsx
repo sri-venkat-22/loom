@@ -11,13 +11,19 @@ import { useSession } from "./store/session";
 import { useUi } from "./store/ui";
 
 export function App() {
-  // Esc stops loom's current work, like in the terminal
+  // Esc stops loom's current work, like in the terminal; ⌘B shows the side pane and ⌘K
+  // the commands
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === "b") {
         event.preventDefault();
         useUi.getState().togglePane();
+        return;
+      }
+      if (mod && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        useUi.getState().openPalette();
         return;
       }
       if (event.key === "Escape") {

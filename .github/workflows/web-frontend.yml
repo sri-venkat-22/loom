@@ -1,0 +1,45 @@
+name: Web Frontend
+
+# Checks that loom --web's frontend (loom/web/frontend) is formatted and builds.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'loom/web/frontend/**'
+      - '.github/workflows/web-frontend.yml'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'loom/web/frontend/**'
+      - '.github/workflows/web-frontend.yml'
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: loom/web/frontend
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: loom/web/frontend/package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Check formatting
+      run: npm run format:check
+
+    - name: Type-check and build
+      run: npm run build
