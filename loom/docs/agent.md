@@ -6,7 +6,7 @@ the project, edits files and runs commands itself, in a loop, until the job is d
 ```
 agent> fix the failing test
 ● Bash(python -m pytest -q)
-Run this command? (Y)es/(N)o/(A)lways: always allow this command (saved to .loom.permissions.json) [Yes]: a
+Run this command? (Y)es/(N)o/(A)lways: always allow this command (saved to .loom.permissions.json)/(B)ypass permissions: stop asking for the rest of this session [Yes]: a
   ⎿  FAILED tests/test_stats.py::test_mean - assert 2.0 == 2.5
      1 failed, 1 passed in 0.02s
      Exit code: 1
@@ -15,15 +15,16 @@ Run this command? (Y)es/(N)o/(A)lways: always allow this command (saved to .loom
 ● Read(mathutils/stats.py)
   ⎿  Read 9 lines
 ● Update(mathutils/stats.py)
-     3   def mean(values):
-     4 -     return sum(values) / (len(values) + 1)
-     4 +     return sum(values) / len(values)
-Edit mathutils/stats.py? (Y)es/(N)o/(A)lways: accept all edits this session [Yes]: y
+mathutils/stats.py: 1 addition and 1 removal
+Edit mathutils/stats.py? (Y)es/(N)o/(A)lways: accept all edits this session/(B)ypass permissions: stop asking for the rest of this session [Yes]: y
   ⎿  Updated mathutils/stats.py with 1 addition and 1 removal
 ● Bash(python -m pytest -q)
   ⎿  2 passed in 0.01s
 The mean divided by len(values) + 1; it now divides by len(values) and the tests pass.
 ```
+
+Edits show the file and how many lines are added and removed. Use `--agent-diffs` to see
+the full diff instead.
 
 There's no need to `/add` files: the agent finds and reads what it needs. Files you do
 add are shown to it in full, and files added with `/read-only` can't be edited.
@@ -148,7 +149,7 @@ Reading and searching inside the project never asks. Edits and shell commands as
 showing the diff or the command:
 
 ```
-Run this command? (Y)es/(N)o/(A)lways: always allow this command [Yes]:
+Run this command? (Y)es/(N)o/(A)lways: always allow this command/(B)ypass permissions: stop asking for the rest of this session [Yes]:
 ```
 
 - **Yes** runs it once.
@@ -156,6 +157,8 @@ Run this command? (Y)es/(N)o/(A)lways: always allow this command [Yes]:
 - **Always** for a command allows that exact command from now on, saved in
   `.loom.permissions.json` in the project root (git-ignored along with the other
   `.loom*` files). For an edit it switches to accept-edits mode for the session.
+- **Bypass permissions** allows this action and switches to bypass mode: nothing asks
+  again for the rest of the session.
 
 Reading files outside the project also asks, and edits outside the project ask even in
 accept-edits mode.
@@ -171,6 +174,10 @@ Shift-Tab at the prompt to cycle through them. The prompt shows the mode, like
   ask.
 - **plan**: read-only. Edits and commands are refused, and the agent is told to research
   and reply with a plan instead. Switch to another mode to carry the plan out.
+- **bypass**: everything runs without asking: edits anywhere (protected files such as
+  `.git/` and `.loom*` included), commands, MCP tools, and loom's other yes/no questions,
+  which are answered yes. Shift-Tab doesn't cycle into it; answer (B)ypass to a question,
+  use `--permission-mode bypass` or `/permissions bypass`, and `/permissions ask` to leave.
 
 ### Allow rules
 

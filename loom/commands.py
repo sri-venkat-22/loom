@@ -1330,10 +1330,10 @@ class Commands:
         return self._generic_chat_command(args, "agent")
 
     def completions_permissions(self):
-        return ["ask", "accept-edits", "plan", "allow"]
+        return ["ask", "accept-edits", "plan", "bypass", "allow"]
 
     def cmd_permissions(self, args):
-        "Show what the agent may do without asking, switch mode (ask, accept-edits, plan) or add an allow rule (allow RULE)"  # noqa
+        "Show what the agent may do without asking, switch mode (ask, accept-edits, plan, bypass) or add an allow rule (allow RULE)"  # noqa
         from loom.permissions import MODES, Rule
 
         permissions = self.coder.permissions

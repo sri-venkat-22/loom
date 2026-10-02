@@ -300,6 +300,10 @@ class InputOutput:
     clipboard_watcher = None
     bell_on_next_input = False
     notifications_command = None
+    # Set by Permissions in bypass mode: every yes/no question is answered yes
+    bypass_permissions = False
+    # Show full diffs of the agent's edits, instead of the file and its line counts
+    agent_diffs = False
 
     def __init__(
         self,
@@ -951,6 +955,11 @@ class InputOutput:
 
         if question_id in self.never_prompts:
             return False
+        if self.bypass_permissions:
+            self.append_chat_history(
+                f"{question.strip()} y (bypass)", linebreak=True, blockquote=True
+            )
+            return True
         question = sanitize_for_display(question, show_escapes=True)
         if subject:
             subject = sanitize_for_display(subject, show_escapes=True)
@@ -1058,12 +1067,20 @@ class InputOutput:
 
     @pause_esc
     @restore_multiline
-    def permission_ask(self, question, subject=None, always=None, explicit_yes_required=False):
-        """Ask the user to approve an agent action. Returns "yes", "no" or "always".
+    def permission_ask(
+        self, question, subject=None, always=None, explicit_yes_required=False, bypass=None
+    ):
+        """Ask the user to approve an agent action. Returns "yes", "no", "always" or "bypass".
 
-        always labels the (A)lways option, which is only offered when it's given.
-        With --yes-always the answer is "yes", unless explicit_yes_required.
+        always labels the (A)lways option and bypass the (B)ypass permissions option; each is
+        only offered when it's given. With --yes-always the answer is "yes", unless
+        explicit_yes_required. In bypass mode it's "yes" without asking.
         """
+        if self.bypass_permissions:
+            self.append_chat_history(
+                f"{question.strip()} yes (bypass)", linebreak=True, blockquote=True
+            )
+            return "yes"
         self.num_user_asks += 1
         self.ring_bell()
         # What the user approves has to be shown as it is
@@ -1076,6 +1093,9 @@ class InputOutput:
         if always:
             choices.append("always")
             options += f"/(A)lways: {always}"
+        if bypass:
+            choices.append("bypass")
+            options += f"/(B)ypass permissions: {bypass}"
         question += options + " [Yes]: "
 
         if subject:

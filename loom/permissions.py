@@ -5,6 +5,8 @@ Modes:
 - ask: reads inside the project run freely; edits and shell commands ask first.
 - accept-edits: edits inside the project also run freely; shell commands still ask.
 - plan: read-only. Edits and shell commands are refused, so the agent can only plan.
+- bypass: everything runs without asking, protected files and loom's other questions
+  included. Answering (B)ypass to any approval question turns it on for the session.
 
 Allow rules skip the question for matching actions in ask and accept-edits mode:
   bash(pytest*)         shell commands matching a pattern (* matches anything)
@@ -50,7 +52,11 @@ MODES = {
     "ask": "edits and shell commands need approval",
     "accept-edits": "edits are applied without asking, shell commands need approval",
     "plan": "read-only, edits and shell commands are refused",
+    "bypass": "everything runs without asking",
 }
+
+# The modes Shift-Tab cycles through; bypass is only chosen on purpose
+CYCLED_MODES = ("ask", "accept-edits", "plan")
 
 KINDS = ("read", "edit", "bash", "mcp")
 
@@ -300,6 +306,16 @@ class Permissions:
         # None until the user is asked about the pending rules
         self.project_approved = None
 
+    @property
+    def mode(self):
+        return self._mode
+
+    @mode.setter
+    def mode(self, mode):
+        self._mode = mode
+        # In bypass mode loom's other yes/no questions don't ask either
+        self.io.bypass_permissions = mode == "bypass"
+
     def add_rule(self, rule, source):
         if rule not in [r for r, _ in self.rules]:
             self.rules.append((rule, source))
@@ -424,8 +440,8 @@ class Permissions:
     def decide(self, action, hook_allowed=False):
         """Returns "allow", "ask" or "deny" for an action, without asking anyone.
         hook_allowed means a PreToolUse hook approved it, which works like an allow rule."""
-        if action.kind == "todo":
-            # Only changes loom's own to-do list
+        if action.kind == "todo" or self.mode == "bypass":
+            # Only changes loom's own to-do list, or the user said to stop asking
             return "allow"
         if action.kind == "read":
             if action.inside or hook_allowed or self.is_allowed(action):
@@ -490,7 +506,10 @@ class Permissions:
             question = "Run this command?"
             always = f"always allow this command (saved to {SETTINGS_FILE})"
 
-        if action.kind in ("edit", "mcp"):
+        if action.kind == "edit":
+            # The diff only when asked for; otherwise the file and how many lines change
+            subject = action.preview if self.io.agent_diffs else action.changes or action.preview
+        elif action.kind == "mcp":
             subject = action.preview
         elif "\n" in action.target or len(action.target) > 60:
             # Too long for the one-line summary of the call shown before the question
@@ -503,8 +522,16 @@ class Permissions:
             subject=subject,
             always=always,
             explicit_yes_required=explicit,
+            bypass="stop asking for the rest of this session",
         )
 
+        if answer == "bypass":
+            self.mode = "bypass"
+            self.io.tool_warning(
+                "Bypassing permissions: edits, commands and everything else run without asking"
+                " for the rest of this session. Use /permissions ask to go back."
+            )
+            return "allow", ""
         if answer == "always":
             if action.kind == "edit":
                 self.mode = "accept-edits"
@@ -536,8 +563,11 @@ class Permissions:
 
     def cycle_mode(self):
         """Switch to the next mode: ask, accept-edits, plan, then ask again."""
-        modes = list(MODES)
-        self.mode = modes[(modes.index(self.mode) + 1) % len(modes)]
+        if self.mode not in CYCLED_MODES:
+            self.mode = CYCLED_MODES[0]
+        else:
+            index = CYCLED_MODES.index(self.mode)
+            self.mode = CYCLED_MODES[(index + 1) % len(CYCLED_MODES)]
         return self.mode
 
     def describe(self):

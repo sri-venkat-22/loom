@@ -78,6 +78,8 @@ class Action:
     detail: str = ""
     # One line about the outcome, like "Read 120 lines", set by run()
     summary: str = ""
+    # For edits: the file and how many lines change, shown instead of the diff
+    changes: str = ""
 
 
 # Paths
@@ -538,6 +540,7 @@ def edit_file(coder, path, old_string, new_string, replace_all=False):
         name="Update",
         detail=name,
         summary=f"Updated {name} with {changes}",
+        changes=f"{name}: {changes}",
     )
 
 
@@ -558,8 +561,10 @@ def write_file(coder, path, content):
 
     num_lines = len(content.splitlines())
     if exists:
-        summary = f"Rewrote {name} with {describe_changes(*count_changes(before, content))}"
+        changes = describe_changes(*count_changes(before, content))
+        summary = f"Rewrote {name} with {changes}"
     else:
+        changes = f"new file, {plural(num_lines, 'line')}"
         summary = f"Wrote {plural(num_lines, 'line')} to {name}"
     return Action(
         "edit",
@@ -573,6 +578,7 @@ def write_file(coder, path, content):
         name="Write",
         detail=name,
         summary=summary,
+        changes=f"{name}: {changes}",
     )
 
 

@@ -38,7 +38,7 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/multiline-mode` | Toggle multiline mode (swaps behavior of Enter and Meta+Enter) |
 | `/ok` | Alias for `/code Ok, please go ahead and make those changes.` (any args are appended) |
 | `/paste` | Paste image/text from the clipboard into the chat. Optionally provide a name for the image. |
-| `/permissions` | Show what the agent may do without asking, switch mode (ask, accept-edits, plan) or add an allow rule (allow RULE) |
+| `/permissions` | Show what the agent may do without asking, switch mode (ask, accept-edits, plan, bypass) or add an allow rule (allow RULE) |
 | `/project` | Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, redo [FEEDBACK], back PHASE [FEEDBACK], reset |
 | `/quit` | Exit the application |
 | `/read-only` | Add files to the chat that are for reference only, or turn added files to read-only |

@@ -54,9 +54,10 @@ SCRIPT = [
 ]
 
 
-def run_script(mode, script=SCRIPT):
+def run_script(mode, script=SCRIPT, agent_diffs=False):
     """Run a scripted request, returning the coder, the fake model and what was printed."""
     io = InputOutput(yes=True, pretty=False)
+    io.agent_diffs = agent_diffs
     permissions = Permissions(io, mode=mode, allow=[f"bash({sys.executable} -m pytest*)"])
     coder = make_coder(io, permissions)
     llm = FakeLLM(*script)
@@ -81,8 +82,6 @@ class TestCompactDisplay(unittest.TestCase):
                 "  ⎿  Read 2 lines",
                 "● Update(calc.py)",
                 "  ⎿  Updated calc.py with 1 addition and 1 removal",
-                "     2 -     return a - b",
-                "     2 +     return a + b",
                 "● Bash(",
                 "1 passed",
                 "● Read(nope.py)",
@@ -90,6 +89,8 @@ class TestCompactDisplay(unittest.TestCase):
             ]:
                 self.assertIn(expected, out)
 
+            # Edits show their line counts, not the diff
+            self.assertNotIn("return a + b", out)
             # Only the end of a command's output is shown, and no exit code when it passed
             self.assertNotIn("Exit code: 0", out)
             # The model still gets the full results
@@ -99,11 +100,26 @@ class TestCompactDisplay(unittest.TestCase):
     def test_each_edit_shows_its_diff_once(self):
         with GitTemporaryDirectory():
             make_repo()
-            # In ask mode the diff is shown with the question, and not again afterwards
-            _coder, _llm, out = run_script("ask")
+            # With --agent-diffs, in accept-edits mode the diff is shown after the edit
+            _coder, _llm, out = run_script("accept-edits", agent_diffs=True)
+            self.assertIn("     2 -     return a - b", out)
+            self.assertIn("     2 +     return a + b", out)
+
+        with GitTemporaryDirectory():
+            make_repo()
+            # In ask mode it's shown with the question, and not again afterwards
+            _coder, _llm, out = run_script("ask", agent_diffs=True)
             self.assertEqual(out.count("return a + b"), 1)
             self.assertIn("Edit calc.py?", out)
             self.assertIn("  ⎿  Updated calc.py with 1 addition and 1 removal", out)
+
+    def test_edit_questions_show_line_counts_by_default(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            _coder, _llm, out = run_script("ask")
+            self.assertIn("calc.py: 1 addition and 1 removal", out)
+            self.assertIn("Edit calc.py?", out)
+            self.assertNotIn("return a + b", out)
 
     def test_failed_command_shows_the_exit_code(self):
         with GitTemporaryDirectory():

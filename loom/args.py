@@ -557,11 +557,21 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--permission-mode",
-        choices=["ask", "accept-edits", "plan"],
+        choices=["ask", "accept-edits", "plan", "bypass"],
         default="ask",
         help=(
             "What the agent may do without asking: ask (reads only), accept-edits (reads and"
-            " edits) or plan (reads only, and it can't edit or run commands) (default: ask)"
+            " edits), plan (reads only, and it can't edit or run commands) or bypass"
+            " (everything, and loom never asks) (default: ask)"
+        ),
+    )
+    group.add_argument(
+        "--agent-diffs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Show the full diff of each agent edit, instead of the file and how many lines"
+            " changed (default: False)"
         ),
     )
     group.add_argument(
