@@ -39,7 +39,7 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/ok` | Alias for `/code Ok, please go ahead and make those changes.` (any args are appended) |
 | `/paste` | Paste image/text from the clipboard into the chat. Optionally provide a name for the image. |
 | `/permissions` | Show what the agent may do without asking, switch mode (ask, accept-edits, plan, bypass) or add an allow rule (allow RULE) |
-| `/project` | Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, reset |
+| `/project` | Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], reset |
 | `/quit` | Exit the application |
 | `/read-only` | Add files to the chat that are for reference only, or turn added files to read-only |
 | `/reasoning-effort` | Set the reasoning effort level (values: number or low/medium/high depending on model) |

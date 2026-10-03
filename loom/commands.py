@@ -1,6 +1,7 @@
 import glob
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,7 @@ PROJECT_SUBCOMMANDS = (
     "decisions",
     "recall",
     "memory",
+    "report",
     "reset",
 )
 
@@ -1465,7 +1467,7 @@ class Commands:
         return list(PROJECT_SUBCOMMANDS) + [phase.key for phase in PHASES]
 
     def cmd_project(self, args):
-        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, reset"  # noqa
+        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], reset"  # noqa
         from loom.orchestrator import Orchestrator, TransitionError
 
         words = args.strip().split(maxsplit=1)
@@ -1547,6 +1549,8 @@ class Commands:
                 orchestrator.show_recall(rest)
             elif sub == "memory":
                 orchestrator.show_memory()
+            elif sub == "report":
+                self.project_report(orchestrator, rest)
             elif sub == "reset":
                 if self.io.confirm_ask(
                     (
@@ -1559,6 +1563,50 @@ class Commands:
                     self.io.tool_output("The project was reset.")
         except TransitionError as err:
             self.io.tool_error(str(err))
+
+    def project_report(self, orchestrator, args):
+        """/project report [md|html|docx|pdf] [--out FILE] [--summary]"""
+        from loom.project_report import DEFAULT_FORMAT, FORMATS, ReportError
+
+        usage = "/project report [md|html|docx|pdf] [--out FILE] [--summary]"
+        try:
+            # Backslashes are path separators on Windows, not escapes
+            words = shlex.split(args, posix=os.name != "nt")
+        except ValueError as err:
+            self.io.tool_error(f"{err}: {usage}")
+            return
+        words = [word.strip('"') for word in words]
+        fmt = out = None
+        summary = False
+        while words:
+            word = words.pop(0)
+            if word == "--summary":
+                summary = True
+            elif word in ("--out", "-o") and words:
+                out = words.pop(0)
+            elif word.startswith("--out="):
+                out = word[len("--out=") :]
+            elif word.lower() in FORMATS and not fmt:
+                fmt = word.lower()
+            else:
+                self.io.tool_error(f"Unexpected {word!r}: {usage}")
+                return
+        suffix = Path(out).suffix[1:].lower() if out else ""
+        fmt = fmt or (suffix if suffix in FORMATS else DEFAULT_FORMAT)
+
+        try:
+            paths = orchestrator.write_report(fmt, out, summary)
+        except (ReportError, OSError) as err:
+            self.io.tool_error(f"Unable to write the report: {err}")
+            return
+        for path in paths:
+            try:
+                shown = Path(path).resolve().relative_to(Path(self.coder.root).resolve())
+            except ValueError:
+                shown = path
+            self.io.tool_output(f"Wrote the project report to {Path(shown).as_posix()}")
+        if fmt == "md" and not out:
+            self.io.tool_output("Use /project report html, docx or pdf for other formats.")
 
     def cmd_ok(self, args):
         "Alias for `/code Ok, please go ahead and make those changes.` (any args are appended)"
