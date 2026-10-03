@@ -195,6 +195,31 @@ DIFF = """--- a/calc.py
 ... (3 more diff lines)"""
 
 
+class TestPermissionMode(unittest.TestCase):
+    def test_set_mode_switches_the_coders_permissions(self):
+        io, session = make_io()
+
+        class Permissions:
+            mode = "ask"
+
+        class Coder:
+            permissions = Permissions()
+
+        coder = Coder()
+        self.assertTrue(io.set_mode(coder, "accept-edits"))
+        self.assertEqual(coder.permissions.mode, "accept-edits")
+        self.assertEqual(session.snapshot["permission_mode"], "accept-edits")
+        self.assertFalse(io.set_mode(coder, "anything"))
+        self.assertEqual(coder.permissions.mode, "accept-edits")
+        # Coders without permissions, like the ones that edit by diff, have no modes
+        self.assertFalse(io.set_mode(object(), "plan"))
+
+    def test_no_branch_outside_a_repo(self):
+        io, session = make_io()
+        self.assertIsNone(io.current_branch())
+        self.assertIsNone(session.snapshot["branch"])
+
+
 class TestToolCards(unittest.TestCase):
     def test_a_tool_call_is_a_card(self):
         io, session = make_io()

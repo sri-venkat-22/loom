@@ -15,11 +15,12 @@ monaco.editor.defineTheme("loom-dark", {
   inherit: true,
   rules: [],
   colors: {
-    "editor.background": "#1a1a1a",
-    "editor.foreground": "#e5e5e5",
-    "editorLineNumber.foreground": "#5a5a5a",
+    // The side pane's background
+    "editor.background": "#171717",
+    "editor.foreground": "#d4d4d4",
+    "editorLineNumber.foreground": "#4a4846",
     "editorLineNumber.activeForeground": "#8a8a8a",
-    "editor.lineHighlightBackground": "#1a1a1a",
+    "editor.lineHighlightBackground": "#171717",
     "editor.selectionBackground": "#d977574d",
     "editorCursor.foreground": "#d97757",
     "editorWidget.border": "#2a2a2a",

@@ -7,28 +7,24 @@ export function shortModel(name: string) {
   return short;
 }
 
+// Under the input: whether loom is ready, the tokens used, and the main shortcuts
 export function StatusLine() {
   const connection = useSession((state) => state.connection);
-  const session = useSession((state) => state.session);
+  const busy = useSession((state) => state.session?.busy ?? false);
+  const tokens = useSession((state) =>
+    state.session ? state.session.tokens.sent + state.session.tokens.received : 0,
+  );
 
   let status: string = connection;
-  if (connection === "open") status = session?.busy ? "working" : "ready";
+  if (connection === "open") status = busy ? "working" : "ready";
   else if (connection === "closed") status = "disconnected";
 
-  const tokens = session ? session.tokens.sent + session.tokens.received : 0;
-
   return (
-    <footer className="mx-auto flex w-full max-w-[868px] shrink-0 gap-x-5 whitespace-nowrap px-5 pb-[23px] pt-3 text-[13px] text-muted-foreground">
+    <div className="flex gap-3.5 overflow-hidden whitespace-nowrap px-1.5 pt-2 text-[12px] text-dim">
       <span className={connection === "closed" ? "text-destructive" : undefined}>{status}</span>
-      {session?.model && <span title={session.model}>{shortModel(session.model)}</span>}
       <span>{tokens.toLocaleString()} tokens</span>
-      {session?.cwd && (
-        // Long paths lose their start, keeping the project's own name in view
-        <span className="min-w-0 truncate [direction:rtl]" title={session.cwd}>
-          &lrm;{session.cwd}&lrm;
-        </span>
-      )}
-      {session?.phase && <span className="text-primary">{session.phase}</span>}
-    </footer>
+      <span>⌘K commands</span>
+      <span>⌘B side pane</span>
+    </div>
   );
 }

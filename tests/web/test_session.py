@@ -146,6 +146,19 @@ class TestBrowserMessages(unittest.TestCase):
             session.wait_for_input()
 
 
+class TestMode(unittest.TestCase):
+    def test_mode_messages_go_to_set_mode(self):
+        session = WebSession(interrupt=Interrupts())
+        # Before loom has a coder there's nothing to switch
+        self.assertFalse(session.handle(dict(type="mode", mode="plan")))
+
+        modes = []
+        session.set_mode = lambda mode: modes.append(mode) or True
+        self.assertTrue(session.handle(dict(type="mode", mode="plan")))
+        self.assertFalse(session.handle(dict(type="mode", mode=3)))
+        self.assertEqual(modes, ["plan"])
+
+
 class TestCancel(unittest.TestCase):
     def test_cancel_interrupts_only_a_busy_session(self):
         interrupts = Interrupts()

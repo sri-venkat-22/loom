@@ -8,9 +8,14 @@ from fastapi import APIRouter, HTTPException
 
 from loom.memory import ProjectDB, ProjectMemory, ProjectMemoryError
 from loom.models import MODEL_ALIASES
+from loom.phases import PHASES
 from loom.sessions import list_sessions
 
 from .changes import branch_base, changes
+
+# The /project documents, which can be read as soon as a phase writes them, before loom's
+# own list of the project's files includes them
+DOCUMENTS = {phase.document for phase in PHASES}
 
 # Largest file the viewer opens
 MAX_FILE_BYTES = 1_000_000
@@ -38,7 +43,7 @@ def make_router(io):
         """The text of one of the project's files."""
         base = root().resolve()
         known = set(io.files["files"]) | set(io.files["chat"]) | set(io.files["read_only"])
-        if path not in known:
+        if path not in known | DOCUMENTS:
             raise HTTPException(404, f"{path} isn't one of the project's files")
         full = (base / path).resolve()
         try:

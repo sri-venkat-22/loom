@@ -30,27 +30,42 @@ install it.
 
 ## Chatting
 
-Type in the input at the bottom. ⌘↵ or ↵ sends, and Shift-↵ starts a new line. Replies
-stream in as the model writes them, formatted as Markdown with highlighted code blocks;
-the model's thinking folds into a line you can open.
+Type in the input at the bottom. ⌘↵ or ↵ sends, and Shift-↵ starts a new line. A new
+conversation offers a few things to ask. Replies stream in as the model writes them,
+formatted as Markdown with highlighted code blocks; the model's thinking folds into a
+line you can open.
 
 - **Tool calls** show as cards: ● while running, ✓ when done, ✗ when they failed, with the
-  result underneath. Click a card for its arguments and full output.
+  result underneath. Click a card for its arguments and full output. Reads and searches in
+  a row fold into one **Explored** card.
 - **Edits** show their diff on the card, with line numbers and syntax highlighting. When
-  loom asks before an edit, press `y` to accept it or `n` to reject it (`a` always accepts
-  edits this session). A command waiting for approval shows on its card the same way.
+  loom asks before an edit, **Accept** (`y`) or **Reject** (`n`) it; `a` always accepts
+  edits like it, and `b` stops loom asking for the rest of the session. A command waiting
+  for approval shows on its card the same way, with **Allow** and **Deny**.
 - **Questions** loom asks show inline, with a key for each answer.
-- **Esc** stops loom's current work, like in the terminal.
+- **Esc**, or the stop button, stops loom's current work, like in the terminal.
 
-The status line shows whether loom is working, the model, the tokens used this session,
-the project folder, and the `/project` phase.
+Under the input:
+
+- **+** opens the file tree, to add files to the chat.
+- The **permission mode** (Ask before edits, Accept edits, Plan mode) switches with a
+  click or Shift-Tab, like in the terminal. It shows Bypass permissions after you answer
+  `b` to an approval.
+- The **model** button lists the model aliases to switch the main model to (`/model`), or
+  takes any model name, and shows the weak model.
+
+The line under that shows whether loom is working and the tokens used this session. The
+header shows the project, its git branch, the `/project` phases and the lines changed
+since loom started; click **Changes** to see them.
 
 ## Sessions
 
 The sidebar on the left lists this project's saved conversations, newest first, with
 the current one marked. Click one to continue it (loom's `/resume`): the chat shows that
-conversation, and the agent picks it up where it left off. **+ new** starts a new one
-(`/clear`); the old one stays saved. ⌘\, or ⌘\ in the header, shows and hides the sidebar.
+conversation, and the agent picks it up where it left off. **New session** starts a new
+one (`/clear`); the old one stays saved. ⌘\, or the panel button at the left of the
+header, shows and hides the sidebar. Its foot shows the project folder and whether the
+page is connected to loom.
 
 ## Commands
 
@@ -64,11 +79,12 @@ opens the list from anywhere. Every loom command works, and the web UI adds:
 
 ## Projects
 
-With a `/project` (see [project.md](project.md)), the header shows its phases, idea ›
-planning › design › building › testing › launch, with the current one in bold. It
-follows the run as it goes. Click a phase to go back to it; loom asks first.
+With a `/project` (see [project.md](project.md)), the header shows its phases, idea —
+planning — design — building — testing — launch, approved ones ticked and the current one
+ringed. It follows the run as it goes. Click a phase to go back to it; loom asks first.
 
-Each phase's checkpoint shows inline, with the document and its verdict:
+Each phase's checkpoint shows inline, with its verdict and the start of the document;
+click the document's name to open it in the side pane:
 
 - **Approve** (`a`) moves on to the next phase.
 - **Edit** (`e`) opens the document in the side pane's editor; ⌘S saves it, and loom
@@ -80,18 +96,18 @@ Each phase's checkpoint shows inline, with the document and its verdict:
 
 ## The side pane
 
-⌘B, or ⌘B in the header, shows a pane beside the chat:
+⌘B, or the panel button at the right of the header, shows a pane beside the chat. On a
+narrow window it hides the sessions sidebar to make room.
 
-- **changes**: every file that differs from the commit loom started at, with its diff and
+- **Changes**: every file that differs from the commit loom started at, with its diff and
   how many lines it adds and removes, even though loom commits each change as it goes.
-  **since main** compares with where the branch left `main` (or `master`) instead.
+  **Since main** compares with where the branch left `main` (or `master`) instead.
   Files you haven't added to git show as new. Click a file's name to view it.
-- **files**: the project's files. `[x]` marks the files in the chat; click it to `/add` or
-  `/drop` a file. Click a name to view the file.
-- **memory**: search the project's shared memory, with ChromaDB when the `memory` extra is
+- **Files**: the project's files. A ticked box marks a file in the chat; click it to
+  `/add` or `/drop` the file. Click a name to view the file.
+- **Terminal**: the output of `/run` as it runs.
+- **Memory**: search the project's shared memory, with ChromaDB when the `memory` extra is
   installed or by keyword otherwise. With no search, it lists the project's decisions.
-- **terminal**: the output of `/run` as it runs.
-- **model**: the main and weak models, and switching them.
 
 ## Developing the frontend
 

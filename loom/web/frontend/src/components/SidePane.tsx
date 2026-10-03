@@ -1,14 +1,8 @@
 import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import {
-  type Alias,
-  type Changes,
-  type FileChange,
-  type Files,
-  type Memory,
-  api,
-} from "../lib/api";
+import { type FileChange, type Files, type Memory, api } from "../lib/api";
 import { answer } from "../lib/asks";
+import { changeTotals, useChanges } from "../lib/changes";
 import { send } from "../lib/socket";
 import { pendingAsk, useSession } from "../store/session";
 import { type Pane, useUi } from "../store/ui";
@@ -16,7 +10,12 @@ import { DiffView } from "./DiffView";
 
 const MonacoView = lazy(() => import("./MonacoView"));
 
-const TABS: Pane[] = ["changes", "files", "memory", "terminal", "model"];
+const TABS: [Pane, string][] = [
+  ["changes", "Changes"],
+  ["files", "Files"],
+  ["terminal", "Terminal"],
+  ["memory", "Memory"],
+];
 
 // Commands from the pane run only when loom is ready for one
 function useIdle() {
@@ -31,10 +30,14 @@ function quote(path: string) {
 
 function Editor(props: React.ComponentProps<typeof MonacoView>) {
   return (
-    <Suspense fallback={<div className="p-4 text-dim">loading editor…</div>}>
+    <Suspense fallback={<div className="p-4 text-dim">Loading the editor…</div>}>
       <MonacoView {...props} />
     </Suspense>
   );
+}
+
+function Note({ children, error = false }: { children: React.ReactNode; error?: boolean }) {
+  return <div className={`text-[13px] ${error ? "text-destructive" : "text-dim"}`}>{children}</div>;
 }
 
 // Changes
@@ -46,35 +49,19 @@ const STATUS_LABEL: Record<FileChange["status"], string> = {
   renamed: "renamed",
 };
 
+const BASES = [
+  ["session", "Since loom started"],
+  ["branch", "Since main"],
+] as const;
+
 function ChangesTab() {
   const [base, setBase] = useState<"session" | "branch">("session");
-  const [changes, setChanges] = useState<Changes | null>(null);
-  const [error, setError] = useState("");
+  const { changes, error } = useChanges(base);
   const [folded, setFolded] = useState<Set<string>>(new Set());
-  const busy = useSession((state) => state.session?.busy ?? false);
-  // Each tool call that ends may have changed files
-  const finished = useSession(
-    (state) => state.entries.filter((e) => e.kind === "tool" && e.status !== "running").length,
-  );
   const openInViewer = useUi((state) => state.openInViewer);
 
-  useEffect(() => {
-    let live = true;
-    const timer = setTimeout(() => {
-      api
-        .changes(base)
-        .then((found) => live && (setChanges(found), setError("")))
-        .catch((err: Error) => live && setError(err.message));
-    }, 300);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [base, busy, finished]);
-
   const files = changes?.files ?? [];
-  const added = files.reduce((n, f) => n + f.added, 0);
-  const removed = files.reduce((n, f) => n + f.removed, 0);
+  const { added, removed } = changeTotals(changes);
 
   function fold(path: string) {
     setFolded((before) => {
@@ -87,67 +74,84 @@ function ChangesTab() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-4 border-b border-border px-4 py-2 text-[12px]">
-        {(["session", "branch"] as const).map((which) => (
-          <button
-            key={which}
-            onClick={() => setBase(which)}
-            className={which === base ? "text-foreground" : "text-dim hover:text-foreground"}
-          >
-            {which === "session" ? "since loom started" : "since main"}
-          </button>
-        ))}
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-raised px-3.5 py-2.5">
+        <div className="flex rounded-full border border-border bg-card p-[3px]">
+          {BASES.map(([which, label]) => (
+            <button
+              key={which}
+              onClick={() => setBase(which)}
+              className={`whitespace-nowrap rounded-full px-3 py-1 text-[12px] ${
+                which === base
+                  ? "bg-border-strong text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {files.length > 0 && (
-          <span className="ml-auto text-dim">
+          <span className="ml-auto whitespace-nowrap text-[12px] text-muted-foreground">
             {files.length} file{files.length === 1 ? "" : "s"}{" "}
-            <span className="text-add">+{added}</span> <span className="text-del">-{removed}</span>
+            <span className="font-mono">
+              <span className="text-add">+{added}</span>{" "}
+              <span className="text-del">-{removed}</span>
+            </span>
           </span>
         )}
       </div>
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
-        {error && <div className="text-destructive">{error}</div>}
+      <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
+        {error && <Note error>{error}</Note>}
         {changes && !changes.available && (
-          <div className="text-dim">
+          <Note>
             {base === "branch"
               ? "There's no main or master branch to compare with."
               : "Changes show here in a git repo."}
-          </div>
+          </Note>
         )}
-        {changes?.available && !files.length && (
-          <div className="text-dim">No changes {changes.label}.</div>
-        )}
+        {changes?.available && !files.length && <Note>No changes {changes.label}.</Note>}
         {files.map((file) => {
           const open = !folded.has(file.path);
           return (
-            <div key={file.path} className="mb-4">
-              <div className="flex items-baseline gap-2">
-                <button onClick={() => fold(file.path)} className="w-4 shrink-0 text-dim">
-                  {open ? "▾" : "▸"}
+            <div
+              key={file.path}
+              className="overflow-hidden rounded-[10px] border border-selected bg-background"
+            >
+              <div className="flex items-center gap-2 px-2.5 py-2">
+                <button
+                  onClick={() => fold(file.path)}
+                  aria-label={open ? "Fold" : "Unfold"}
+                  className="w-[18px] shrink-0 text-[10px] text-dim"
+                >
+                  {open ? "▼" : "▶"}
                 </button>
                 <button
                   onClick={() => file.status !== "deleted" && openInViewer(file.path)}
-                  title={file.status === "deleted" ? file.path : `view ${file.path}`}
-                  className="min-w-0 truncate text-left text-foreground hover:underline"
+                  title={file.status === "deleted" ? file.path : `View ${file.path}`}
+                  className="min-w-0 truncate text-left font-mono text-[12.5px] text-foreground hover:underline"
                 >
                   {file.path}
                 </button>
                 {STATUS_LABEL[file.status] && (
-                  <span className="shrink-0 text-[12px] text-dim">
+                  <span className="shrink-0 rounded-full bg-selected px-[7px] py-px text-[11px] text-muted-foreground">
                     {STATUS_LABEL[file.status]}
                     {file.old_path && ` from ${file.old_path}`}
                   </span>
                 )}
-                <span className="ml-auto shrink-0 text-[12px]">
+                <span className="ml-auto shrink-0 font-mono text-[12px]">
                   <span className="text-add">+{file.added}</span>{" "}
                   <span className="text-del">-{file.removed}</span>
                 </span>
               </div>
               {open &&
                 (file.binary ? (
-                  <div className="ml-6 mt-1 text-dim">binary file</div>
+                  <div className="border-t border-raised px-3 py-2 text-[12px] text-dim">
+                    Binary file
+                  </div>
                 ) : (
                   file.lines.length > 0 && (
                     <DiffView
+                      inCard
                       diff={{
                         type: "diff",
                         id: file.path,
@@ -215,10 +219,10 @@ function FilesTab() {
       .then((found) => {
         setFiles(found);
         setError("");
-        // Open the folders of the files in the chat
+        // Open the folders of the files in the chat, and of the one in the viewer
         setExpanded((before) => {
           const next = new Set(before);
-          for (const path of found.chat) {
+          for (const path of [...found.chat, ...(openFile ? [openFile] : [])]) {
             const parts = path.split("/");
             for (let i = 1; i < parts.length; i++) next.add(parts.slice(0, i).join("/"));
           }
@@ -226,11 +230,12 @@ function FilesTab() {
         });
       })
       .catch((err: Error) => setError(err.message));
-  }, [chatFiles]);
+  }, [chatFiles, openFile]);
 
   const tree = useMemo(() => buildTree(files?.files ?? []), [files]);
   const inChat = useMemo(() => new Set(files?.chat ?? []), [files]);
   const readOnly = useMemo(() => new Set(files?.read_only ?? []), [files]);
+  const chatCount = inChat.size + readOnly.size;
 
   function toggle(path: string) {
     if (!idle) return;
@@ -240,7 +245,7 @@ function FilesTab() {
 
   function rows(nodes: TreeNode[], depth: number): React.ReactNode[] {
     return nodes.flatMap((node) => {
-      const pad = { paddingLeft: depth * 14 };
+      const pad = { paddingLeft: 8 + depth * 18 };
       if (node.dir) {
         const open = expanded.has(node.path);
         return [
@@ -255,9 +260,9 @@ function FilesTab() {
                 return next;
               })
             }
-            className="flex w-full items-center gap-2 py-px text-left text-dim hover:text-foreground"
+            className="flex h-7 w-full items-center gap-2 rounded-md pr-2 text-left font-mono text-[12.5px] text-muted-foreground hover:bg-card hover:text-foreground"
           >
-            <span className="w-6 shrink-0">{open ? "▾" : "▸"}</span>
+            <span className="w-3.5 shrink-0 text-[9px]">{open ? "▼" : "▶"}</span>
             {node.name}/
           </button>,
           ...(open ? rows(node.children, depth + 1) : []),
@@ -265,22 +270,36 @@ function FilesTab() {
       }
       const included = inChat.has(node.path);
       const ro = readOnly.has(node.path);
+      const viewing = openFile === node.path;
       return [
-        <div key={node.path} style={pad} className="flex items-center gap-2 py-px">
+        <div
+          key={node.path}
+          style={pad}
+          className={`flex h-7 items-center gap-2 rounded-md pr-2 ${viewing ? "bg-popover" : ""}`}
+        >
           <button
             onClick={() => toggle(node.path)}
             disabled={!idle}
-            title={included ? "in the chat: click to drop" : ro ? "read-only" : "add to the chat"}
-            className={`w-6 shrink-0 text-left ${included || ro ? "text-primary" : "text-dim"} enabled:hover:text-foreground`}
+            title={
+              included
+                ? "In the chat · click to /drop"
+                : ro
+                  ? "In the chat, read-only · click to /drop"
+                  : "Add to the chat (/add)"
+            }
+            aria-label={included || ro ? `Drop ${node.path}` : `Add ${node.path}`}
+            className={`flex size-[15px] shrink-0 items-center justify-center rounded p-0 text-[10px] font-bold leading-none ${
+              included || ro
+                ? "bg-primary text-on-primary"
+                : "border-[1.5px] border-faint enabled:hover:border-muted-foreground"
+            }`}
           >
-            {included ? "[x]" : ro ? "[r]" : "[ ]"}
+            {included ? "✓" : ro ? "r" : ""}
           </button>
           <button
             onClick={() => openInViewer(node.path)}
-            className={`min-w-0 truncate text-left ${
-              openFile === node.path
-                ? "text-foreground"
-                : "text-muted-foreground hover:text-foreground"
+            className={`min-w-0 flex-1 truncate text-left font-mono text-[12.5px] ${
+              viewing ? "text-foreground" : "text-subtle hover:text-foreground"
             }`}
           >
             {node.name}
@@ -292,10 +311,15 @@ function FilesTab() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-4">
-        {error && <div className="text-destructive">{error}</div>}
-        {files && !files.files.length && <div className="text-dim">No files.</div>}
+      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-2">
+        {error && <Note error>{error}</Note>}
+        {files && !files.files.length && <Note>No files.</Note>}
         {rows(tree, 0)}
+        {files && (
+          <div className="px-2 pt-2.5 text-[12px] text-dim">
+            {chatCount} file{chatCount === 1 ? "" : "s"} in the chat
+          </div>
+        )}
       </div>
       {openFile && <FileViewer path={openFile} />}
     </div>
@@ -321,10 +345,24 @@ function FileViewer({ path }: { path: string }) {
   }, [path, busy]);
 
   return (
-    <div className="flex h-[55%] min-h-0 flex-col border-t border-border">
-      <div className="truncate px-4 py-2 text-[12px] text-dim">{path}</div>
+    <div className="flex h-[55%] min-h-0 shrink-0 flex-col border-t border-line">
+      <div className="flex items-center gap-2.5 border-b border-raised px-3.5 py-2">
+        <span className="min-w-0 truncate font-mono text-[12px] text-soft">{path}</span>
+        <span className="shrink-0 text-[11px] text-dim">read-only</span>
+        <button
+          onClick={() => useUi.setState({ openFile: null })}
+          aria-label="Close the file"
+          className="ml-auto text-[15px] text-dim hover:text-foreground"
+        >
+          ×
+        </button>
+      </div>
       <div className="min-h-0 flex-1">
-        {error && <div className="px-4 text-destructive">{error}</div>}
+        {error && (
+          <div className="p-3.5">
+            <Note error>{error}</Note>
+          </div>
+        )}
         {text !== null && <Editor path={path} value={text} readOnly />}
       </div>
     </div>
@@ -357,54 +395,62 @@ function MemoryTab() {
     };
   }, [query, busy]);
 
+  const card = "flex flex-col gap-1 rounded-[10px] border border-selected px-3 py-2.5";
+
   return (
-    <div className="scroll-thin h-full overflow-y-auto p-4">
+    <div className="scroll-thin flex h-full flex-col gap-2.5 overflow-y-auto p-3.5">
       <input
         value={query}
         onChange={(event) => setQuery(event.target.value)}
-        placeholder="semantic search…"
-        className="mb-3 w-full border-b border-border bg-transparent pb-1 outline-none placeholder:text-dim"
+        placeholder="Search project memory…"
+        className="rounded-full border border-border-strong bg-background px-3.5 py-2 text-[13px] outline-none placeholder:text-dim"
       />
-      {searching && <div className="mb-2 text-[12px] text-dim">searching…</div>}
-      {error && <div className="text-destructive">{error}</div>}
+      {error && <Note error>{error}</Note>}
       {memory && !memory.available && (
-        <div className="text-dim">
-          No project memory yet. Start a project with /project new IDEA.
+        <Note>No project memory yet. Start a project with /project new IDEA.</Note>
+      )}
+      {memory?.available && (
+        <div className="text-[12px] text-dim">
+          {searching
+            ? "Searching…"
+            : query.trim()
+              ? `Matches${memory.store ? ` · ${memory.store}` : ""}`
+              : "Decisions"}
         </div>
       )}
-      {memory?.store && <div className="mb-2 text-[12px] text-dim">{memory.store}</div>}
-      {memory?.available && query.trim() && !memory.hits.length && (
-        <div className="text-dim">Nothing matches.</div>
+      {memory?.available && query.trim() && !memory.hits.length && !searching && (
+        <Note>Nothing matches.</Note>
       )}
-      {memory?.hits.map((hit) => (
-        <div key={hit.id} className="border-b border-border py-2.5">
-          <div className="flex gap-3 text-[12px] text-dim">
-            <span className="truncate">{hit.source ?? hit.id}</span>
-            <span className="text-primary">{hit.kind}</span>
-            {hit.phase && <span className="ml-auto">{hit.phase}</span>}
+      {query.trim() &&
+        memory?.hits.map((hit) => (
+          <div key={hit.id} className={card}>
+            <div className="flex gap-2.5 text-[11.5px] text-dim">
+              <span className="truncate font-mono">{hit.source ?? hit.id}</span>
+              <span className="text-primary">{hit.kind}</span>
+              {hit.phase && <span className="ml-auto shrink-0">{hit.phase}</span>}
+            </div>
+            {hit.title && <div className="text-[13px] font-medium">{hit.title}</div>}
+            <div className="line-clamp-6 whitespace-pre-wrap break-words text-[13px] leading-[1.55] text-soft">
+              {hit.text}
+            </div>
           </div>
-          {hit.title && <div className="mt-1 text-foreground">{hit.title}</div>}
-          <div className="mt-1 line-clamp-6 whitespace-pre-wrap break-words text-muted-foreground">
-            {hit.text}
-          </div>
-        </div>
-      ))}
+        ))}
       {memory?.available && !query.trim() && !memory.decisions.length && (
-        <div className="text-dim">No decisions recorded yet.</div>
+        <Note>No decisions recorded yet.</Note>
       )}
       {!query.trim() &&
         memory?.decisions.map((decision) => (
-          <div key={decision.id} className="border-b border-border py-2.5">
-            <div className="flex gap-3 text-[12px] text-dim">
-              <span>d-{decision.id}</span>
+          <div key={decision.id} className={card}>
+            <div className="flex gap-2.5 text-[11.5px] text-dim">
+              <span className="font-mono">d-{decision.id}</span>
               <span className="text-primary">{decision.kind}</span>
               <span className="truncate">{decision.source}</span>
               <span className="ml-auto shrink-0">{decision.phase}</span>
             </div>
-            <div className="mt-1 whitespace-pre-wrap break-words text-muted-foreground">
+            <div className="whitespace-pre-wrap break-words text-[13px] leading-[1.55] text-soft">
               {decision.text}
             </div>
-            {decision.reason && <div className="mt-1 text-dim">why: {decision.reason}</div>}
+            {decision.reason && <div className="text-[12px] text-dim">why: {decision.reason}</div>}
           </div>
         ))}
     </div>
@@ -426,9 +472,9 @@ function TerminalTab() {
   }, [terminal]);
 
   return (
-    <div ref={scroller} className="scroll-thin h-full overflow-y-auto p-4">
-      {!terminal && <div className="text-dim">Output of /run shows here.</div>}
-      <pre className="whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-muted-foreground">
+    <div ref={scroller} className="scroll-thin h-full overflow-y-auto px-4 py-3.5">
+      {!terminal && <Note>Output of /run shows here.</Note>}
+      <pre className="m-0 whitespace-pre-wrap break-words font-mono text-[12.5px] leading-[1.6] text-subtle">
         {terminal}
         {running && <span className="blink">▍</span>}
       </pre>
@@ -436,158 +482,93 @@ function TerminalTab() {
   );
 }
 
-// Model
-
-function ModelTab() {
-  const session = useSession((state) => state.session);
-  const idle = useIdle();
-  const [aliases, setAliases] = useState<Alias[]>([]);
-  const [main, setMain] = useState("");
-  const [weak, setWeak] = useState("");
-
-  useEffect(() => {
-    api
-      .models()
-      .then((found) => setAliases(found.aliases))
-      .catch(() => setAliases([]));
-  }, []);
-
-  function switchTo(command: string, model: string) {
-    if (!idle || !model.trim()) return;
-    send({ type: "input", text: `${command} ${model.trim()}` });
-  }
-
-  const field = (
-    label: string,
-    current: string,
-    value: string,
-    setValue: (v: string) => void,
-    command: string,
-  ) => (
-    <div>
-      <div className="mb-2 text-dim">{label} model</div>
-      <div className="text-primary">› {current || "(none)"}</div>
-      <input
-        value={value}
-        disabled={!idle}
-        onChange={(event) => setValue(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            switchTo(command, value);
-            setValue("");
-          }
-        }}
-        placeholder="switch to…"
-        className="mt-2 w-full border-b border-border bg-transparent pb-1 outline-none placeholder:text-dim"
-      />
-    </div>
-  );
-
-  return (
-    <div className="scroll-thin h-full space-y-6 overflow-y-auto p-4">
-      {field("main", session?.model ?? "", main, setMain, "/model")}
-      {field("weak", session?.weak_model ?? "", weak, setWeak, "/weak-model")}
-      {aliases.length > 0 && (
-        <div>
-          <div className="mb-2 text-dim">aliases</div>
-          {aliases.map((alias) => (
-            <button
-              key={alias.alias}
-              disabled={!idle}
-              onClick={() => switchTo("/model", alias.alias)}
-              className="flex w-full gap-3 py-0.5 text-left text-muted-foreground enabled:hover:text-foreground"
-            >
-              <span className="w-28 shrink-0">{alias.alias}</span>
-              <span className="truncate text-dim">{alias.model}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // Editing a /project document at a checkpoint
 
-function DocumentEditor() {
+function useEditAsk() {
   const entries = useSession((state) => state.entries);
   const ask = pendingAsk(entries)?.ask;
-  const [value, setValue] = useState("");
-
-  useEffect(() => {
-    if (ask?.kind === "edit") setValue(ask.default);
-  }, [ask]);
-
-  if (!ask || ask.kind !== "edit") return null;
-  const save = () => answer(ask, value);
-  const cancel = () => answer(ask, ask.default);
-
-  return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-4 px-4 py-2 text-[12px]">
-        <span className="min-w-0 truncate text-dim">editing {ask.subject}</span>
-        <button onClick={save} className="ml-auto text-primary hover:underline">
-          save ⌘S
-        </button>
-        <button onClick={cancel} className="text-muted-foreground hover:text-foreground">
-          cancel
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 border-t border-border">
-        <Editor
-          path={ask.subject ?? "document.md"}
-          value={ask.default}
-          readOnly={false}
-          onChange={setValue}
-          onSave={save}
-        />
-      </div>
-    </div>
-  );
+  return ask?.kind === "edit" ? ask : undefined;
 }
 
 export function SidePane() {
   const pane = useUi((state) => state.pane);
   const showPane = useUi((state) => state.showPane);
-  const editing = useSession((state) => pendingAsk(state.entries)?.ask.kind === "edit");
+  const editAsk = useEditAsk();
+  const [draft, setDraft] = useState("");
 
-  if (!pane && !editing) return null;
+  // A new document to edit starts from its text
+  useEffect(() => {
+    if (editAsk) setDraft(editAsk.default);
+  }, [editAsk]);
+
+  if (!pane && !editAsk) return null;
 
   return (
-    <aside className="flex w-[clamp(400px,38vw,680px)] shrink-0 flex-col border-l border-border text-[13px]">
-      <div className="flex items-center gap-4 border-b border-border px-4 py-2 text-[12px]">
-        {editing ? (
-          <span className="text-primary">editor</span>
-        ) : (
-          TABS.map((tab) => (
+    <aside className="flex w-[clamp(380px,38vw,620px)] min-w-[280px] shrink flex-col border-l border-line bg-pane text-[13px]">
+      <div className="flex h-[46px] shrink-0 items-center gap-1 border-b border-line px-2.5">
+        {editAsk ? (
+          <>
+            <span className="min-w-0 truncate px-2.5 py-[5px] text-[13px] text-primary">
+              Editing <span className="font-mono text-[12px]">{editAsk.subject}</span>
+            </span>
+            <span className="flex-1" />
             <button
-              key={tab}
-              onClick={() => showPane(tab)}
-              className={tab === pane ? "text-primary" : "text-dim hover:text-foreground"}
+              onClick={() => answer(editAsk, editAsk.default)}
+              className="rounded-lg px-3 py-[5px] text-[13px] text-muted-foreground hover:bg-raised hover:text-foreground"
             >
-              {tab}
+              Cancel
             </button>
-          ))
-        )}
-        {!editing && (
-          <button onClick={() => showPane(null)} className="ml-auto text-dim hover:text-foreground">
-            esc ×
-          </button>
+            <button
+              onClick={() => answer(editAsk, draft)}
+              className="flex items-center gap-2 rounded-lg bg-primary px-3 py-[5px] text-[13px] font-semibold text-on-primary hover:bg-primary-hover"
+            >
+              Save <span className="font-mono text-[11px] opacity-70">⌘S</span>
+            </button>
+          </>
+        ) : (
+          <>
+            {TABS.map(([tab, label]) => (
+              <button
+                key={tab}
+                onClick={() => showPane(tab)}
+                className={`whitespace-nowrap rounded-lg px-[11px] py-[5px] text-[13px] ${
+                  tab === pane
+                    ? "bg-selected text-foreground"
+                    : "text-muted-foreground hover:bg-card hover:text-foreground"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="flex-1" />
+            <button
+              onClick={() => showPane(null)}
+              title="Close  esc"
+              aria-label="Close the side pane"
+              className="size-7 rounded-lg text-[16px] text-muted-foreground hover:bg-raised hover:text-foreground"
+            >
+              ×
+            </button>
+          </>
         )}
       </div>
       <div className="min-h-0 flex-1">
-        {editing ? (
-          <DocumentEditor />
+        {editAsk ? (
+          <Editor
+            path={editAsk.subject ?? "document.md"}
+            value={editAsk.default}
+            readOnly={false}
+            onChange={setDraft}
+            onSave={() => answer(editAsk, draft)}
+          />
         ) : pane === "changes" ? (
           <ChangesTab />
         ) : pane === "files" ? (
           <FilesTab />
         ) : pane === "memory" ? (
           <MemoryTab />
-        ) : pane === "terminal" ? (
-          <TerminalTab />
         ) : (
-          <ModelTab />
+          <TerminalTab />
         )}
       </div>
     </aside>

@@ -6,6 +6,7 @@ export const PROTOCOL_VERSION = 1;
 export type Level = "info" | "warning" | "error";
 export type AskKind = "confirm" | "permission" | "choice" | "checkpoint" | "prompt" | "edit";
 export type PhaseStatus = "pending" | "running" | "review" | "approved";
+export type PermissionMode = "ask" | "accept-edits" | "plan" | "bypass";
 
 export interface Phase {
   key: string;
@@ -49,6 +50,10 @@ export interface SessionEvent {
   phases: Phase[];
   // The id of the saved conversation the chat is
   conversation: string | null;
+  // The git branch, or null outside a repo or on a detached HEAD
+  branch: string | null;
+  // The agent's permission mode, or null when the coder has none
+  permission_mode: PermissionMode | null;
   busy: boolean;
 }
 
@@ -194,4 +199,6 @@ export type ServerEvent =
 export type ClientEvent =
   | { type: "input"; text: string }
   | { type: "answer"; ask_id: string; value: string }
-  | { type: "cancel" };
+  | { type: "cancel" }
+  // Switch the permission mode, like Shift-Tab in the terminal
+  | { type: "mode"; mode: PermissionMode };

@@ -4,16 +4,15 @@ import remarkGfm from "remark-gfm";
 
 import { type Token, languageForFence, useHighlighted } from "../lib/highlight";
 
-// loom's replies are Markdown, shown in the terminal's style: monospace throughout, bold
-// headings rather than big ones, and code blocks highlighted with shiki. Raw HTML in a
-// reply is left out, never rendered.
+// loom's replies are Markdown: prose in the sans font, code in monospace, and code blocks
+// highlighted with shiki. Raw HTML in a reply is left out, never rendered.
 
 function CodeBlock({ code, lang }: { code: string; lang: string }) {
   const lines = useMemo(() => code.replace(/\n$/, "").split("\n"), [code]);
   const grammar = languageForFence(lang);
   const tokens = useHighlighted(lines, "", grammar ?? "");
   return (
-    <pre className="scroll-thin my-2 overflow-x-auto border border-border px-3 py-2 font-mono text-[13px] leading-5">
+    <pre className="scroll-thin my-3 overflow-x-auto rounded-[10px] border border-border bg-card px-3.5 py-2.5 font-mono text-[13px] leading-5">
       {lines.map((line, i) => (
         <div key={i} className="min-h-5 whitespace-pre">
           {tokens?.[i] ? <Tokens tokens={tokens[i]} /> : line}
@@ -35,17 +34,17 @@ function Tokens({ tokens }: { tokens: Token[] }) {
   );
 }
 
-const heading = "mt-4 mb-2 font-bold text-foreground first:mt-0";
+const heading = "mt-5 mb-2 font-semibold text-foreground first:mt-0";
 
 const COMPONENTS: Components = {
-  h1: ({ children }) => <h1 className={heading}>{children}</h1>,
-  h2: ({ children }) => <h2 className={heading}>{children}</h2>,
+  h1: ({ children }) => <h1 className={`${heading} text-[19px]`}>{children}</h1>,
+  h2: ({ children }) => <h2 className={`${heading} text-[17px]`}>{children}</h2>,
   h3: ({ children }) => <h3 className={heading}>{children}</h3>,
   h4: ({ children }) => <h4 className={heading}>{children}</h4>,
   h5: ({ children }) => <h5 className={heading}>{children}</h5>,
   h6: ({ children }) => <h6 className={heading}>{children}</h6>,
-  p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
-  strong: ({ children }) => <strong className="font-bold text-foreground">{children}</strong>,
+  p: ({ children }) => <p className="my-3 first:mt-0 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
   em: ({ children }) => <em className="italic">{children}</em>,
   del: ({ children }) => <del className="text-dim">{children}</del>,
   a: ({ href, children }) => (
@@ -68,7 +67,7 @@ const COMPONENTS: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-border px-3 py-1 text-left font-bold">{children}</th>
+    <th className="border border-border px-3 py-1 text-left font-semibold">{children}</th>
   ),
   td: ({ children }) => <td className="border border-border px-3 py-1">{children}</td>,
   pre: ({ children }) => <>{children}</>,
@@ -77,7 +76,7 @@ const COMPONENTS: Components = {
     const fence = /language-([\w+#-]+)/.exec(className ?? "");
     // A fenced block, with or without a language
     if (fence || text.includes("\n")) return <CodeBlock code={text} lang={fence?.[1] ?? ""} />;
-    return <code className="text-code">{children}</code>;
+    return <code className="font-mono text-[13.5px] text-code">{children}</code>;
   },
 };
 
