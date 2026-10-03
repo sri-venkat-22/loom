@@ -282,6 +282,9 @@ def check_gitignore(git_root, io, ask=True):
             # loom's history, caches and sessions, but not .loom/ with the custom commands
             # and hooks to share with the repo
             patterns_to_add += [".loom*", "!.loom/"]
+        if not repo.ignored(".loom/worktrees/build"):
+            # The parallel builders' checkouts (loom/worktrees.py)
+            patterns_to_add.append(".loom/worktrees/")
 
         env_path = Path(git_root) / ".env"
         if env_path.exists() and not repo.ignored(".env"):

@@ -143,13 +143,15 @@ class TestMain(TestCase):
             # Test without .env file present
             gitignore.write_text("one\ntwo\n")
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.loom*\n!.loom/\n", gitignore.read_text())
+            self.assertEqual("one\ntwo\n.loom*\n!.loom/\n.loom/worktrees/\n", gitignore.read_text())
 
             # Test with .env file present
             env_file = cwd / ".env"
             env_file.touch()
             check_gitignore(cwd, io)
-            self.assertEqual("one\ntwo\n.loom*\n!.loom/\n.env\n", gitignore.read_text())
+            self.assertEqual(
+                "one\ntwo\n.loom*\n!.loom/\n.loom/worktrees/\n.env\n", gitignore.read_text()
+            )
             del os.environ["GIT_CONFIG_GLOBAL"]
 
     def test_command_line_gitignore_files_flag(self):

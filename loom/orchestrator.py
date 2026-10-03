@@ -1321,6 +1321,7 @@ class Orchestrator:
             raise TransitionError(f"There is no phase {name!r}; use one of: {names}.")
         self.state.back(phase.key, feedback)
         self.state.save()
+        self.cleanup_worktrees()
         text = f"Went back to {phase.title} to redo it and the phases after it"
         if feedback:
             text += f": {feedback}"
@@ -1341,6 +1342,21 @@ class Orchestrator:
         except ProjectMemoryError as err:
             raise TransitionError(f"Unable to reset the project: {err}")
         self.state = None
+        self.cleanup_worktrees()
+
+    def cleanup_worktrees(self):
+        """Remove the parallel builders' worktrees and branches (loom/worktrees.py)."""
+        from loom import worktrees
+
+        if not self.coder.repo:
+            return
+        try:
+            removed = worktrees.cleanup_all(self.coder.repo.repo, self.root)
+        except (OSError,) + ANY_GIT_ERROR as err:
+            self.io.tool_warning(f"Unable to remove the builders' worktrees: {err}")
+            return
+        if removed:
+            self.io.tool_output(f"Removed the builders' {plural(removed, 'worktree')}.")
 
     # Showing the project
 
