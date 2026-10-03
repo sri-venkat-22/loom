@@ -54,7 +54,7 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
-            [--build-budget] [--lint] [--lint-cmd]
+            [--build-workers] [--build-budget] [--lint] [--lint-cmd]
             [--auto-lint | --no-auto-lint] [--test-cmd]
             [--auto-test | --no-auto-test] [--test]
             [--analytics | --no-analytics] [--analytics-log]
@@ -581,6 +581,11 @@ Aliases:
 With test-driven Building (/project new --tdd), how many more times the Building agent may try after the acceptance tests fail (default: 3)  
 Default: 3  
 Environment variable: `LOOM_BUILD_RETRIES`  
+
+### `--build-workers N`
+How many builders may build the architecture's work packages at once, each in its own git worktree; 1 builds with one agent (default: 3)  
+Default: 3  
+Environment variable: `LOOM_BUILD_WORKERS`  
 
 ### `--build-budget DOLLARS`
 With test-driven Building, stop trying again once a Building run has cost this much (default: no limit)  

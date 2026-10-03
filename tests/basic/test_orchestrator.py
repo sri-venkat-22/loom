@@ -1035,6 +1035,8 @@ class FakeAgent:
         self.total_tokens_received = coder.total_tokens_received
         self.loom_commit_hashes = set()
         self.repo = coder.repo.repo
+        self.root = coder.root
+        self.io = coder.io
 
     def run(self, with_message=None, preproc=False):
         self.total_cost += self.cost
