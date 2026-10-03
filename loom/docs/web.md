@@ -97,7 +97,9 @@ Each phase's checkpoint shows inline, with the document and its verdict:
 
 The frontend is in `loom/web/frontend` (Vite, React, TypeScript, Tailwind and Zustand),
 and the server in `loom/web/backend` (FastAPI). `npm run build` puts the frontend in
-`loom/web/static`, which loom serves; until it's built, loom shows a page saying so.
+`loom/web/static`, which loom serves. The build is committed, so installing loom from
+GitHub needs no Node.js: after changing the frontend, build it and commit
+`loom/web/static` with your change. CI checks that it matches the source.
 
 ```bash
 cd loom/web/frontend

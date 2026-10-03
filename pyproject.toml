@@ -56,7 +56,7 @@ build-backend = "setuptools.build_meta"
 write_to = "loom/_version.py"
 
 [tool.codespell]
-skip = "*.svg,tests/fixtures/*,*/package-lock.json"
+skip = "*.svg,tests/fixtures/*,*/package-lock.json,*/web/static/*"
 write-changes = true
 # ChromaDB's $nin ("not in") filter operator
 ignore-words-list = "nin"

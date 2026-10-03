@@ -67,12 +67,6 @@ loom --web --no-browser       # open the address yourself
 
 It's the same loom, with your models and settings: replies stream in as Markdown, tool calls show as cards, edits show as diffs you accept with `y` or reject with `n`, and Esc stops the current work. Your saved sessions are on the left (⌘\): click one to continue it. ⌘B opens the code changes since loom started on the right, along with your files, a Monaco viewer, `/run` output, the `/project` memory and the models. Type `/` or press ⌘K for commands. `/project` runs show their phases in the header and stop at inline checkpoints. Press ^C twice in the terminal to stop loom. The server only listens on 127.0.0.1.
 
-In a clone of this repo, build the frontend once first (it needs Node.js 20.19+ or 22.12+):
-
-```bash
-cd loom/web/frontend && npm install && npm run build
-```
-
 See [the web UI docs](loom/docs/web.md) for the keys, commands and side pane.
 
 ## Development
