@@ -73,6 +73,7 @@ Type `/` for loom's commands, with arrows to choose, Tab to complete and ↵ to 
 opens the list from anywhere. Every loom command works, and the web UI adds:
 
 - `/phase` shows the project's phases, and `/phase PHASE` goes back to one.
+- `/dashboard` opens the [project dashboard](#the-project-dashboard).
 - `/files`, `/memory [QUERY]` and `/terminal` open the side pane.
 - `/theme [dark|light]` switches between the dark and light themes. Dark is the default,
   and the browser remembers your choice.
@@ -81,7 +82,8 @@ opens the list from anywhere. Every loom command works, and the web UI adds:
 
 With a `/project` (see [project.md](project.md)), the header shows its phases, idea —
 planning — design — building — testing — launch, approved ones ticked and the current one
-ringed. It follows the run as it goes. Click a phase to go back to it; loom asks first.
+ringed. It follows the run as it goes. Click a phase to open its card in the
+[project dashboard](#the-project-dashboard).
 
 Each phase's checkpoint shows inline, with its verdict and the start of the document;
 click the document's name to open it in the side pane:
@@ -96,9 +98,11 @@ click the document's name to open it in the side pane:
 
 ## The side pane
 
-⌘B, or the panel button at the right of the header, shows a pane beside the chat. On a
-narrow window it hides the sessions sidebar to make room.
+⌘B, or the panel button at the right of the header, shows a pane beside the chat (the
+project dashboard first, when there's a project). On a narrow window it hides the
+sessions sidebar to make room.
 
+- **Project**: the [project dashboard](#the-project-dashboard).
 - **Changes**: every file that differs from the commit loom started at, with its diff and
   how many lines it adds and removes, even though loom commits each change as it goes.
   **Since main** compares with where the branch left `main` (or `master`) instead.
@@ -108,6 +112,28 @@ narrow window it hides the sessions sidebar to make room.
 - **Terminal**: the output of `/run` as it runs.
 - **Memory**: search the project's shared memory, with ChromaDB when the `memory` extra is
   installed or by keyword otherwise. With no search, it lists the project's decisions.
+
+## The project dashboard
+
+The side pane's **Project** tab shows a `/project` from start to finish, and follows it
+as it runs:
+
+- At the top, the idea and the project's totals: time, cost, runs and commits, then a bar
+  for each phase's cost (its time, when the models have no prices). **Download report**
+  downloads the [project report](project.md#the-project-report) as Markdown, Word or PDF.
+- Then a timeline with a card for each phase: its status (approved, waiting for review,
+  running, pending, or to redo after you went back), its verdict, how many times its
+  agent ran, for how long and at what cost, the rounds of fixes failing tests sent back
+  to Building, and the decisions made in it, which unfold.
+- **Document** opens the phase's document in a read-only editor.
+- **Diff** shows what a run of the phase changed: the diff of its commits, from where
+  HEAD was when the run started to where it ended. Pick another run from the list.
+- **Go back here** asks first, then runs `/project back PHASE`: that phase and the ones
+  after it run again. It shows for the phases before the current one.
+
+loom reads the dashboard from the project's database, read-only, and pushes it to the
+page when it changes. `GET /api/project/timeline` returns the same, and
+`GET /api/project/phase/PHASE/diff?run=N` a run's diff.
 
 ## Developing the frontend
 

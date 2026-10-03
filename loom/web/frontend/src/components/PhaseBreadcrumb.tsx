@@ -1,8 +1,8 @@
 import { Fragment } from "react";
 
-import { send } from "../lib/socket";
 import type { Phase } from "../lib/protocol";
 import { useSession } from "../store/session";
+import { useUi } from "../store/ui";
 
 // A stable empty list: a selector returning a new one each time would render forever
 const NO_PHASES: Phase[] = [];
@@ -26,11 +26,10 @@ function Dot({ state }: { state: "done" | "current" | "future" }) {
 }
 
 // idea — planning — design — building — testing — launch, as steps: approved ones ticked,
-// the current one ringed. Clicking a phase goes back to it, after loom asks.
+// the current one ringed. Clicking a phase opens the project dashboard at its card.
 export function PhaseBreadcrumb() {
   const phases = useSession((state) => state.session?.phases ?? NO_PHASES);
   const current = useSession((state) => state.session?.phase ?? null);
-  const busy = useSession((state) => state.session?.busy ?? false);
   const project = useSession((state) => state.session?.project ?? null);
 
   if (!phases.length) return <div className="flex-1" />;
@@ -51,9 +50,9 @@ export function PhaseBreadcrumb() {
           <Fragment key={phase.key}>
             {i > 0 && <span className="h-[1.5px] w-3.5 shrink-0 rounded-sm bg-border-strong" />}
             <button
-              disabled={busy || !project}
-              onClick={() => send({ type: "input", text: `/phase ${phase.key}` })}
-              title={`${phase.title}: ${phase.status}`}
+              disabled={!project}
+              onClick={() => useUi.getState().openProject(phase.key)}
+              title={`${phase.title}: ${phase.status} · open in the project dashboard`}
               className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full py-1 pl-1 pr-2 text-[13px] enabled:hover:bg-raised"
             >
               <Dot state={state} />
