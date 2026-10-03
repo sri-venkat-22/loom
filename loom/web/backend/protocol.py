@@ -48,6 +48,18 @@ Server to browser:
   ask_resolved   {ask_id, value}            The question was answered.
   terminal       {text, start}              Output of a command like /run, for the side
                                             pane's terminal; start begins a new command.
+  timeline       {available, idea, created, current, complete, totals, phases, decisions}
+                 The /project dashboard's view of the project, sent when it changes.
+                 available is false without a project. current is the key of the phase
+                 it's in (null when complete), totals the project's metrics ({runs,
+                 seconds, cost, tokens_sent, tokens_received, commits}) and decisions the
+                 ones of no phase. Each phase is {key, number, title, agent, document,
+                 document_title, produces, status, stale, verdict, current, metrics,
+                 run_log, fix_rounds, decisions, history}: run_log has one entry per run
+                 of its agent, {run, started, finished, seconds, cost, tokens_sent,
+                 tokens_received, base, head, commits, verdict, outcome}, outcome done,
+                 stopped or failed; decisions are {id, time, phase, source, kind, text,
+                 reason} and history entries {time, phase, event, note}.
 
 Browser to server:
 
@@ -57,8 +69,8 @@ Browser to server:
   mode           {mode}                     Switch the permission mode, like Shift-Tab in
                                             the terminal.
 
-On connecting, the browser gets the session followed by every other message so far, so a
-reloaded page shows the whole conversation.
+On connecting, the browser gets the session and the latest timeline, followed by every
+other message so far, so a reloaded page shows the whole conversation.
 """
 
 PROTOCOL_VERSION = 1
@@ -79,6 +91,7 @@ SERVER_EVENTS = (
     "ask",
     "ask_resolved",
     "terminal",
+    "timeline",
 )
 
 CLIENT_EVENTS = (
@@ -96,6 +109,7 @@ TOOL_STATUSES = ("done", "failed")
 # Longest tool result the browser gets, for an expanded card
 MAX_TOOL_OUTPUT = 20_000
 DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")
+RUN_OUTCOMES = ("done", "stopped", "failed")
 
 
 def event(type, **payload):

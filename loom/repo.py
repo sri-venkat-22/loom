@@ -35,6 +35,9 @@ ANY_GIT_ERROR += [
 ]
 ANY_GIT_ERROR = tuple(ANY_GIT_ERROR)
 
+# git's empty tree, to diff a repo's first commit against
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 
 @contextlib.contextmanager
 def set_git_env(var_name, value, original_value):

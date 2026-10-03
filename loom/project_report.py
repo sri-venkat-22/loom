@@ -27,7 +27,6 @@ from pathlib import Path
 import importlib_resources
 
 from loom import __version__
-from loom.coders import phase_prompts
 from loom.memory import DECISION_KINDS, FOUNDER
 from loom.orchestrator import (
     describe_metrics,
@@ -36,6 +35,7 @@ from loom.orchestrator import (
     read_project_file,
 )
 from loom.phases import DOCS_DIR, PHASES, PHASES_BY_KEY
+from loom.repo import EMPTY_TREE
 
 FORMATS = ("md", "html", "docx", "pdf")
 DEFAULT_FORMAT = "md"
@@ -44,8 +44,6 @@ DEFAULT_PATH = f"{DOCS_DIR}/report"
 REFERENCE_DOCX = "report-reference.docx"
 # The PDF engines pandoc can use, the ones loom prefers first
 PDF_ENGINES = ("typst", "tectonic", "xelatex", "lualatex", "pdflatex", "weasyprint", "wkhtmltopdf")
-# git's empty tree, to diff a project's first commit against
-EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 # The longest history note and decision shown in a table
 MAX_NOTE_CHARS = 200
@@ -217,16 +215,6 @@ class ProjectReport:
 
     # The timeline
 
-    def fix_rounds(self, key):
-        """How often a failing test report sent the project back to this phase."""
-        return sum(
-            1
-            for entry in self.state.history
-            if entry.get("event") == "back"
-            and entry.get("phase") == key
-            and entry.get("note") == phase_prompts.fix_test_failures
-        )
-
     def timeline(self):
         rows = []
         for phase in PHASES:
@@ -244,7 +232,7 @@ class ProjectReport:
                     str(metrics["runs"]),
                     format_duration(metrics["seconds"]) if metrics["runs"] else "",
                     format_cost(metrics["cost"]) if metrics["runs"] else "",
-                    str(self.fix_rounds(phase.key) or ""),
+                    str(self.state.fix_rounds(phase.key) or ""),
                 ]
             )
         header = ["#", "Phase", "Status", "Verdict", "Runs", "Time", "Cost", "Fix rounds"]

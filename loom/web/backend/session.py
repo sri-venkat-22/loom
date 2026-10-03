@@ -41,6 +41,8 @@ class WebSession:
             permission_mode=None,
             busy=False,
         )
+        # The /project dashboard's latest timeline event, or None before the first
+        self.timeline = None
         self.history = []
         self.clients = {}
         self.inputs = queue.Queue()
@@ -74,11 +76,14 @@ class WebSession:
 
     def emit(self, type, **payload):
         """Send a message to every connected browser, and keep it for ones that connect
-        later. The session message is kept as the latest snapshot instead."""
+        later. The session and timeline messages are kept as the latest snapshots
+        instead."""
         message = event(type, **payload)
         with self.lock:
             if type == "session":
                 self.snapshot = message
+            elif type == "timeline":
+                self.timeline = message
             else:
                 self.history.append(message)
             # Queue while holding the lock, so every browser sees messages in order
@@ -109,10 +114,11 @@ class WebSession:
 
     def connect(self, client, loop):
         """Register a browser's asyncio.Queue, served by loop. Returns the messages it has
-        missed: the snapshot followed by the conversation so far."""
+        missed: the snapshots followed by the conversation so far."""
         with self.lock:
             self.clients[client] = loop
-            return [self.snapshot] + list(self.history)
+            timeline = [self.timeline] if self.timeline else []
+            return [self.snapshot] + timeline + list(self.history)
 
     def disconnect(self, client):
         with self.lock:

@@ -8,7 +8,12 @@ from loom.memory import MEMORY_DIR
 from loom.orchestrator import ProjectState
 from loom.phases import PHASES
 from loom.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
-from loom.web.backend.project import ProjectWatcher, project_state, read_project
+from loom.web.backend.project import (
+    ProjectWatcher,
+    project_state,
+    read_project,
+    timeline,
+)
 from loom.web.backend.session import WebSession
 from loom.web.backend.webio import WebIO, list_commands
 from tests.basic.test_orchestrator import SCRIPT_IDEA, SCRIPT_PLANNING, run_project
@@ -166,3 +171,124 @@ class TestCheckpointsInTheBrowser(unittest.TestCase):
         self.assertEqual(second["checkpoint"]["next"], "design")
         self.assertEqual(feedback["kind"], "prompt")
         self.assertIn("What should the", feedback["question"])
+
+
+class TestDashboard(unittest.TestCase):
+    """The project dashboard's timeline and run diffs."""
+
+    def setUp(self):
+        self.memory_store = patch.dict(os.environ, {"LOOM_MEMORY_STORE": "keyword"})
+        self.memory_store.start()
+
+    def tearDown(self):
+        self.memory_store.stop()
+
+    def test_no_project(self):
+        with IgnorantTemporaryDirectory() as root:
+            found = timeline(root)
+            self.assertFalse(found["available"])
+            self.assertEqual(found["phases"], [])
+            self.assertFalse(Path(root, MEMORY_DIR).exists())
+
+    def test_timeline_of_a_project(self):
+        with GitTemporaryDirectory():
+            from tests.basic.test_agent import make_repo
+
+            make_repo()
+            coder, orchestrator, llm, done = run_project(SCRIPT_IDEA, SCRIPT_PLANNING)
+            orchestrator.record("Use argparse")
+
+            found = timeline(".")
+            self.assertTrue(found["available"])
+            self.assertEqual(found["idea"], orchestrator.state.idea)
+            self.assertEqual(found["current"], "design")
+            self.assertFalse(found["complete"])
+            # Design ran out of scripted replies, so its run failed
+            self.assertEqual(found["totals"]["runs"], 3)
+            self.assertEqual([p["key"] for p in found["phases"]], KEYS)
+
+            idea = found["phases"][0]
+            self.assertEqual(idea["status"], "approved")
+            self.assertEqual(idea["verdict"], "GO")
+            self.assertEqual(idea["document"], "loom-project/1-idea-report.md")
+            self.assertEqual(idea["metrics"]["runs"], 1)
+            [run] = idea["run_log"]
+            self.assertEqual((run["run"], run["outcome"], run["commits"]), (1, "done", 1))
+            self.assertEqual([d["kind"] for d in idea["decisions"]], ["approved"])
+            self.assertEqual([h["event"] for h in idea["history"]], ["start", "finish", "approve"])
+
+            design = found["phases"][2]
+            self.assertTrue(design["current"])
+            self.assertEqual(design["status"], "pending")
+            self.assertEqual([r["outcome"] for r in design["run_log"]], ["failed"])
+            # The founder's decision is the current phase's
+            self.assertEqual([d["text"] for d in design["decisions"]], ["Use argparse"])
+
+    def test_the_watcher_pushes_the_timeline(self):
+        with IgnorantTemporaryDirectory() as root:
+            session = WebSession()
+            watcher = ProjectWatcher(session, root).start()
+            try:
+                # Sent at the start, even without a project
+                self.assertFalse(session.timeline["available"])
+                state = ProjectState.new(root, "An adder")
+                state.save()
+                self.assertTrue(wait_for(lambda: session.timeline["available"]))
+                state.start("idea")
+                state.save()
+                self.assertTrue(
+                    wait_for(lambda: session.timeline["phases"][0]["status"] == "running")
+                )
+            finally:
+                watcher.stop()
+
+            # Kept as the latest snapshot, not in the conversation
+            self.assertNotIn("timeline", [m["type"] for m in session.history])
+            backlog = session.connect(object(), None)
+            self.assertEqual([m["type"] for m in backlog[:2]], ["session", "timeline"])
+            self.assertEqual(backlog[1]["phases"][0]["status"], "running")
+
+    def test_timeline_and_diff_endpoints(self):
+        import git
+        from fastapi.testclient import TestClient
+
+        from loom.web.backend.app import create_app
+        from tests.basic.test_agent import make_repo
+        from tests.basic.test_orchestrator import (
+            BAD_ADDER,
+            SCRIPT_DESIGN,
+            script_building,
+        )
+
+        with GitTemporaryDirectory() as root:
+            make_repo()
+            coder, orchestrator, llm, done = run_project(
+                SCRIPT_IDEA, SCRIPT_PLANNING, SCRIPT_DESIGN, script_building(BAD_ADDER)
+            )
+            io, session = make_io()
+            io.root = root
+            io.git = git.Repo(root)
+            app = create_app(session, static_dir=root, allowed_hosts=["localhost"], io=io)
+            client = TestClient(app, base_url="http://localhost")
+
+            found = client.get("/api/project/timeline").json()
+            self.assertEqual(found["current"], "testing")
+            self.assertEqual(found["phases"][3]["metrics"]["runs"], 1)
+
+            diff = client.get("/api/project/phase/building/diff").json()
+            self.assertTrue(diff["available"])
+            self.assertEqual(diff["run"], 1)
+            self.assertEqual([r["run"] for r in diff["runs"]], [1])
+            paths = [f["path"] for f in diff["files"]]
+            self.assertEqual(paths, ["adder.py", "loom-project/4-build-summary.md"])
+            adder = diff["files"][0]
+            self.assertEqual(adder["status"], "added")
+            self.assertIn("    return a - b", [line["text"] for line in adder["lines"]])
+
+            self.assertEqual(client.get("/api/project/phase/building/diff?run=1").json(), diff)
+            self.assertEqual(client.get("/api/project/phase/building/diff?run=7").status_code, 404)
+            self.assertEqual(client.get("/api/project/phase/deploy/diff").status_code, 404)
+            # A phase that hasn't run
+            launch = client.get("/api/project/phase/launch/diff").json()
+            self.assertFalse(launch["available"])
+            self.assertEqual(launch["files"], [])
