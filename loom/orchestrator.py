@@ -324,6 +324,16 @@ class ProjectState:
         total["cost"] = round(total["cost"], 6)
         return total
 
+    def fix_rounds(self, key):
+        """How often a failing test report sent the project back to this phase."""
+        return sum(
+            1
+            for entry in self.history
+            if entry.get("event") == "back"
+            and entry.get("phase") == key
+            and entry.get("note") == phase_prompts.fix_test_failures
+        )
+
     def totals(self):
         """The metrics of the whole project, every phase's added up."""
         total = dict(runs=0, **{field: 0 for field in METRIC_FIELDS})

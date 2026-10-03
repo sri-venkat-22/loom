@@ -8,12 +8,12 @@ from fastapi import APIRouter, HTTPException, Response
 
 from loom.memory import ProjectDB, ProjectMemory, ProjectMemoryError
 from loom.models import MODEL_ALIASES
-from loom.orchestrator import ProjectState, TransitionError
-from loom.phases import PHASES
+from loom.phases import PHASES, PHASES_BY_KEY
 from loom.project_report import FORMATS, ProjectReport, ReportError, export_bytes
 from loom.sessions import list_sessions
 
-from .changes import branch_base, changes
+from .changes import branch_base, changes, commit_changes
+from .project import read_state, timeline
 
 # The /project documents, which can be read as soon as a phase writes them, before loom's
 # own list of the project's files includes them
@@ -137,16 +137,51 @@ def make_router(io):
 
     def project(base):
         """The /project in base, and its decisions."""
-        if not ProjectDB(base).exists():
+        found = read_state(base)
+        if not found:
             raise HTTPException(404, "There is no project here.")
+        return found
+
+    @router.get("/project/timeline")
+    def project_timeline():
+        """The /project dashboard's timeline: each phase's status, verdict, metrics, runs,
+        decisions and history. The timeline message pushes the same when it changes."""
+        return timeline(root())
+
+    @router.get("/project/phase/{key}/diff")
+    def phase_diff(key: str, run: int = 0):
+        """What a run of a phase's agent changed: the diff of its commits, from the commit
+        it started at to the one it finished at. run is the run's number; the latest run
+        that made commits by default."""
+        base = root()
+        if key not in PHASES_BY_KEY:
+            raise HTTPException(404, f"There is no phase {key!r}")
+        state, _ = project(base)
+        runs = [entry for entry in state.run_log(key) if entry.get("head")]
+        listed = [
+            {name: entry.get(name) for name in ("run", "started", "commits", "outcome")}
+            for entry in runs
+        ]
+        result = dict(available=False, key=key, run=None, base=None, head=None, runs=listed)
+        if run:
+            chosen = next((entry for entry in runs if entry.get("run") == run), None)
+            if not chosen:
+                raise HTTPException(404, f"{key} has no run {run} with commits to show")
+        else:
+            with_commits = [entry for entry in runs if entry.get("commits")]
+            chosen = (with_commits or runs or [None])[-1]
+        if not chosen or not io.git:
+            return dict(result, files=[])
+        result.update(
+            available=True, run=chosen["run"], base=chosen.get("base"), head=chosen["head"]
+        )
+        if not chosen.get("commits"):
+            return dict(result, files=[])
         try:
-            state = ProjectState.load(base)
-            decisions = ProjectMemory(base).decisions()
-        except (TransitionError, ProjectMemoryError) as err:
-            raise HTTPException(500, str(err))
-        if state is None:
-            raise HTTPException(404, "There is no project here.")
-        return state, decisions
+            files = commit_changes(io.git, chosen.get("base"), chosen["head"])
+        except Exception as err:
+            raise HTTPException(500, f"Unable to diff the run's commits: {err}")
+        return dict(result, files=files)
 
     @router.get("/project/report")
     def project_report(format: str = "md"):

@@ -26,6 +26,89 @@ export interface Checkpoint {
 }
 export type TurnStatus = "done" | "cancelled";
 
+// The /project dashboard's timeline
+
+export type RunOutcome = "done" | "stopped" | "failed";
+
+// What runs of a phase's agent added up to, or the whole project's
+export interface Metrics {
+  runs: number;
+  seconds: number;
+  cost: number;
+  tokens_sent: number;
+  tokens_received: number;
+  commits: number;
+}
+
+// One run of a phase's agent. base and head are the commits HEAD was at before and after.
+export interface RunEntry {
+  run: number;
+  started: string;
+  finished: string;
+  seconds: number;
+  cost: number;
+  tokens_sent: number;
+  tokens_received: number;
+  base: string | null;
+  head: string | null;
+  commits: number;
+  verdict: string | null;
+  outcome: RunOutcome;
+}
+
+export interface Decision {
+  id: number;
+  time: string;
+  phase: string | null;
+  source: string;
+  kind: string;
+  text: string;
+  reason: string | null;
+}
+
+export interface HistoryEntry {
+  time: string;
+  phase?: string;
+  event: string;
+  note?: string;
+}
+
+export interface PhaseTimeline {
+  key: string;
+  number: number;
+  title: string;
+  agent: string;
+  document: string;
+  document_title: string;
+  produces: string;
+  status: PhaseStatus;
+  // Pending again because an earlier phase was redone
+  stale: boolean;
+  verdict: string | null;
+  // The phase the project is in
+  current: boolean;
+  metrics: Metrics;
+  run_log: RunEntry[];
+  // How often a failing test report sent the project back to it
+  fix_rounds: number;
+  decisions: Decision[];
+  history: HistoryEntry[];
+}
+
+export interface Timeline {
+  // False without a project
+  available: boolean;
+  idea: string | null;
+  created: string | null;
+  // The phase it's in, or null when it's complete
+  current: string | null;
+  complete: boolean;
+  totals: Metrics | null;
+  phases: PhaseTimeline[];
+  // The decisions of no phase
+  decisions: Decision[];
+}
+
 export interface Command {
   cmd: string;
   desc: string;
@@ -179,8 +262,14 @@ export interface TerminalEvent {
   start: boolean;
 }
 
+// The /project dashboard's view of the project, sent when it changes
+export interface TimelineEvent extends Timeline {
+  type: "timeline";
+}
+
 export type ServerEvent =
   | SessionEvent
+  | TimelineEvent
   | UserEvent
   | TurnStartEvent
   | TurnEndEvent

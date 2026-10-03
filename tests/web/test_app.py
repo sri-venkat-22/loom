@@ -14,7 +14,13 @@ from loom.llm import litellm
 from loom.models import Model
 from loom.utils import GitTemporaryDirectory
 from loom.web.backend.app import create_app
-from loom.web.backend.protocol import CLIENT_EVENTS, SERVER_EVENTS
+from loom.web.backend.protocol import (
+    ASK_KINDS,
+    CLIENT_EVENTS,
+    PHASE_STATUSES,
+    RUN_OUTCOMES,
+    SERVER_EVENTS,
+)
 from loom.web.backend.session import WebSession
 from loom.web.backend.webio import WebIO
 
@@ -153,3 +159,5 @@ class TestProtocol(unittest.TestCase):
         quoted = set(re.findall(r'"([a-z_]+)"', source))
         for type in SERVER_EVENTS + CLIENT_EVENTS:
             self.assertIn(type, quoted, f"protocol.ts doesn't mention {type}")
+        for value in ASK_KINDS + PHASE_STATUSES + RUN_OUTCOMES:
+            self.assertIn(value, quoted, f"protocol.ts doesn't mention {value}")

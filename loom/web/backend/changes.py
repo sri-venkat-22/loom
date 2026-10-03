@@ -8,6 +8,8 @@ the main branch.
 
 import re
 
+from loom.repo import EMPTY_TREE
+
 from .webio import parse_diff
 
 # Untracked files bigger than this show as changed without their text
@@ -106,4 +108,12 @@ def changes(git, root, base):
         change = new_file_change(root, path)
         if change:
             found.append(change)
+    return sorted(found, key=lambda change: change["path"])
+
+
+def commit_changes(git, base, head):
+    """Every file that differs between the commits base and head, with its diff. base None
+    means before the first commit."""
+    diff = git.git.diff(base or EMPTY_TREE, head, "-M", "--no-color", "--no-ext-diff", "--")
+    found = [file_change(part) for part in split_files(diff)]
     return sorted(found, key=lambda change: change["path"])
