@@ -9,7 +9,7 @@
 | 3 | Design | read, search, write its document | `loom-project/3-architecture.md`, the architecture document |
 | 4 | Building | every tool of the [agent](agent.md), MCP servers' included | the code, and `loom-project/4-build-summary.md` |
 | 5 | Testing | read, search, run commands, write test files | `loom-project/5-test-report.md`, with a result: PASS or FAIL |
-| 6 | Launch | read, search, run commands, write deployment files | deployment files (Dockerfile, CI workflow, ...) and `loom-project/6-deployment.md` |
+| 6 | Launch | read, search, run commands, write deployment files | deployment files (Dockerfile, CI workflow, ...) and `loom-project/6-deployment.md`; then [`/project ship`](#shipping) |
 
 The Building agent is loom's coding agent with a brief to build what the PRD and the
 architecture describe. Every agent also has two [project memory](#shared-memory) tools:
@@ -181,6 +181,52 @@ Building runs as one agent, as it always has, when there's no valid plan, the pl
 one package, there's one builder, or loom can't merge safely: no git repo, uncommitted
 changes, or `--no-auto-commits`.
 
+## Shipping
+
+Launch has two steps. The Launch agent **prepares** the deployment: its files (a
+Dockerfile, a CI workflow, `fly.toml` for Fly.io, ...) and the deployment document. Then
+you **ship** it:
+
+```
+agent> /project ship
+```
+
+| Command | What it ships |
+|---------|---------------|
+| `/project ship` or `/project ship fly` | Deploys to Fly.io with `flyctl` |
+| `/project ship --pr` | Pushes the `loom/launch` branch and opens a GitHub pull request with `gh` |
+| `/project ship --release` | Tags the commit (`v` and the version in `pyproject.toml` or `package.json`) and makes a GitHub release, with the deployment document as its notes |
+| `/project ship fly --pr`, `/project ship fly --release` | Deploys, then the GitHub step |
+| `/project rollback` | Deploys the release before the current one again |
+
+What loom does, in order:
+
+1. **What's needed.** It checks that `flyctl` (or `gh`) is installed and logged in. loom
+   never stores, asks for or writes tokens: when something is missing, it says what to
+   install, how to log in (`flyctl auth login`, `gh auth login`) and the names of the
+   environment variables the tools read instead (`FLY_API_TOKEN`, `GH_TOKEN`), and stops.
+   It also needs `fly.toml` with the app's name.
+2. **Local checks.** The template's Launch checks, `docker build` when there's a
+   Dockerfile, and the [test command](#the-test-command). They must pass; their commands
+   need your permission as usual.
+3. **The plan.** loom shows the provider, the app, the region, the account it's logged
+   in as and the GitHub steps, and asks you to **type the app's name** (or `loom/launch`
+   for a pull request) to go ahead.
+4. **Deploy and smoke test.** After the deploy, loom fetches `/health`, then `/`, a few
+   times while the app starts. If neither answers, it says so and suggests `/project
+   rollback`.
+5. **GitHub.** With no GitHub remote, loom asks before it makes a private repository
+   with `gh repo create`.
+6. **The record.** The URL and how the smoke test went are saved in the project's state
+   and in a `## Shipped` section of the deployment document, which loom commits. Each
+   thing it did outside the project (the deploy, the repository, the pull request, the
+   release, a rollback) is recorded as a decision of yours.
+
+loom never ships on its own: under `--yes-always` or bypass permissions, `/project ship`
+and `/project rollback` refuse, unless you start loom with `--allow-deploy` for a run with
+nobody to ask (it still needs allow rules for the checks' commands). Then the decisions
+say `loom (--allow-deploy)`.
+
 ## Commands
 
 | Command | What it does |
@@ -188,6 +234,8 @@ changes, or `--no-auto-commits`.
 | `/project new [--template NAME] [--tdd] IDEA` | Start a project, from a [template](#project-templates) if given, [test-driven](#test-driven-building) with `--tdd`, and run its phases |
 | `/project templates` | List the project templates |
 | `/project workers [N]` | How many [builders](#parallel-builders) build the work packages at once |
+| `/project ship [fly] [--pr\|--release]` | [Ship](#shipping) the project: deploy it, open a pull request or make a release |
+| `/project rollback` | Deploy the release before the current one |
 | `/project run` | Carry on from the phase the project is in |
 | `/project` or `/project status` | Show each phase's status |
 | `/project approve` | Approve the document waiting for review |

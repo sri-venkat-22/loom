@@ -648,6 +648,15 @@ def get_parser(default_config_files, git_root):
         ),
     )
     group.add_argument(
+        "--allow-deploy",
+        action="store_true",
+        default=False,
+        help=(
+            "Let /project ship and /project rollback deploy without asking, under --yes-always"
+            " or bypass permissions, like in a script (default: False)"
+        ),
+    )
+    group.add_argument(
         "--build-budget",
         type=float,
         metavar="DOLLARS",

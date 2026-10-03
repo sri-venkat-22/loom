@@ -84,7 +84,7 @@ MAX_RECALLED = 3
 TEMPLATE_SOURCE = "template"
 
 # The defaults of the options that change how projects run
-DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None, build_workers=3)
+DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None, build_workers=3, allow_deploy=False)
 # A work plan may have this many packages per builder
 PACKAGES_PER_WORKER = 3
 MAX_WORKERS = 16
@@ -512,6 +512,10 @@ class Orchestrator:
         self.io.rule()
         self.io.tool_output("Project complete: all six phases are approved.", bold=True)
         self.show_documents()
+        self.io.tool_output(
+            "Ship it with /project ship (Fly.io), and --pr or --release for GitHub; write it up"
+            " with /project report."
+        )
         return True
 
     def can_run(self):
