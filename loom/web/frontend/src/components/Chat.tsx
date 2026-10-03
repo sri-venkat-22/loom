@@ -19,7 +19,46 @@ const NO_ASKS: AskEntry[] = [];
 // "Explored" card, like Claude Code's.
 const EXPLORING = new Set(["Read", "List", "Glob", "Grep", "Recall"]);
 
-type Item = { kind: "entry"; entry: Entry } | { kind: "group"; id: string; tools: ToolEntry[] };
+type Item =
+  | { kind: "entry"; entry: Entry }
+  | { kind: "group"; id: string; tools: ToolEntry[] }
+  // Parallel builders' work: each builder's entries, side by side
+  | { kind: "lanes"; id: string; lanes: [string, Item[]][] };
+
+// Consecutive entries from parallel builders show as one lane per builder
+function laneItems(entries: Entry[], cards: Map<string, AskEntry[]>): Item[] {
+  const items: Item[] = [];
+  let lanes: Map<string, Entry[]> | null = null;
+  let first = "";
+  const flush = () => {
+    if (lanes) {
+      const grouped: [string, Item[]][] = [...lanes].map(([worker, own]) => [
+        worker,
+        groupTools(own, cards),
+      ]);
+      items.push({ kind: "lanes", id: `lanes-${first}`, lanes: grouped });
+    }
+    lanes = null;
+  };
+  let plain: Entry[] = [];
+  for (const entry of entries) {
+    if (entry.worker) {
+      items.push(...groupTools(plain, cards));
+      plain = [];
+      if (!lanes) {
+        lanes = new Map();
+        first = entry.id;
+      }
+      lanes.set(entry.worker, [...(lanes.get(entry.worker) ?? []), entry]);
+    } else {
+      flush();
+      plain.push(entry);
+    }
+  }
+  items.push(...groupTools(plain, cards));
+  flush();
+  return items;
+}
 
 function groupTools(entries: Entry[], cards: Map<string, AskEntry[]>): Item[] {
   const items: Item[] = [];
@@ -73,6 +112,60 @@ export function Welcome() {
   );
 }
 
+const itemKey = (item: Item) => (item.kind === "entry" ? item.entry.id : item.id);
+
+function ChatItem({ item, onCards }: { item: Item; onCards: Map<string, AskEntry[]> }) {
+  if (item.kind === "group") return <ToolGroup tools={item.tools} />;
+  if (item.kind === "lanes") return <WorkerLanes lanes={item.lanes} onCards={onCards} />;
+  return <Message entry={item.entry} asks={onCards.get(item.entry.id) ?? NO_ASKS} />;
+}
+
+// The parallel builders' work, a lane each, like a work package's column on a board
+function WorkerLanes({
+  lanes,
+  onCards,
+}: {
+  lanes: [string, Item[]][];
+  onCards: Map<string, AskEntry[]>;
+}) {
+  const columns = Math.min(lanes.length, 3);
+  return (
+    <div
+      className="grid gap-3"
+      style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
+      aria-label="Parallel builders"
+    >
+      {lanes.map(([worker, items]) => {
+        const running = items.some(
+          (item) =>
+            (item.kind === "entry" &&
+              item.entry.kind === "tool" &&
+              item.entry.status === "running") ||
+            (item.kind === "entry" && item.entry.kind === "loom" && item.entry.streaming),
+        );
+        return (
+          <section
+            key={worker}
+            aria-label={`Builder ${worker}`}
+            className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card/40 p-3 text-[13.5px]"
+          >
+            <header className="flex items-center gap-2 border-b border-raised pb-2">
+              <span
+                className={`size-2 shrink-0 rounded-full ${running ? "blink bg-primary" : "bg-success"}`}
+              />
+              <span className="truncate font-mono text-[12.5px] font-semibold">{worker}</span>
+              <span className="ml-auto shrink-0 text-[11px] text-dim">builder</span>
+            </header>
+            {items.map((item) => (
+              <ChatItem key={itemKey(item)} item={item} onCards={onCards} />
+            ))}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Chat() {
   const entries = useSession((state) => state.entries);
   const busy = useSession((state) => state.session?.busy ?? false);
@@ -118,7 +211,7 @@ export function Chat() {
       (entry) =>
         entry.kind !== "ask" || !entry.ask.tool_id || !cards.has(`tool-${entry.ask.tool_id}`),
     );
-    return { onCards, items: groupTools(shown, onCards) };
+    return { onCards, items: laneItems(shown, onCards) };
   }, [entries]);
 
   const last = entries[entries.length - 1];
@@ -139,17 +232,9 @@ export function Chat() {
       className="scroll-thin min-h-0 flex-1 overflow-y-auto"
     >
       <div ref={content} className="mx-auto flex max-w-[760px] flex-col gap-[22px] px-6 pb-7 pt-9">
-        {items.map((item) =>
-          item.kind === "group" ? (
-            <ToolGroup key={item.id} tools={item.tools} />
-          ) : (
-            <Message
-              key={item.entry.id}
-              entry={item.entry}
-              asks={onCards.get(item.entry.id) ?? NO_ASKS}
-            />
-          ),
-        )}
+        {items.map((item) => (
+          <ChatItem key={itemKey(item)} item={item} onCards={onCards} />
+        ))}
         {working && (
           <div className="flex items-center gap-2 text-[13.5px] text-muted-foreground">
             <span className="blink text-primary">●</span>

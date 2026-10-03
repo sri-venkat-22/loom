@@ -23,7 +23,8 @@ export function formatDuration(total: number) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n: number, word: string, words?: string) =>
+  `${n} ${n === 1 ? word : (words ?? `${word}s`)}`;
 
 function describe(metrics: Metrics) {
   return `${plural(metrics.runs, "run")} · ${formatDuration(metrics.seconds)} · ${formatCost(metrics.cost)}`;
@@ -384,6 +385,47 @@ function TestDriven({ phase }: { phase: PhaseTimeline }) {
   );
 }
 
+// Parallel Building's work packages, by wave
+const PACKAGE_STYLE: Record<string, string> = {
+  merged: "bg-success/12 text-add",
+  built: "bg-primary/12 text-primary",
+  running: "bg-warning/15 text-warning",
+  failed: "bg-destructive/12 text-del",
+  stopped: "bg-destructive/12 text-del",
+  pending: "bg-selected text-dim",
+};
+
+function Packages({ phase }: { phase: PhaseTimeline }) {
+  if (!phase.packages.length) return null;
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="text-[12px] text-muted-foreground">
+        Parallel builders · {plural(phase.packages.length, "work package")}
+      </div>
+      {phase.packages.map((pkg) => (
+        <div key={pkg.id} className="flex min-w-0 items-center gap-2 text-[12px]">
+          <span className="w-4 shrink-0 text-right font-mono text-[11px] text-dim">
+            {pkg.wave ?? ""}
+          </span>
+          <span className="min-w-0 truncate font-mono text-soft" title={pkg.title}>
+            {pkg.id}
+          </span>
+          <span
+            className={`shrink-0 rounded px-1.5 py-px text-[11px] ${PACKAGE_STYLE[pkg.status] ?? PACKAGE_STYLE.pending}`}
+            title={pkg.error ?? undefined}
+          >
+            {pkg.status}
+          </span>
+          <span className="ml-auto shrink-0 font-mono text-[11px] text-dim">
+            {pkg.attempts ? `${plural(pkg.attempts, "try", "tries")} · ` : ""}
+            {formatCost(pkg.cost)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const RESULTS: Record<string, string> = {
   passed: "tests pass",
   failed: "tests still fail",
@@ -444,6 +486,7 @@ function PhaseCard({
           )}
         </div>
         <TestDriven phase={phase} />
+        <Packages phase={phase} />
         <Checks checks={phase.checks} />
         <Decisions decisions={phase.decisions} />
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">

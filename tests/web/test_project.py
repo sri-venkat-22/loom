@@ -340,3 +340,21 @@ class TestDashboard(unittest.TestCase):
             )
             self.assertEqual(phase["run_log"][1]["attempts"], attempts)
             self.assertIsNone(found["phases"][2]["spec"])
+
+    def test_timeline_shows_the_work_packages(self):
+        with IgnorantTemporaryDirectory() as root:
+            state = ProjectState.new(root, "A CLI")
+            state.data["workers"] = 2
+            state.phase_data("building")["packages"] = dict(
+                core=dict(status="merged", title="Core", wave=1, cost=0.25, runs=1),
+                cli=dict(status="failed", title="CLI", wave=2, error="it didn't write its notes"),
+            )
+            state.save()
+            found = timeline(root)
+            self.assertEqual(found["workers"], 2)
+            packages = found["phases"][3]["packages"]
+            self.assertEqual([p["id"] for p in packages], ["core", "cli"])
+            self.assertEqual(packages[0]["status"], "merged")
+            self.assertEqual(packages[1]["error"], "it didn't write its notes")
+            self.assertEqual(packages[1]["cost"], 0)
+            self.assertEqual(found["phases"][2]["packages"], [])

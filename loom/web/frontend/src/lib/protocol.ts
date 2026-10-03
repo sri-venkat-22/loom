@@ -123,6 +123,21 @@ export interface PhaseTimeline {
   checks: { command: string; passed: boolean }[];
   // Building's acceptance tests, when it's test-driven
   spec: Spec | null;
+  // Building's work packages, when builders build them in parallel
+  packages: WorkPackage[];
+}
+
+export type PackageStatus = "pending" | "running" | "built" | "merged" | "failed" | "stopped";
+
+export interface WorkPackage {
+  id: string;
+  title: string;
+  status: PackageStatus;
+  wave: number | null;
+  cost: number;
+  runs: number;
+  attempts: number | null;
+  error: string | null;
 }
 
 export interface Timeline {
@@ -136,6 +151,8 @@ export interface Timeline {
   // The template it started from, if any, and whether Building is test-driven
   template: { name: string; source: string } | null;
   tdd: boolean;
+  // How many builders build at once, when the founder set it with /project workers
+  workers: number | null;
   totals: Metrics | null;
   phases: PhaseTimeline[];
   // The decisions of no phase
@@ -173,6 +190,12 @@ export interface SessionEvent {
   busy: boolean;
 }
 
+// Messages from a parallel builder say which work package it builds; the chat shows each
+// builder's in its own lane
+export interface FromWorker {
+  worker?: string | null;
+}
+
 export interface UserEvent {
   type: "user";
   text: string;
@@ -189,7 +212,7 @@ export interface TurnEndEvent {
   status: TurnStatus;
 }
 
-export interface AssistantDeltaEvent {
+export interface AssistantDeltaEvent extends FromWorker {
   type: "assistant_delta";
   id: string;
   // The answer and the model's thinking: appended, or replacing both when replace
@@ -198,12 +221,12 @@ export interface AssistantDeltaEvent {
   replace: boolean;
 }
 
-export interface AssistantEndEvent {
+export interface AssistantEndEvent extends FromWorker {
   type: "assistant_end";
   id: string;
 }
 
-export interface SystemEvent {
+export interface SystemEvent extends FromWorker {
   type: "system";
   level: Level;
   text: string;
@@ -212,7 +235,7 @@ export interface SystemEvent {
 export type ToolStatus = "done" | "failed";
 export type LineStyle = "done" | "warning" | "error" | "bold" | "dim" | null;
 
-export interface ToolStartEvent {
+export interface ToolStartEvent extends FromWorker {
   type: "tool_start";
   id: string;
   name: string;
@@ -221,7 +244,7 @@ export interface ToolStartEvent {
   args: string | null;
 }
 
-export interface ToolOutputEvent {
+export interface ToolOutputEvent extends FromWorker {
   type: "tool_output";
   id: string;
   lines: string[];
@@ -229,7 +252,7 @@ export interface ToolOutputEvent {
   styles: LineStyle[];
 }
 
-export interface ToolEndEvent {
+export interface ToolEndEvent extends FromWorker {
   type: "tool_end";
   id: string;
   status: ToolStatus;
@@ -244,7 +267,7 @@ export interface DiffLine {
   text: string;
 }
 
-export interface DiffEvent {
+export interface DiffEvent extends FromWorker {
   type: "diff";
   id: string;
   // The card it belongs on, or null

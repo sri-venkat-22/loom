@@ -264,8 +264,28 @@ class ProjectReport:
                 continue
             parts.append(f"{heading}\n\n{where}{self.checks(phase)}\n\n{shift_headings(text)}")
             if phase.key == "building":
+                parts += [part for part in [self.packages()] if part]
                 parts += self.test_driven()
         return "\n\n".join(parts)
+
+    def packages(self):
+        """Parallel Building's work packages, as a report part, or None."""
+        packages = self.state.phase_data("building").get("packages")
+        if not packages:
+            return None
+        rows = [
+            [
+                pid,
+                record.get("title") or "",
+                str(record.get("wave") or ""),
+                record.get("status", ""),
+                str(record.get("attempts") or ""),
+                format_cost(record.get("cost") or 0),
+            ]
+            for pid, record in packages.items()
+        ]
+        header = ["Package", "Title", "Wave", "Status", "Attempts", "Cost"]
+        return "**Parallel builders' work packages:**\n\n" + table(header, rows)
 
     def test_driven(self):
         """Test-driven Building's acceptance test plan and attempts, as report parts."""
