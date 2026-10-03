@@ -98,10 +98,13 @@ Write the architecture document in this format:
 <Step by step, for the main user stories.>
 ## Security and error handling
 ## Testing approach
-<Frameworks, what gets unit and integration tests, and the command that runs them.>
+<Frameworks, and what gets unit and integration tests.>
+**Test command:** `<the one command that runs the whole test suite>`
 ## Build order
 <Numbered steps for the Building agent.>
-## Decisions and trade-offs"""
+## Decisions and trade-offs
+
+The test command line must give one shell command, in backticks, that runs every test from the project root without asking for input and exits non-zero when a test fails, like `pytest -q` or `npm test -- --run`. loom reads it and runs it to check the build."""
 
 
 BUILDING = """You are the Building agent: loom's coding agent, working from the approved PRD and architecture document in the user's message.
