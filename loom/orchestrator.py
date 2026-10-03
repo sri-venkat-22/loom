@@ -24,6 +24,7 @@ search them and the earlier documents (indexed in a vector store) with the recal
 """
 
 import json
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -430,6 +431,8 @@ class Orchestrator:
         self.loaded_template = None
         # Settings from loom's options, like --build-retries
         self.settings = dict(DEFAULT_SETTINGS, **(getattr(coder, "project_settings", None) or {}))
+        # For what parallel builders change at once, like the coder's costs
+        self.lock = threading.RLock()
 
     # Starting and running
 
@@ -642,11 +645,12 @@ class Orchestrator:
 
     def collect(self, agent, meter):
         """Add what the agent spent since meter started, and its commits, to the coder that
-        started the project."""
-        for field, value in self.spent(agent, meter).items():
-            name = "total_cost" if field == "cost" else f"total_{field}"
-            setattr(self.coder, name, getattr(self.coder, name) + value)
-        self.coder.loom_commit_hashes.update(agent.loom_commit_hashes)
+        started the project. Parallel builders do it at once, so one at a time."""
+        with self.lock:
+            for field, value in self.spent(agent, meter).items():
+                name = "total_cost" if field == "cost" else f"total_{field}"
+                setattr(self.coder, name, getattr(self.coder, name) + value)
+            self.coder.loom_commit_hashes.update(agent.loom_commit_hashes)
 
     # Metrics of each run
 

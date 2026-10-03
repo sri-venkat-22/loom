@@ -23,6 +23,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ SCHEMA_VERSION = 1
 
 # "chroma", "keyword", or unset to use ChromaDB when it's installed
 STORE_ENV = "LOOM_MEMORY_STORE"
+# How long a connection waits for another's write to the database, in seconds
+BUSY_TIMEOUT = 10
 CHUNK_CHARS = 1200
 
 # Who decided: the founder, a phase agent by name, or the project's template
@@ -242,11 +245,14 @@ class ProjectDB:
         check_inside(self.root, self.path, is_file=True)
         make_memory_dir(self.root)
         try:
-            conn = sqlite3.connect(self.path)
+            # Parallel builders share the database: wait for each other's writes
+            conn = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT)
         except sqlite3.Error as err:
             raise ProjectMemoryError(f"Unable to open {self.path}: {err}")
         conn.row_factory = sqlite3.Row
         try:
+            # Readers don't block the writer, nor it them
+            conn.execute("PRAGMA journal_mode=WAL")
             with conn:
                 conn.executescript(SCHEMA)
                 conn.execute(
@@ -529,6 +535,8 @@ class ProjectMemory:
         # Why ChromaDB isn't used, when it isn't
         self.chroma_problem = None
         self.synced = False
+        # Parallel builders share the memory: one at a time brings ChromaDB up to date
+        self.lock = threading.RLock()
 
     # Which store searches
 
@@ -536,6 +544,11 @@ class ProjectMemory:
         """The ChromaDB index, in line with the database, or None to search by keyword."""
         if self.store == "keyword" or self.chroma_problem:
             return None
+        with self.lock:
+            return self.synced_index()
+
+    def synced_index(self):
+        """vector_index's work, with the lock held."""
         if self.chroma is None:
             if not chroma_installed():
                 self.chroma_problem = "chromadb isn't installed"
@@ -667,7 +680,8 @@ class ProjectMemory:
         index = self.vector_index()
         if index:
             try:
-                found = index.search(query, limit, phases, kinds, exclude_sources)
+                with self.lock:
+                    found = index.search(query, limit, phases, kinds, exclude_sources)
             except Exception as err:
                 self.give_up_on_chroma(err)
             else:

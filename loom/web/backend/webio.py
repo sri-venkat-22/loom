@@ -5,6 +5,7 @@ the browser. Input and questions come from the browser once the server is listen
 before that, like for startup questions, they're asked in the terminal.
 """
 
+import copy
 import json
 import re
 from contextlib import contextmanager
@@ -198,6 +199,21 @@ class WebIO(InputOutput):
         self.run_output = None
         # The current card already ended, like a finished /run's
         self.tool_closed = False
+
+    def for_worker(self, worker):
+        """A copy of this io for a parallel builder (loom/workers.py): its own tool cards,
+        and every message it sends carries worker, so the browser shows it in the
+        builder's lane."""
+        from loom.workers import WorkerSession
+
+        io = copy.copy(self)
+        io.web = WorkerSession(self.web, worker)
+        io.tool_id = None
+        io.tool_failed = False
+        io.tool_closed = False
+        io.run_output = None
+        io.pending_ask = None
+        return io
 
     @property
     def prompt_session(self):
