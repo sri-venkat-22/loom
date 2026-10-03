@@ -184,6 +184,11 @@ def normalize_verdict(text):
     return re.sub(r"[\s-]+", " ", text).strip().upper()
 
 
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# Values that mean the document gives no test command
+NO_COMMAND = ("none", "n/a", "na", "-", "tbd")
+
+
 def read_verdict(phase, text):
     """The verdict a phase's document gives on its verdict line, like GO or FAIL, or None
     if it has none (or still has the template's placeholder)."""
@@ -200,3 +205,52 @@ def read_verdict(phase, text):
             if value.startswith(normalize_verdict(verdict)):
                 return verdict
     return None
+
+
+def read_test_command(text):
+    """The command a document's "**Test command:** `pytest -q`" line gives, or None if it
+    has none (or still has the template's placeholder). The command can also be in a code
+    block right under the line."""
+    if not text:
+        return None
+    pattern = r"^[ \t>*_#-]*Test command[ \t*_]*:[ \t*_]*(.*)$"
+    for match in re.finditer(pattern, text, re.IGNORECASE | re.MULTILINE):
+        value = match.group(1).strip()
+        if not value:
+            value = first_fenced_line(text[match.end() :])
+        command = clean_command(value)
+        if command:
+            return command
+    return None
+
+
+def first_fenced_line(text):
+    """The first line of the code block that text starts with, after blank lines."""
+    lines = text.lstrip("\n").splitlines()
+    if not lines or not FENCE_RE.match(lines[0]):
+        return ""
+    for line in lines[1:]:
+        if FENCE_RE.match(line):
+            break
+        if line.strip() and not line.strip().startswith("#"):
+            return line
+    return ""
+
+
+def clean_command(value):
+    """A command from a document line: the code span if it has one, without Markdown's
+    bold markers or a shell prompt."""
+    value = value.strip()
+    code = re.search(r"(`+)\s*(.+?)\s*\1", value)
+    if code:
+        value = code.group(2)
+    else:
+        value = re.sub(r"(\*\*|__)\s*$", "", value).strip()
+    if value.startswith("$ "):
+        value = value[2:].strip()
+    if not value or value.lower().rstrip(".") in NO_COMMAND:
+        return None
+    if value.startswith("<") and value.endswith(">"):
+        # The template's placeholder
+        return None
+    return value

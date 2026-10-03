@@ -28,6 +28,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from loom import tools as agent_tools
 from loom.coders import phase_prompts
 from loom.editor import pipe_editor
 from loom.memory import (
@@ -39,7 +40,14 @@ from loom.memory import (
     ProjectMemoryError,
     chroma_installed,
 )
-from loom.phases import PHASES, PHASES_BY_KEY, get_phase, next_phase, read_verdict
+from loom.phases import (
+    PHASES,
+    PHASES_BY_KEY,
+    get_phase,
+    next_phase,
+    read_test_command,
+    read_verdict,
+)
 from loom.repo import ANY_GIT_ERROR
 from loom.tools import count_changes, describe_changes, plural
 from loom.utils import format_tokens
@@ -74,6 +82,13 @@ MAX_RECALLED = 3
 # What each entry of a phase's run_log adds up, for its metrics
 METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
 
+# How long the project's test command may run, and how much of its output loom keeps: the
+# end, where test runners sum up the failures
+TEST_TIMEOUT = agent_tools.MAX_BASH_TIMEOUT
+TEST_OUTPUT_CHARS = 6000
+# Lines of the test output shown to the user
+TEST_PREVIEW_LINES = 8
+
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
@@ -106,6 +121,17 @@ def describe_metrics(metrics):
         f"{plural(metrics['runs'], 'run')}, {format_duration(metrics['seconds'])},"
         f" {format_cost(metrics['cost'])}"
     )
+
+
+def keep_end(text, limit):
+    """The end of text, at most about limit characters of it, from the start of a line."""
+    if len(text) <= limit:
+        return text
+    end = text[-limit:]
+    newline = end.find("\n")
+    if 0 <= newline < limit // 10:
+        end = end[newline + 1 :]
+    return f"[... {len(text) - len(end):,} earlier characters cut ...]\n{end}"
 
 
 def usage(coder):
@@ -626,6 +652,63 @@ class Orchestrator:
         parts.append("# Your task\n\n" + "\n\n".join(task))
         return "\n\n".join(parts)
 
+    # The project's tests
+
+    def test_command(self):
+        """The command that runs the project's tests: the one the architecture document's
+        Test command line gives, or None."""
+        return read_test_command(self.document_text(PHASES_BY_KEY["design"]))
+
+    def run_tests(self, command=None, coder=None, timeout=TEST_TIMEOUT):
+        """Run the test command (by default the project's) in coder's root, the way the
+        bash tool runs a command: no stdin, a timeout, and the same permission check.
+
+        Returns (passed, output). output is the end of what the command printed, after its
+        exit status. passed is None when it didn't run: there's no test command, or the
+        user didn't allow it."""
+        coder = coder or self.coder
+        io = coder.io
+        command = command or self.test_command()
+        if not command:
+            return (
+                None,
+                (
+                    "The project has no test command: the architecture document's Testing"
+                    " approach needs a **Test command:** line."
+                ),
+            )
+        action = agent_tools.bash(coder, command, timeout)
+        io.tool_call("Run Tests", command)
+        outcome, _ = coder.permissions.request(action)
+        if outcome != "allow":
+            message = f"Not allowed to run the test command, {command}."
+            io.tool_result("Not run", error=True)
+            io.tool_done(message, error=True)
+            return None, message
+
+        code, output = agent_tools.run_command(command, coder.root, timeout)
+        if code is None:
+            status = f"Timed out after {timeout} seconds."
+        else:
+            status = f"Exit code: {code}"
+        output = keep_end(output.rstrip(), TEST_OUTPUT_CHARS) or "(no output)"
+        passed = code == 0
+        self.show_test_output(io, output, passed, status)
+        result = f"{status}\n{output}"
+        io.tool_done(result, error=not passed)
+        return passed, result
+
+    def show_test_output(self, io, output, passed, status):
+        lines = [line.rstrip() for line in output.splitlines()]
+        styles = [None] * len(lines)
+        if len(lines) > TEST_PREVIEW_LINES:
+            skipped = len(lines) - TEST_PREVIEW_LINES
+            lines = [f"… +{skipped} earlier lines"] + lines[-TEST_PREVIEW_LINES:]
+            styles = ["dim"] + [None] * TEST_PREVIEW_LINES
+        lines.append("Tests pass" if passed else f"Tests fail ({status.rstrip('.')})")
+        styles.append(None if passed else io.tool_error_color or "red")
+        io.tool_result(lines, styles=styles)
+
     # The project memory
 
     def decide(self, phase, kind, text, reason="", source=FOUNDER):
@@ -764,6 +847,15 @@ class Orchestrator:
             self.io.tool_warning(
                 f"The {phase.document_title} has no {phase.verdict_label} line loom can read."
             )
+        if phase.key == "design":
+            command = read_test_command(text)
+            if command:
+                self.io.tool_output(f"Test command: {command}")
+            else:
+                self.io.tool_warning(
+                    f"The {phase.document_title} has no Test command line loom can read, so"
+                    " loom can't run the project's tests itself."
+                )
         try:
             decisions = self.memory.decisions(["decision"], phase.key)
         except ProjectMemoryError:

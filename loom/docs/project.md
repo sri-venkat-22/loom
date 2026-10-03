@@ -71,6 +71,22 @@ Every checkpoint's outcome (approved, edited, rejected with feedback, sent back,
 overridden) is recorded in the project's [shared memory](#shared-memory), with who
 decided: `founder`, or `loom (--yes-always)` when loom answered for you.
 
+## The test command
+
+The architecture document's Testing approach names the one command that runs the whole
+test suite, on a line loom reads:
+
+```
+**Test command:** `pytest -q`
+```
+
+The Design checkpoint shows the command, or warns when there's no line loom can read;
+edit the document to fix it before you approve it. loom runs the command itself when it
+needs to know whether the tests pass, the way the agents' bash tool runs commands: from
+the project root, without input, with a 10-minute timeout, and only when your permissions
+allow it (an allow rule like `/permissions allow bash(pytest*)` saves the question). It
+keeps the end of the output, where test runners sum up the failures.
+
 ## Commands
 
 | Command | What it does |

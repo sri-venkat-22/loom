@@ -19,7 +19,13 @@ from loom.orchestrator import (
     TransitionError,
 )
 from loom.permissions import Permissions
-from loom.phases import PHASES, PHASES_BY_KEY, get_phase, read_verdict
+from loom.phases import (
+    PHASES,
+    PHASES_BY_KEY,
+    get_phase,
+    read_test_command,
+    read_verdict,
+)
 from loom.sendchat import sanity_check_messages
 from loom.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
 
@@ -260,6 +266,27 @@ class TestPhases(unittest.TestCase):
         self.assertEqual(read_verdict(testing, "**Result:** FAIL\n2 failed"), "FAIL")
         self.assertEqual(read_verdict(testing, "Result: PASS"), "PASS")
         self.assertIsNone(read_verdict(PHASES_BY_KEY["planning"], "Verdict: GO"))
+
+    def test_read_test_command(self):
+        for text, command in [
+            ("## Testing approach\n**Test command:** `pytest -q`\n", "pytest -q"),
+            ("Test command: pytest -q", "pytest -q"),
+            ("- **Test command**: `npm test -- --run` (from the root)", "npm test -- --run"),
+            ("**Test Command:** ``pytest tests/test_*.py``", "pytest tests/test_*.py"),
+            ("**Test command: go test ./...**", "go test ./..."),
+            ("> **Test command:** $ make test", "make test"),
+            ("**Test command:**\n\n```bash\n# all of them\npytest -q\n```\n", "pytest -q"),
+            ("**Test command:**\r\n~~~\r\ncargo test\r\n~~~\r\n".replace("\r", ""), "cargo test"),
+            # The placeholder, a none, or the first line that has one
+            ("**Test command:** `<the one command that runs the whole test suite>`", None),
+            ("**Test command:** None", None),
+            ("**Test command:** N/A\nTest command: `pytest`", "pytest"),
+            ("**Test command:**\nRun pytest.", None),
+            ("## Testing approach\nWe use pytest.", None),
+            ("", None),
+            (None, None),
+        ]:
+            self.assertEqual(read_test_command(text), command, text)
 
 
 class TestPhaseCoder(unittest.TestCase):
@@ -1154,6 +1181,91 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(format_duration(4.6), "5s")
         self.assertEqual(format_duration(65), "1m 05s")
         self.assertEqual(format_duration(3720), "1h 02m")
+
+
+class TestTestCommand(unittest.TestCase):
+    def make_orchestrator(self, io=None, allow=()):
+        orchestrator = Orchestrator(make_coder(io, allow=allow))
+        orchestrator.new_project(IDEA)
+        return orchestrator
+
+    def write_architecture(self, text):
+        path = Path(PHASES_BY_KEY["design"].document)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(text.encode())
+
+    def test_from_the_architecture_document(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = self.make_orchestrator()
+            # No architecture yet
+            self.assertIsNone(orchestrator.test_command())
+            self.write_architecture(ARCHITECTURE)
+            self.assertIsNone(orchestrator.test_command())
+            self.write_architecture(
+                ARCHITECTURE + "## Testing approach\n**Test command:** `pytest`\n"
+            )
+            self.assertEqual(orchestrator.test_command(), "pytest")
+
+            passed, output = orchestrator.run_tests()
+            self.assertIsNone(passed)
+            self.assertIn("Not allowed to run the test command, pytest.", output)
+
+    def test_no_test_command(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            passed, output = self.make_orchestrator().run_tests()
+            self.assertIsNone(passed)
+            self.assertIn("needs a **Test command:** line", output)
+
+    def test_passing_and_failing_commands(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            io.tool_result = MagicMock()
+            orchestrator = self.make_orchestrator(io, allow=[f"bash({sys.executable}*)"])
+
+            passed, output = orchestrator.run_tests(f"{sys.executable} -c \"print('3 passed')\"")
+            self.assertTrue(passed)
+            self.assertEqual(output, "Exit code: 0\n3 passed")
+            self.assertEqual(io.tool_result.call_args[0][0][-1], "Tests pass")
+
+            # A long failing run: the end, with the summary, is what's kept
+            script = (
+                "import sys; [print('line', n) for n in range(5000)];"
+                " print('FAILED test_add - assert -1 == 5'); sys.exit(1)"
+            )
+            passed, output = orchestrator.run_tests(f'{sys.executable} -c "{script}"')
+            self.assertFalse(passed)
+            self.assertTrue(output.startswith("Exit code: 1\n[... "), output[:80])
+            self.assertTrue(output.endswith("FAILED test_add - assert -1 == 5"))
+            self.assertLess(len(output), 6200)
+            self.assertIn("earlier characters cut", output)
+            self.assertNotIn("line 0\n", output)
+            shown = io.tool_result.call_args[0][0]
+            self.assertEqual(shown[-1], "Tests fail (Exit code: 1)")
+            self.assertEqual(shown[-2], "FAILED test_add - assert -1 == 5")
+
+            # It runs without stdin, in the project's root
+            script = "import os, sys; print(os.getcwd()); print(repr(sys.stdin.read()))"
+            passed, output = orchestrator.run_tests(f'{sys.executable} -c "{script}"')
+            self.assertTrue(passed)
+            self.assertIn(os.path.realpath(os.getcwd()), os.path.realpath(output.split("\n")[1]))
+            self.assertIn("''", output)
+
+    def test_design_checkpoint_shows_the_test_command(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            io.tool_output = MagicMock()
+            io.tool_warning = MagicMock()
+            orchestrator = self.make_orchestrator(io)
+            design = PHASES_BY_KEY["design"]
+            orchestrator.show_review(design, ARCHITECTURE, None)
+            self.assertIn("no Test command line", io.tool_warning.call_args[0][0])
+            text = ARCHITECTURE + "**Test command:** `pytest -q`\n"
+            orchestrator.show_review(design, text, None)
+            io.tool_output.assert_called_with("Test command: pytest -q")
 
 
 class TestReadingDocuments(unittest.TestCase):
