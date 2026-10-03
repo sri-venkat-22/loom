@@ -3176,8 +3176,16 @@
   use_temperature: false
   editor_model_name: bedrock/global.moonshotai.kimi-k3
   editor_edit_format: editor-diff
+  extra_params:
+    max_tokens: 8192
+    timeout: 180
+    stream_timeout: 60
 
 - name: bedrock/deepseek.v3.2
   edit_format: diff
   use_repo_map: true
   use_temperature: false
+  extra_params:
+    max_tokens: 8192
+    timeout: 180
+    stream_timeout: 60
