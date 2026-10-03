@@ -1,0 +1,30 @@
+name: fastapi-react
+description: A FastAPI backend with a React (Vite + TypeScript) frontend, served from one container
+tdd: false
+test_command: "python -m pytest -q api && npm --prefix web test -- --run"
+decisions:
+  - "The backend is FastAPI on Python 3.11 in api/, with its own requirements.txt; the frontend is React + Vite + TypeScript in web/"
+  - "The browser calls the backend's JSON API under /api; in production FastAPI also serves the built frontend, so the app ships as one container"
+  - "Backend tests use pytest with FastAPI's TestClient; frontend tests use Vitest with Testing Library"
+briefs:
+  design: |
+    The project starts from the fastapi-react template's skeleton, which loom copies in when Building starts:
+    - api/: the FastAPI app (api/app/main.py, with GET /api/health), api/requirements.txt, api/pytest.ini and api/tests/
+    - web/: a Vite + React + TypeScript app (web/src/App.tsx and its Vitest test), whose dev server proxies /api to the backend on port 8000
+    - Dockerfile: builds the frontend, then runs the API with uvicorn, serving the built frontend at /
+    Design within that layout. Every endpoint lives under /api with Pydantic models for its requests and responses; list them with their status codes. Say where data is stored: SQLite through SQLAlchemy (or sqlite3) is the default for an MVP, with its path from an environment variable. Plan the React components and how they call the API (one small typed client module in web/src/api.ts).
+  building: |
+    The fastapi-react skeleton is in place: api/ (FastAPI) and web/ (Vite + React + TypeScript). Keep that layout and the /api prefix for every endpoint.
+    Backend: add routers under api/app/, with Pydantic models, and tests in api/tests/ using TestClient. Install its packages with pip install -r api/requirements.txt.
+    Frontend: run npm --prefix web install once, keep API calls in web/src/api.ts, and test components with Vitest and Testing Library (npm --prefix web test -- --run).
+    Configuration comes from environment variables, never from committed secrets.
+  testing: |
+    Run both suites: python -m pytest -q api and npm --prefix web test -- --run. Test each endpoint's success, validation errors (422) and not-found cases with TestClient, and the main components' rendering and user actions with Testing Library. The two suites must both pass for a PASS.
+  launch: |
+    The Dockerfile builds the frontend and serves it from the API with uvicorn on $PORT, so one container is the whole app. Check that docker build works if Docker is available. Add a GitHub Actions workflow that runs both test suites, and a fly.toml for Fly.io (internal_port 8000, a /api/health check) unless the documents chose another host.
+checks:
+  building: ["python -m compileall -q api", "npm --prefix web run build"]
+  testing: ["python -m pytest -q api", "npm --prefix web test -- --run"]
+  launch: ["docker build -t app ."]
+writable:
+  launch: ["fly.toml"]

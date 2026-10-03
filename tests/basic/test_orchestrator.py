@@ -901,7 +901,9 @@ class TestProjectCommand(unittest.TestCase):
                 "There is no project here. Start one with /project new IDEA."
             )
             commands.cmd_project("new")
-            io.tool_error.assert_called_with("Describe the idea: /project new IDEA")
+            io.tool_error.assert_called_with(
+                "Describe the idea: /project new [--template NAME] [--tdd] IDEA"
+            )
             commands.cmd_project("launch-now")
             self.assertIn("Unknown subcommand", io.tool_error.call_args[0][0])
 

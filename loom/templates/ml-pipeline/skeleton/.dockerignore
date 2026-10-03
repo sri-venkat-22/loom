@@ -1,0 +1,7 @@
+.git
+.loom*
+.venv
+**/__pycache__
+data/raw
+models
+reports

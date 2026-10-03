@@ -57,6 +57,7 @@ KIND_TITLES = {
     "rejected": "Changes asked for",
     "sent back": "Sent back",
     "override": "Overrides",
+    "check": "Template checks",
 }
 STATUS_LABELS = dict(
     pending="pending", running="interrupted", review="waiting for review", approved="approved"
@@ -200,6 +201,11 @@ class ProjectReport:
             fields.append(("Model", self.models["main"]))
         if self.models.get("weak"):
             fields.append(("Weak model", self.models["weak"]))
+        template = self.state.template_info
+        if template:
+            fields.append(("Template", f"{template['name']} ({template.get('source')})"))
+        if self.state.tdd:
+            fields.append(("Building", "test-driven"))
         fields.append(("loom", __version__))
         if totals["runs"]:
             fields.append(("Effort", describe_metrics(totals)))
@@ -256,8 +262,16 @@ class ProjectReport:
             if not text:
                 parts.append(f"{heading}\n\n*No {phase.document_title} yet.*")
                 continue
-            parts.append(f"{heading}\n\n{where}\n\n{shift_headings(text)}")
+            parts.append(f"{heading}\n\n{where}{self.checks(phase)}\n\n{shift_headings(text)}")
         return "\n\n".join(parts)
+
+    def checks(self, phase):
+        """The template's checks after the phase's last run, as a paragraph, or ""."""
+        checks = self.state.phase_data(phase.key).get("checks")
+        if not checks:
+            return ""
+        marks = [f"{'✓' if c['passed'] else '✗'} `{c['command']}`" for c in checks]
+        return "\n\n**Template checks:** " + ", ".join(marks)
 
     # Decisions
 

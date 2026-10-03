@@ -1,0 +1,24 @@
+# One run of the pipeline. The same config, data and seed give the same model and metrics.
+seed: 42
+
+data:
+  # A CSV with the feature columns and the target column
+  source: data/raw/dataset.csv
+  target: target
+  test_size: 0.2
+  stratify: true
+
+features:
+  # Columns to use; empty means every column but the target
+  numeric: []
+  categorical: []
+
+model:
+  # logistic_regression or random_forest (see src/pipeline/train.py)
+  kind: logistic_regression
+  params:
+    max_iter: 1000
+
+outputs:
+  model: models/model.joblib
+  metrics: reports/metrics.json

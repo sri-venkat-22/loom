@@ -79,6 +79,9 @@ MAX_DECISIONS = 40
 # How many passages of earlier documents the orchestrator looks up for an agent
 MAX_RECALLED = 3
 
+# Who the template's decisions and its checks' results come from
+TEMPLATE_SOURCE = "template"
+
 # What each entry of a phase's run_log adds up, for its metrics
 METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
 
@@ -134,6 +137,18 @@ def keep_end(text, limit):
     return f"[... {len(text) - len(end):,} earlier characters cut ...]\n{end}"
 
 
+def describe_checks(phase, results):
+    """The outcome of a phase's template checks, as a decision for the agents to come."""
+    parts = []
+    for result in results:
+        if result["passed"]:
+            parts.append(f"`{result['command']}` passed")
+        else:
+            status = result["output"].split("\n", 1)[0].rstrip(".").lower()
+            parts.append(f"`{result['command']}` failed ({status})")
+    return f"The template's checks after {phase.title}: " + "; ".join(parts)
+
+
 def usage(coder):
     """What a coder has spent so far: its cost and tokens."""
     return dict(
@@ -177,7 +192,9 @@ class ProjectState:
         return self.db.path
 
     @classmethod
-    def new(cls, root, idea, db=None):
+    def new(cls, root, idea, db=None, template=None, tdd=False):
+        """A new project for idea, from template (a Template) if given, test-driven if
+        tdd."""
         data = dict(
             version=FORMAT_VERSION,
             idea=idea.strip(),
@@ -186,6 +203,12 @@ class ProjectState:
             fix_rounds=0,
             history=[],
         )
+        if template:
+            data["template"] = dict(
+                name=template.name, source=template.source, hash=template.hash()
+            )
+        if tdd or (template and template.tdd):
+            data["tdd"] = True
         state = cls(db or ProjectDB(root), data)
         state.log(None, "new", idea.strip().split("\n", 1)[0])
         return state
@@ -242,6 +265,16 @@ class ProjectState:
     @property
     def history(self):
         return self.data["history"]
+
+    @property
+    def tdd(self):
+        """Whether Building is test-driven."""
+        return bool(self.data.get("tdd"))
+
+    @property
+    def template_info(self):
+        """The project's template, {name, source, hash}, or None."""
+        return self.data.get("template")
 
     def phase_data(self, key):
         return self.data["phases"][key]
@@ -381,18 +414,57 @@ class Orchestrator:
         self.state = state if state is not None else ProjectState.load(self.root, self.memory.db)
         # Phases whose document links outside the project, which loom has warned about
         self.outside_warned = set()
+        # The project's template, once loaded (False when it has none or it's gone)
+        self.loaded_template = None
 
     # Starting and running
 
-    def new_project(self, idea):
+    def new_project(self, idea, template=None, tdd=False):
+        """Start a project for idea, from template (a Template) if given, test-driven if
+        tdd."""
         try:
             # A new idea starts with an empty memory
             self.memory.clear()
         except ProjectMemoryError as err:
             raise TransitionError(f"Unable to start the project: {err}")
-        self.state = ProjectState.new(self.root, idea, self.memory.db)
+        self.state = ProjectState.new(self.root, idea, self.memory.db, template, tdd)
         self.state.save()
+        self.loaded_template = template or False
         self.memory.index_text("idea", "idea", None, "idea", self.state.idea, "The project idea")
+        if template:
+            for text in template.decisions:
+                self.decide(None, "decision", text, source=TEMPLATE_SOURCE)
+
+    # The project's template (loom/project_templates.py)
+
+    @property
+    def template(self):
+        """The project's Template, or None. Says so once if it's gone or has changed since
+        the project started."""
+        if self.loaded_template is None:
+            self.loaded_template = self.load_template() or False
+        return self.loaded_template or None
+
+    def load_template(self):
+        from loom.project_templates import TemplateError, load_template
+
+        info = self.state.template_info if self.state else None
+        if not info:
+            return None
+        try:
+            template = load_template(self.root, info["name"])
+        except TemplateError as err:
+            self.io.tool_warning(f"{err} The project carries on without its template.")
+            return None
+        digest = template.hash()
+        if digest != info.get("hash"):
+            self.io.tool_warning(
+                f"The {template.name} template has changed since the project started; loom"
+                " uses it as it is now."
+            )
+            info["hash"] = digest
+            self.save_quietly()
+        return template
 
     def run(self):
         """Run the phases from the current one, stopping at each one's checkpoint for the
@@ -451,6 +523,8 @@ class Orchestrator:
             ),
             bold=True,
         )
+        if phase.key == "building":
+            self.apply_skeleton()
         agent = self.make_agent(phase)
         meter = self.start_run(agent)
         # How the run ended, if the agent raised
@@ -494,6 +568,7 @@ class Orchestrator:
         state.finish(phase.key, verdict)
         state.save()
         self.remember_document(phase)
+        self.run_checks(phase)
         return True
 
     def stopped(self, agent):
@@ -513,6 +588,7 @@ class Orchestrator:
             summarize_from_coder=False,
             phase=phase,
             shared_memory=self.memory,
+            template=self.template,
             fnames=[],
             read_only_fnames=[],
             done_messages=[],
@@ -665,8 +741,10 @@ class Orchestrator:
     # The project's tests
 
     def test_command(self):
-        """The command that runs the project's tests: the one the architecture document's
-        Test command line gives, or None."""
+        """The command that runs the project's tests: the template's, or the one the
+        architecture document's Test command line gives, or None."""
+        if self.template and self.template.test_command:
+            return self.template.test_command
         return read_test_command(self.document_text(PHASES_BY_KEY["design"]))
 
     def run_tests(self, command=None, coder=None, timeout=TEST_TIMEOUT):
@@ -696,7 +774,14 @@ class Orchestrator:
             io.tool_done(message, error=True)
             return None, message
 
-        code, output = agent_tools.run_command(command, coder.root, timeout)
+        passed, result = self.run_shell(io, command, coder.root, timeout, "Tests")
+        return passed, result
+
+    def run_shell(self, io, command, cwd, timeout, what):
+        """Run command in cwd like the bash tool, and show the end of its output under the
+        tool call already shown. Returns (passed, its exit status and the end of its
+        output)."""
+        code, output = agent_tools.run_command(command, cwd, timeout)
         if code is None:
             status = f"Timed out after {timeout} seconds."
         else:
@@ -704,21 +789,108 @@ class Orchestrator:
         output = output.replace("\r\n", "\n").rstrip()
         output = keep_end(output, TEST_OUTPUT_CHARS) or "(no output)"
         passed = code == 0
-        self.show_test_output(io, output, passed, status)
+        self.show_shell_output(io, output, passed, status, what)
         result = f"{status}\n{output}"
         io.tool_done(result, error=not passed)
         return passed, result
 
-    def show_test_output(self, io, output, passed, status):
+    def show_shell_output(self, io, output, passed, status, what):
         lines = [line.rstrip() for line in output.splitlines()]
         styles = [None] * len(lines)
         if len(lines) > TEST_PREVIEW_LINES:
             skipped = len(lines) - TEST_PREVIEW_LINES
             lines = [f"… +{skipped} earlier lines"] + lines[-TEST_PREVIEW_LINES:]
             styles = ["dim"] + [None] * TEST_PREVIEW_LINES
-        lines.append("Tests pass" if passed else f"Tests fail ({status.rstrip('.')})")
+        verb = "pass" if what.endswith("s") else "passes"
+        failed = "fail" if what.endswith("s") else "fails"
+        lines.append(f"{what} {verb}" if passed else f"{what} {failed} ({status.rstrip('.')})")
         styles.append(None if passed else io.tool_error_color or "red")
         io.tool_result(lines, styles=styles)
+
+    # The template's skeleton and checks
+
+    def apply_skeleton(self):
+        """Copy the template's skeleton into the project when Building first starts, and
+        commit it."""
+        from loom.project_templates import copy_skeleton
+
+        template = self.template
+        info = self.state.template_info
+        if not template or not template.skeleton or info.get("skeleton"):
+            return
+        written, skipped = copy_skeleton(template, self.root)
+        info["skeleton"] = now()
+        self.state.save()
+        self.io.tool_output(
+            f"Copied the {template.name} template's skeleton into the project:"
+            f" {plural(len(written), 'file')}."
+        )
+        if skipped:
+            self.io.tool_output(
+                f"Kept the project's own {', '.join(skipped)} instead of the skeleton's."
+            )
+        if written:
+            self.commit(
+                [self.root / rel for rel in written],
+                f"Add the {template.name} template's skeleton",
+            )
+
+    def run_checks(self, phase):
+        """Run the template's checks for phase, once its agent is done. Failed checks warn
+        but don't stop the project. Returns the results, [{command, passed, output}]."""
+        template = self.template
+        commands = template.checks_for(phase.key) if template else []
+        if not commands:
+            return []
+        if not self.checks_allowed(template):
+            self.io.tool_warning(
+                f"Skipped the {template.name} template's checks: they weren't approved."
+            )
+            return []
+
+        results = []
+        for command in commands:
+            self.io.tool_call("Check", command)
+            passed, output = self.run_shell(self.io, command, self.root, TEST_TIMEOUT, "Check")
+            results.append(dict(command=command, passed=passed, output=output))
+
+        data = self.state.phase_data(phase.key)
+        data["checks"] = results
+        if data.get("run_log"):
+            data["run_log"][-1]["checks"] = [
+                dict(command=r["command"], passed=r["passed"]) for r in results
+            ]
+        self.state.save()
+
+        failed = [r for r in results if not r["passed"]]
+        if failed:
+            self.io.tool_warning(
+                f"{len(failed)} of the {template.name} template's {plural(len(results), 'check')}"
+                " failed. They don't stop the project; the agents of the next phases see them."
+            )
+        self.decide(phase, "check", describe_checks(phase, results), source=TEMPLATE_SOURCE)
+        return results
+
+    def checks_allowed(self, template):
+        """Whether the template's checks may run: loom's own templates' and the user's
+        always may; a project's own template's after the user approves them, once."""
+        from loom import project_templates
+
+        if template.trusted or project_templates.checks_approved(template, self.root):
+            return True
+        approved = getattr(self.coder, "template_checks_approved", {})
+        if template.name not in approved:
+            answer = self.io.permission_ask(
+                f"Run the checks of this project's {template.name} template?",
+                subject=project_templates.describe_checks(template),
+                always="trust them in this project",
+                explicit_yes_required=True,
+            )
+            if answer == "always":
+                project_templates.approve_checks(template, self.root, self.io)
+            approved[template.name] = answer in ("yes", "always")
+            self.coder.template_checks_approved = approved
+        return approved[template.name]
 
     # The project memory
 
@@ -860,13 +1032,24 @@ class Orchestrator:
             )
         if phase.key == "design":
             command = read_test_command(text)
-            if command:
+            template = self.template
+            if template and template.test_command:
+                self.io.tool_output(
+                    f"Test command: {template.test_command} (from the {template.name} template)"
+                )
+            elif command:
                 self.io.tool_output(f"Test command: {command}")
             else:
                 self.io.tool_warning(
                     f"The {phase.document_title} has no Test command line loom can read, so"
                     " loom can't run the project's tests itself."
                 )
+        checks = self.state.phase_data(phase.key).get("checks")
+        if checks:
+            self.io.tool_output("The template's checks:")
+            for check in checks:
+                mark = "✓" if check["passed"] else "✗"
+                self.io.tool_output(f"  {mark} {check['command']}")
         try:
             decisions = self.memory.decisions(["decision"], phase.key)
         except ProjectMemoryError:
@@ -958,14 +1141,16 @@ class Orchestrator:
         self.commit(path, f"Edit {phase.document} at the {phase.title} checkpoint")
         return True
 
-    def commit(self, path, message):
+    def commit(self, paths, message):
+        """Commit the file at paths, or the files, with message."""
         coder = self.coder
         if not coder.repo or not coder.auto_commits or coder.dry_run:
             return
+        paths = [paths] if isinstance(paths, (str, Path)) else list(paths)
         try:
-            coder.repo.commit(fnames=[str(path)], message=message, coder=coder)
+            coder.repo.commit(fnames=[str(path) for path in paths], message=message, coder=coder)
         except Exception as err:
-            self.io.tool_warning(f"Unable to commit {path}: {err}")
+            self.io.tool_warning(f"Unable to commit {', '.join(map(str, paths))}: {err}")
 
     def ask_feedback(self, phase):
         """The founder rejected the document: redo the phase with their feedback, or stop."""
@@ -1075,6 +1260,15 @@ class Orchestrator:
         if len(idea) > 80:
             idea = idea[:79] + "…"
         self.io.tool_output(f"Project: {idea}", bold=True)
+        info = state.template_info
+        if info or state.tdd:
+            parts = []
+            if info:
+                parts.append(f"from the {info['name']} template")
+            if state.tdd:
+                parts.append("test-driven Building")
+            text = ", ".join(parts)
+            self.io.tool_output(f"  {text[0].upper()}{text[1:]}")
         current = state.current
         marks = dict(pending="○", running="●", review="◆", approved="✓")
         labels = dict(
