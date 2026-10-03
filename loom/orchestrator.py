@@ -87,6 +87,7 @@ TEMPLATE_SOURCE = "template"
 DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None, build_workers=3)
 # A work plan may have this many packages per builder
 PACKAGES_PER_WORKER = 3
+MAX_WORKERS = 16
 
 # What each entry of a phase's run_log adds up, for its metrics
 METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
@@ -400,6 +401,10 @@ class ProjectState:
             data.pop("verdict", None)
             data.pop("feedback", None)
             data.pop("attach", None)
+            if phase is not target:
+                # Parallel Building starts over, from a scaffold of the new design
+                data.pop("packages", None)
+                data.pop("parallel", None)
             spec = data.get("spec")
             if phase is not target and spec and spec.get("status") != "pending":
                 # Test-driven Building's acceptance tests are written again, from the
@@ -542,6 +547,11 @@ class Orchestrator:
         )
         if phase.key == "building":
             self.apply_skeleton()
+            from loom.parallel import ParallelBuilding
+
+            parallel = ParallelBuilding(self)
+            if parallel.ready():
+                return parallel.run(phase)
             if state.tdd:
                 from loom.tdd import TestDrivenBuilding
 
@@ -561,9 +571,9 @@ class Orchestrator:
 
     def nudge_for_document(self, agent, phase):
         """Remind agent once to write phase's document, if it finished without it."""
-        if agent.failed or self.stopped(agent) or self.document_text(phase):
+        if agent.failed or self.stopped(agent) or self.document_text(phase, agent.root):
             return
-        self.io.tool_warning(f"The {phase.agent} didn't write {phase.document}.")
+        agent.io.tool_warning(f"The {phase.agent} didn't write {phase.document}.")
         agent.run(
             with_message=phase_prompts.missing_document.format(document=phase.document),
             preproc=False,
@@ -656,8 +666,10 @@ class Orchestrator:
 
     def start_run(self, agent):
         """Start measuring a run of agent: the time, what it has spent and the commit HEAD
-        is at."""
-        return dict(started=now(), clock=time.monotonic(), usage=usage(agent), base=self.head())
+        is at, where it works."""
+        return dict(
+            started=now(), clock=time.monotonic(), usage=usage(agent), base=self.head(agent)
+        )
 
     def spent(self, agent, meter):
         """What agent has spent since meter started."""
@@ -668,7 +680,7 @@ class Orchestrator:
         """Add the run that meter measured to the phase's run_log. outcome is how it ended:
         done, stopped or failed. extra adds fields to the entry."""
         data = self.state.phase_data(phase.key)
-        head = self.head()
+        head = self.head(agent)
         spent = self.spent(agent, meter)
         entry = dict(
             run=data.get("runs", 0),
@@ -680,7 +692,7 @@ class Orchestrator:
             tokens_received=spent["tokens_received"],
             base=meter["base"],
             head=head,
-            commits=self.count_commits(meter["base"], head),
+            commits=self.count_commits(meter["base"], head, agent),
             verdict=verdict,
             outcome=outcome,
         )
@@ -688,18 +700,25 @@ class Orchestrator:
         data.setdefault("run_log", []).append(entry)
         return entry
 
-    def head(self):
-        """The commit HEAD is at, or None outside git or before the first commit."""
-        repo = self.coder.repo
+    def repo_of(self, agent=None):
+        """The GitRepo agent works in (a parallel builder's is its worktree's), or the
+        project's."""
+        repo = getattr(agent, "repo", None)
+        return repo if hasattr(repo, "get_head_commit_sha") else self.coder.repo
+
+    def head(self, agent=None):
+        """The commit HEAD is at where agent works, or in the project, or None outside git
+        or before the first commit."""
+        repo = self.repo_of(agent)
         return repo.get_head_commit_sha() if repo else None
 
-    def count_commits(self, base, head):
+    def count_commits(self, base, head, agent=None):
         """How many commits there are from base to head."""
         if not head or base == head:
             return 0
         try:
             spec = f"{base}..{head}" if base else head
-            return int(self.coder.repo.repo.git.rev_list("--count", spec))
+            return int(self.repo_of(agent).repo.git.rev_list("--count", spec))
         except (ValueError,) + ANY_GIT_ERROR:
             return 0
 
@@ -713,11 +732,13 @@ class Orchestrator:
     def document_path(self, phase):
         return self.root / phase.document
 
-    def document_text(self, phase):
-        """The phase's document, or "" if there's none in the project."""
-        path = self.document_path(phase)
+    def document_text(self, phase, root=None):
+        """The phase's document, or "" if there's none in the project (or in root, like a
+        parallel builder's worktree)."""
+        root = Path(root) if root else self.root
+        path = root / phase.document
         try:
-            text = read_project_file(self.root, path)
+            text = read_project_file(root, path)
         except OSError:
             return ""
         if text is None:
@@ -762,6 +783,8 @@ class Orchestrator:
                 "Build the project described in the PRD, following the architecture document,"
                 f" then write the build summary to {phase.document}."
             )
+        elif phase.mode in phase_prompts.mode_tasks:
+            task.append(phase_prompts.mode_tasks[phase.mode].format(document=phase.document))
         else:
             task.append(f"Write the {phase.document_title} to {phase.document}.")
 
@@ -1332,6 +1355,18 @@ class Orchestrator:
         self.decide(phase, "sent back", text)
         return phase
 
+    def set_workers(self, text):
+        """/project workers N: how many builders may work at once."""
+        try:
+            workers = int(text)
+        except ValueError:
+            raise TransitionError("Say how many builders: /project workers N")
+        if not 1 <= workers <= MAX_WORKERS:
+            raise TransitionError(f"Builders must be from 1 to {MAX_WORKERS}.")
+        self.state.data["workers"] = workers
+        self.state.save()
+        return workers
+
     def record(self, text):
         """A decision of the founder's, for the agents of the phases to come."""
         if not text.strip():
@@ -1408,6 +1443,13 @@ class Orchestrator:
             else:
                 line += label
             self.io.tool_output(line.rstrip())
+        from loom.parallel import describe_packages
+
+        packages = describe_packages(state)
+        if packages:
+            self.io.tool_output(f"  Building's work packages ({plural(self.workers, 'builder')} at once):")
+            for line in packages:
+                self.io.tool_output(line)
         totals = state.totals()
         if totals["runs"]:
             self.io.tool_output()

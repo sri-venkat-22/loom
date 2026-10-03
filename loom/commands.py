@@ -44,6 +44,7 @@ PROJECT_SUBCOMMANDS = (
     "memory",
     "report",
     "templates",
+    "workers",
     "reset",
 )
 
@@ -1485,7 +1486,7 @@ class Commands:
         return list(PROJECT_SUBCOMMANDS) + [phase.key for phase in PHASES]
 
     def cmd_project(self, args):
-        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new [--template NAME] [--tdd] IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], templates, reset"  # noqa
+        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new [--template NAME] [--tdd] IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], templates, workers [N], reset"  # noqa
         from loom.orchestrator import Orchestrator, TransitionError
 
         words = args.strip().split(maxsplit=1)
@@ -1563,6 +1564,14 @@ class Commands:
                 orchestrator.show_memory()
             elif sub == "report":
                 self.project_report(orchestrator, rest)
+            elif sub == "workers":
+                if rest:
+                    orchestrator.set_workers(rest)
+                workers = orchestrator.workers
+                self.io.tool_output(
+                    f"Building runs up to {workers} builder{'s' if workers != 1 else ''} at once,"
+                    " when the architecture's work plan has more than one package."
+                )
             elif sub == "reset":
                 if self.io.confirm_ask(
                     (

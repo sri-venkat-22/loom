@@ -183,7 +183,7 @@ class TestTestDrivenBuilding(unittest.TestCase):
             self.assertEqual([a["passed"] for a in entry["attempts"]], [False, False])
             self.assertEqual(entry["result"], "failed")
             warnings = [c[0][0] for c in io.tool_warning.call_args_list]
-            self.assertIn("The acceptance tests still fail after 2 attempts.", warnings)
+            self.assertIn("The tests still fail after 2 attempts.", warnings)
             [(line, warn)] = describe_build(entry)
             self.assertTrue(warn)
             self.assertIn("the acceptance tests still fail", line)

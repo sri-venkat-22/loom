@@ -303,19 +303,21 @@ class TestDrivenBuilding:
         extra["skips"] = self.skips()
         return orchestrator.end_run(phase, agent, meter, extra)
 
-    def loop(self, phase, agent, meter, extra):
-        """Run agent, then the tests, and again with their failures in the same
-        conversation, until they pass or the retries or budget run out."""
+    def loop(self, phase, agent, meter, extra, message=None, command=None):
+        """Run agent, then the tests (command, by default the project's), and again with
+        their failures in the same conversation, until they pass or the retries or budget
+        run out. It runs where agent works, maybe a parallel builder's worktree, and only
+        changes extra, so it can run on the builder's thread."""
         orchestrator = self.orchestrator
+        io = agent.io
+        command = command or self.command
         retries = orchestrator.settings.get("build_retries", 3)
         budget = orchestrator.settings.get("build_budget")
         locked = sorted(self.spec.get("locked") or {})
-        message = (
-            orchestrator.task_message(phase)
-            + "\n\n"
-            + phase_prompts.tdd_build.format(
-                tests=", ".join(locked) or "none", command=self.command, retries=retries
-            )
+        if message is None:
+            message = orchestrator.task_message(phase)
+        message += "\n\n" + phase_prompts.tdd_build.format(
+            tests=", ".join(locked) or "none", command=command, retries=retries
         )
         attempts = extra["attempts"]
         for attempt in itertools.count(1):
@@ -324,8 +326,8 @@ class TestDrivenBuilding:
             if agent.failed or orchestrator.stopped(agent):
                 extra["result"] = "stopped"
                 return
-            restored = self.restore_locked()
-            passed, output = orchestrator.run_tests(self.command)
+            restored = self.restore_locked(agent)
+            passed, output = orchestrator.run_tests(command, coder=agent)
             cost = orchestrator.spent(agent, meter)["cost"]
             attempts.append(
                 dict(
@@ -344,23 +346,21 @@ class TestDrivenBuilding:
                 break
             if attempt > retries:
                 extra["result"] = "failed"
-                self.io.tool_warning(
-                    f"The acceptance tests still fail after {plural(attempt, 'attempt')}."
-                )
+                io.tool_warning(f"The tests still fail after {plural(attempt, 'attempt')}.")
                 break
             if budget is not None and cost >= budget:
                 extra["result"] = "budget"
-                self.io.tool_warning(
+                io.tool_warning(
                     f"Building has cost ${cost:.2f}, which is the --build-budget of"
                     f" ${budget:.2f}, so it stops trying."
                 )
                 break
-            self.io.tool_output(
-                "The acceptance tests fail; sending the failures back to the Building agent"
+            io.tool_output(
+                "The tests fail; sending the failures back to the agent"
                 f" (attempt {attempt + 1} of {retries + 1})."
             )
             message = phase_prompts.tdd_retry.format(
-                command=self.command,
+                command=command,
                 attempt=attempt,
                 output=keep_end(output, RETRY_OUTPUT_CHARS),
                 restored=(
@@ -369,33 +369,41 @@ class TestDrivenBuilding:
             )
         orchestrator.nudge_for_document(agent, phase)
 
-    def restore_locked(self):
-        """Put back the locked tests that changed, from the commit they're locked at.
-        Returns their paths."""
+    def restore_locked(self, agent):
+        """Put back the locked tests that changed where agent works, from the commit
+        they're locked at. Returns their paths."""
         spec = self.spec
+        root = Path(agent.root)
+        git = agent.repo.repo
         changed = []
         for path, digest in (spec.get("locked") or {}).items():
-            full = self.root / path
+            full = root / path
             if not full.is_file() or file_hash(full) != digest:
                 changed.append(path)
         for path in changed:
             try:
-                blob = self.git.commit(spec["commit"]).tree / path
+                blob = git.commit(spec["commit"]).tree / path
                 data = blob.data_stream.read()
             except (KeyError, ValueError) + ANY_GIT_ERROR as err:
-                self.io.tool_warning(f"Unable to put back {path}: {err}")
+                agent.io.tool_warning(f"Unable to put back {path}: {err}")
                 continue
-            full = self.root / path
+            full = root / path
             full.parent.mkdir(parents=True, exist_ok=True)
             full.write_bytes(data)
         if changed:
-            self.io.tool_warning(
+            agent.io.tool_warning(
                 f"Put back {', '.join(changed)}: the acceptance tests are locked, and"
                 f" {'it' if len(changed) == 1 else 'they'} changed."
             )
-            self.orchestrator.commit(
-                [self.root / path for path in changed], "Put back the locked acceptance tests"
-            )
+            if agent.auto_commits and not agent.dry_run:
+                try:
+                    agent.repo.commit(
+                        fnames=[str(root / path) for path in changed],
+                        message="Put back the locked acceptance tests",
+                        coder=agent,
+                    )
+                except Exception as err:
+                    agent.io.tool_warning(f"Unable to commit the put back tests: {err}")
         return changed
 
     def skips(self):
@@ -431,7 +439,7 @@ class TestDrivenBuilding:
 
 def describe_build(entry):
     """What the Building checkpoint says about a test-driven build run: [(line, warn)]."""
-    if not entry or entry.get("step") != "build":
+    if not entry or entry.get("step") not in ("build", "integration"):
         return []
     lines = []
     attempts = entry.get("attempts") or []

@@ -638,6 +638,16 @@ def get_parser(default_config_files, git_root):
         ),
     )
     group.add_argument(
+        "--build-workers",
+        type=int,
+        metavar="N",
+        default=3,
+        help=(
+            "How many builders may build the architecture's work packages at once, each in its"
+            " own git worktree; 1 builds with one agent (default: 3)"
+        ),
+    )
+    group.add_argument(
         "--build-budget",
         type=float,
         metavar="DOLLARS",
