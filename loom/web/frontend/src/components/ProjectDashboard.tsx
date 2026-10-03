@@ -226,6 +226,16 @@ function Summary({ timeline }: { timeline: Timeline }) {
           <div className="line-clamp-2 text-[14px] font-semibold leading-snug" title={idea}>
             {idea}
           </div>
+          {(timeline.template || timeline.tdd) && (
+            <div className="mt-0.5 text-[12px] text-dim">
+              {[
+                timeline.template && `from the ${timeline.template.name} template`,
+                timeline.tdd && "test-driven Building",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </div>
+          )}
         </div>
         <ReportMenu />
       </div>
@@ -238,11 +248,32 @@ function Summary({ timeline }: { timeline: Timeline }) {
         </div>
       )}
       <Bars phases={timeline.phases} byCost={byCost} />
+      <Decisions decisions={timeline.decisions} label="project" />
     </div>
   );
 }
 
-function Decisions({ decisions }: { decisions: Decision[] }) {
+// The template's checks after a phase, passed or failed
+function Checks({ checks }: { checks: PhaseTimeline["checks"] }) {
+  if (!checks.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {checks.map((check) => (
+        <span
+          key={check.command}
+          title={check.passed ? "The check passed" : "The check failed"}
+          className={`max-w-full truncate rounded-md px-1.5 py-px font-mono text-[11px] ${
+            check.passed ? "bg-success/12 text-add" : "bg-destructive/12 text-del"
+          }`}
+        >
+          {check.passed ? "✓" : "✗"} {check.command}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function Decisions({ decisions, label = "" }: { decisions: Decision[]; label?: string }) {
   const [open, setOpen] = useState(false);
   if (!decisions.length) return null;
   return (
@@ -252,7 +283,7 @@ function Decisions({ decisions }: { decisions: Decision[] }) {
         className="flex w-fit items-center gap-1.5 text-[12px] text-muted-foreground hover:text-foreground"
       >
         <span className="w-2.5 text-[9px] text-dim">{open ? "▼" : "▶"}</span>
-        {plural(decisions.length, "decision")}
+        {plural(decisions.length, label ? `${label} decision` : "decision")}
       </button>
       {open && (
         <ul className="m-0 flex list-none flex-col gap-1.5 p-0 pl-4">
@@ -354,6 +385,7 @@ function PhaseCard({
             <span className="text-warning"> · last run {lastRun.outcome}</span>
           )}
         </div>
+        <Checks checks={phase.checks} />
         <Decisions decisions={phase.decisions} />
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <SmallButton

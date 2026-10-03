@@ -292,3 +292,21 @@ class TestDashboard(unittest.TestCase):
             launch = client.get("/api/project/phase/launch/diff").json()
             self.assertFalse(launch["available"])
             self.assertEqual(launch["files"], [])
+
+    def test_timeline_shows_the_template_and_its_checks(self):
+        from loom.project_templates import load_template
+
+        with IgnorantTemporaryDirectory() as root:
+            template = load_template(root, "python-cli")
+            state = ProjectState.new(root, "A CLI", template=template, tdd=True)
+            state.phase_data("idea")["checks"] = [
+                dict(command="ruff check .", passed=False, output="Exit code: 1\nE501")
+            ]
+            state.save()
+            found = timeline(root)
+            self.assertEqual(found["template"], dict(name="python-cli", source="built-in"))
+            self.assertTrue(found["tdd"])
+            self.assertEqual(
+                found["phases"][0]["checks"], [dict(command="ruff check .", passed=False)]
+            )
+            self.assertEqual(found["phases"][1]["checks"], [])

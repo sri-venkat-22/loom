@@ -118,13 +118,16 @@ sessions sidebar to make room.
 The side pane's **Project** tab shows a `/project` from start to finish, and follows it
 as it runs:
 
-- At the top, the idea and the project's totals: time, cost, runs and commits, then a bar
-  for each phase's cost (its time, when the models have no prices). **Download report**
-  downloads the [project report](project.md#the-project-report) as Markdown, Word or PDF.
+- At the top, the idea, the [template](project.md#project-templates) it started from,
+  and the project's totals: time, cost, runs and commits, then a bar for each phase's
+  cost (its time, when the models have no prices), and the decisions of no phase, like
+  the template's. **Download report** downloads the
+  [project report](project.md#the-project-report) as Markdown, Word or PDF.
 - Then a timeline with a card for each phase: its status (approved, waiting for review,
   running, pending, or to redo after you went back), its verdict, how many times its
   agent ran, for how long and at what cost, the rounds of fixes failing tests sent back
-  to Building, and the decisions made in it, which unfold.
+  to Building, the template's checks after its last run, passed or failed, and the
+  decisions made in it, which unfold.
 - **Document** opens the phase's document in a read-only editor.
 - **Diff** shows what a run of the phase changed: the diff of its commits, from where
   HEAD was when the run started to where it ended. Pick another run from the list.
