@@ -584,12 +584,22 @@ def write_file(coder, path, content):
 
 
 def kill_process_tree(proc):
+    """Kill proc and every process it started."""
     try:
         if os.name == "nt":
+            # The shell's children too: killing cmd.exe alone leaves them running, with
+            # its output pipe open
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=KILL_GRACE,
+            )
             proc.kill()
         else:
             os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+    except (ProcessLookupError, PermissionError, OSError, subprocess.SubprocessError):
         pass
 
 

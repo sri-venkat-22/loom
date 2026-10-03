@@ -1447,7 +1447,9 @@ class Orchestrator:
 
         packages = describe_packages(state)
         if packages:
-            self.io.tool_output(f"  Building's work packages ({plural(self.workers, 'builder')} at once):")
+            self.io.tool_output(
+                f"  Building's work packages ({plural(self.workers, 'builder')} at once):"
+            )
             for line in packages:
                 self.io.tool_output(line)
         totals = state.totals()

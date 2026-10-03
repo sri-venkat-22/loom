@@ -22,7 +22,8 @@ from .test_agent import call, full_response, make_repo, reply, stream_response
 from .test_orchestrator import BUILD_SUMMARY, IDEA, PRD, write_doc
 
 PYTHON = sys.executable
-PYTEST = f"{PYTHON} -m pytest -q -p no:cacheprovider tests"
+# -B: no stale bytecode when a test rewrites a module within the same second
+PYTEST = f"{PYTHON} -B -m pytest -q -p no:cacheprovider tests"
 ARCHITECTURE = f"""# Architecture: shouting adder
 ## Testing approach
 pytest.
@@ -49,7 +50,10 @@ pytest.
 
 ADDER = "def add(a, b):\n    return a + b\n"
 SHOUT = "def shout(text):\n    return text.upper() + '!'\n"
-APP = "from adder import add\nfrom shout import shout\n\n\ndef main():\n    print(shout(str(add(2, 3))))\n"
+APP = (
+    "from adder import add\nfrom shout import shout\n\n\ndef main():\n    print(shout(str(add(2,"
+    " 3))))\n"
+)
 ADDER_TEST = "from adder import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 SHOUT_TEST = "from shout import shout\n\n\ndef test_shout():\n    assert shout('hi') == 'HI!'\n"
 
@@ -200,16 +204,15 @@ class TestParallelBuilding(unittest.TestCase):
 
             # Every package was built in its worktree, merged, and its worktree removed
             packages = state.phase_data("building")["packages"]
-            self.assertEqual({pid: r["status"] for pid, r in packages.items()}, dict(
-                adder="merged", shout="merged", app="merged"
-            ))
+            self.assertEqual(
+                {pid: r["status"] for pid, r in packages.items()},
+                dict(adder="merged", shout="merged", app="merged"),
+            )
             self.assertEqual([packages[p]["wave"] for p in ("adder", "shout", "app")], [1, 1, 2])
             self.assertEqual(Path("adder.py").read_text(), ADDER)
             self.assertEqual(Path("shout.py").read_text(), SHOUT)
             self.assertEqual(Path("app.py").read_text(), APP)
-            self.assertEqual(
-                [p.name for p in Path(WORKTREES_DIR).iterdir()], [".gitignore"]
-            )
+            self.assertEqual([p.name for p in Path(WORKTREES_DIR).iterdir()], [".gitignore"])
             self.assertEqual([b.name for b in repo.branches if b.name.startswith("loom/")], [])
             messages = [commit.message.strip() for commit in repo.iter_commits()]
             for pid in ("adder", "shout", "app"):
@@ -288,7 +291,9 @@ class TestParallelBuilding(unittest.TestCase):
             self.assertEqual(packages["adder"]["status"], "stopped")
             self.assertEqual(packages["shout"]["status"], "stopped")
             # adder's sleep was killed, not waited for
-            adder = [m for m in llm.requests["Building adder"][-1]["messages"] if m["role"] == "tool"]
+            adder = [
+                m for m in llm.requests["Building adder"][-1]["messages"] if m["role"] == "tool"
+            ]
             self.assertNotIn("Timed out", adder[-1]["content"] if adder else "")
             # As /project run's handler of the interrupt does
             self.assertEqual(state.status("building"), "running")
@@ -376,7 +381,11 @@ class TestParallelBuilding(unittest.TestCase):
             packages = orchestrator.state.phase_data("building")["packages"]
             self.assertEqual({r["status"] for r in packages.values()}, {"merged"})
             # The builder got the test report
-            first = [m["content"] for m in llm.requests["Building shout"][0]["messages"] if m["role"] == "user"][0]
+            first = [
+                m["content"]
+                for m in llm.requests["Building shout"][0]["messages"]
+                if m["role"] == "user"
+            ][0]
             self.assertIn("says the tests FAIL", first)
 
     def test_a_conflict_goes_to_the_integrator(self):
@@ -409,14 +418,20 @@ class TestParallelBuilding(unittest.TestCase):
                 self.assertTrue(build(orchestrator, llm))
             self.assertEqual(llm.left(), {})
             self.assertEqual(Path("adder.py").read_text(), resolved)
-            task = [m["content"] for m in llm.requests["Integrator"][0]["messages"] if m["role"] == "user"]
+            task = [
+                m["content"]
+                for m in llm.requests["Integrator"][0]["messages"]
+                if m["role"] == "user"
+            ]
             self.assertIn("these files conflict: adder.py", task[0])
             merge = [r for r in orchestrator.state.run_log("building") if r.get("step") == "merge"]
             self.assertEqual(merge[0]["conflicts"], ["adder.py"])
             self.assertEqual(merge[0]["outcome"], "done")
             merged = repo.head.commit
             self.assertFalse(repo.is_dirty(untracked_files=False))
-            self.assertIn("Merge the adder work package", "\n".join(c.message for c in repo.iter_commits()))
+            self.assertIn(
+                "Merge the adder work package", "\n".join(c.message for c in repo.iter_commits())
+            )
             self.assertTrue(merged)
 
     def test_an_unresolved_conflict_stops_building(self):
@@ -443,7 +458,7 @@ class TestParallelBuilding(unittest.TestCase):
             self.assertEqual(state.status("building"), "pending")
             self.assertEqual(state.phase_data("building")["packages"]["adder"]["status"], "built")
             # The merge was undone
-            self.assertEqual(Path("adder.py").read_bytes(), b"x = 1\n")
+            self.assertEqual(Path("adder.py").read_bytes().replace(b"\r\n", b"\n"), b"x = 1\n")
             self.assertFalse((Path(repo.git_dir) / "MERGE_HEAD").exists())
 
     def test_test_driven_builders(self):
@@ -451,8 +466,10 @@ class TestParallelBuilding(unittest.TestCase):
             make_repo()
             architecture = ARCHITECTURE.replace(
                 "  acceptance: [FR-1]\n",
-                f"  acceptance: [FR-1]\n  test_command: '{PYTHON} -m pytest -q -p no:cacheprovider"
-                " tests/test_adder.py'\n",
+                (
+                    f"  acceptance: [FR-1]\n  test_command: '{PYTHON} -B -m pytest -q -p"
+                    " no:cacheprovider tests/test_adder.py'\n"
+                ),
             )
             coder, orchestrator = project(architecture=architecture)
             # Approve the acceptance tests
@@ -475,7 +492,9 @@ class TestParallelBuilding(unittest.TestCase):
             adder_twice = [
                 reply(
                     None,
-                    call("write_file", path="adder.py", content="def add(a, b):\n    return a - b\n"),
+                    call(
+                        "write_file", path="adder.py", content="def add(a, b):\n    return a - b\n"
+                    ),
                     notes("adder"),
                 ),
                 reply("Done."),

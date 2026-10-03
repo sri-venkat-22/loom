@@ -280,7 +280,12 @@ Resolve each conflict so that the code keeps what both sides meant, going by the
 # The task of the agents of a phase's steps, by their mode
 mode_tasks = dict(
     scaffold="Write the files the work packages share, then the scaffold notes to {document}.",
-    package="Build your work package, as your brief describes, then write your notes to {document}.",
-    integration="Bring the merged work packages together into one working project, then write the build summary to {document}.",
+    package=(
+        "Build your work package, as your brief describes, then write your notes to {document}."
+    ),
+    integration=(
+        "Bring the merged work packages together into one working project, then write the build"
+        " summary to {document}."
+    ),
     merge="Resolve the merge's conflicts, as below.",
 )
