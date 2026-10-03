@@ -1225,33 +1225,40 @@ class TestTestCommand(unittest.TestCase):
             io.tool_result = MagicMock()
             orchestrator = self.make_orchestrator(io, allow=[f"bash({sys.executable}*)"])
 
-            passed, output = orchestrator.run_tests(f"{sys.executable} -c \"print('3 passed')\"")
+            # Scripts, not python -c: cmd.exe would read its parentheses and semicolons
+            Path("ok.py").write_bytes(b"print('3 passed')\n")
+            Path("fail.py").write_bytes(
+                b"import sys\nfor n in range(5000):\n    print('line', n)\n"
+                b"print('FAILED test_add - assert -1 == 5')\nsys.exit(1)\n"
+            )
+            Path("where.py").write_bytes(
+                b"import os, sys\nprint(os.getcwd())\nprint(repr(sys.stdin.read()))\n"
+            )
+
+            passed, output = orchestrator.run_tests(f"{sys.executable} ok.py")
             self.assertTrue(passed)
             self.assertEqual(output, "Exit code: 0\n3 passed")
             self.assertEqual(io.tool_result.call_args[0][0][-1], "Tests pass")
 
             # A long failing run: the end, with the summary, is what's kept
-            script = (
-                "import sys; [print('line', n) for n in range(5000)];"
-                " print('FAILED test_add - assert -1 == 5'); sys.exit(1)"
-            )
-            passed, output = orchestrator.run_tests(f'{sys.executable} -c "{script}"')
+            passed, output = orchestrator.run_tests(f"{sys.executable} fail.py")
             self.assertFalse(passed)
             self.assertTrue(output.startswith("Exit code: 1\n[... "), output[:80])
             self.assertTrue(output.endswith("FAILED test_add - assert -1 == 5"))
             self.assertLess(len(output), 6200)
             self.assertIn("earlier characters cut", output)
             self.assertNotIn("line 0\n", output)
+            self.assertNotIn("\r", output)
             shown = io.tool_result.call_args[0][0]
             self.assertEqual(shown[-1], "Tests fail (Exit code: 1)")
             self.assertEqual(shown[-2], "FAILED test_add - assert -1 == 5")
 
             # It runs without stdin, in the project's root
-            script = "import os, sys; print(os.getcwd()); print(repr(sys.stdin.read()))"
-            passed, output = orchestrator.run_tests(f'{sys.executable} -c "{script}"')
+            passed, output = orchestrator.run_tests(f"{sys.executable} where.py")
             self.assertTrue(passed)
-            self.assertIn(os.path.realpath(os.getcwd()), os.path.realpath(output.split("\n")[1]))
-            self.assertIn("''", output)
+            status, cwd, stdin = output.split("\n")
+            self.assertTrue(os.path.samefile(cwd, os.getcwd()), cwd)
+            self.assertEqual(stdin, "''")
 
     def test_design_checkpoint_shows_the_test_command(self):
         with GitTemporaryDirectory():
