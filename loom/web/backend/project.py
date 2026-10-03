@@ -100,6 +100,8 @@ NO_TIMELINE = dict(
     created=None,
     current=None,
     complete=False,
+    template=None,
+    tdd=False,
     totals=None,
     phases=[],
     decisions=[],
@@ -135,14 +137,21 @@ def timeline(root):
                 fix_rounds=state.fix_rounds(phase.key),
                 decisions=[d for d in decisions if d.get("phase") == phase.key],
                 history=[h for h in state.history if h.get("phase") == phase.key],
+                checks=[
+                    dict(command=check["command"], passed=check["passed"])
+                    for check in data.get("checks") or []
+                ],
             )
         )
+    template = state.template_info
     return dict(
         available=True,
         idea=state.idea,
         created=state.data.get("created"),
         current=current.key if current else None,
         complete=current is None,
+        template=dict(name=template["name"], source=template.get("source")) if template else None,
+        tdd=state.tdd,
         totals=state.totals(),
         phases=phases,
         # The decisions that aren't any phase's, like ones made once it was complete

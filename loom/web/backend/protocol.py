@@ -48,18 +48,22 @@ Server to browser:
   ask_resolved   {ask_id, value}            The question was answered.
   terminal       {text, start}              Output of a command like /run, for the side
                                             pane's terminal; start begins a new command.
-  timeline       {available, idea, created, current, complete, totals, phases, decisions}
+  timeline       {available, idea, created, current, complete, template, tdd, totals,
+                  phases, decisions}
                  The /project dashboard's view of the project, sent when it changes.
                  available is false without a project. current is the key of the phase
-                 it's in (null when complete), totals the project's metrics ({runs,
-                 seconds, cost, tokens_sent, tokens_received, commits}) and decisions the
-                 ones of no phase. Each phase is {key, number, title, agent, document,
-                 document_title, produces, status, stale, verdict, current, metrics,
-                 run_log, fix_rounds, decisions, history}: run_log has one entry per run
-                 of its agent, {run, started, finished, seconds, cost, tokens_sent,
-                 tokens_received, base, head, commits, verdict, outcome}, outcome done,
-                 stopped or failed; decisions are {id, time, phase, source, kind, text,
-                 reason} and history entries {time, phase, event, note}.
+                 it's in (null when complete), template the {name, source} it started
+                 from or null, tdd whether Building is test-driven, totals the project's
+                 metrics ({runs, seconds, cost, tokens_sent, tokens_received, commits})
+                 and decisions the ones of no phase. Each phase is {key, number, title,
+                 agent, document, document_title, produces, status, stale, verdict,
+                 current, metrics, run_log, fix_rounds, decisions, history, checks}:
+                 run_log has one entry per run of its agent, {run, started, finished,
+                 seconds, cost, tokens_sent, tokens_received, base, head, commits,
+                 verdict, outcome}, outcome done, stopped or failed; decisions are {id,
+                 time, phase, source, kind, text, reason}, history entries {time, phase,
+                 event, note} and checks the template's checks after its last run,
+                 {command, passed}.
 
 Browser to server:
 

@@ -93,6 +93,8 @@ export interface PhaseTimeline {
   fix_rounds: number;
   decisions: Decision[];
   history: HistoryEntry[];
+  // The template's checks after its last run
+  checks: { command: string; passed: boolean }[];
 }
 
 export interface Timeline {
@@ -103,6 +105,9 @@ export interface Timeline {
   // The phase it's in, or null when it's complete
   current: string | null;
   complete: boolean;
+  // The template it started from, if any, and whether Building is test-driven
+  template: { name: string; source: string } | null;
+  tdd: boolean;
   totals: Metrics | null;
   phases: PhaseTimeline[];
   // The decisions of no phase
