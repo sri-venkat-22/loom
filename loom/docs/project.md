@@ -93,13 +93,21 @@ decided: `founder`, or `loom (--yes-always)` when loom answered for you.
 
 ```
 Project: A web app where students swap used textbooks
-  ✓ 1. Idea Check  idea report       approved, GO
-  ✓ 2. Planning    PRD               approved
-▶ ◆ 3. Design      architecture doc  waiting for review
+  ✓ 1. Idea Check  idea report       approved, GO        1 run, 1m 12s, $0.03
+  ✓ 2. Planning    PRD               approved            2 runs, 4m 40s, $0.11
+▶ ◆ 3. Design      architecture doc  waiting for review  1 run, 3m 02s, $0.09
   ○ 4. Building    code              pending
   ○ 5. Testing     test report       pending
   ○ 6. Launch      deployment        pending
+
+Total: 4 runs, 8m 54s, $0.23, 61k tokens sent, 9.8k received, 4 commits
 ```
+
+loom logs every run of a phase's agent: when it started and finished, what it cost, the
+tokens it sent and received, the commit HEAD was at before and after it, how many commits
+it made, its verdict, and how it ended (`done`, `stopped` or `failed`). The status adds
+the runs up per phase and for the whole project. A model loom has no prices for costs
+$0.00.
 
 ## Shared memory
 
