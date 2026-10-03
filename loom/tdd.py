@@ -33,7 +33,7 @@ from loom.coders import phase_prompts
 from loom.orchestrator import keep_end, now
 from loom.phases import SPEC, TEST_FILES
 from loom.repo import ANY_GIT_ERROR, EMPTY_TREE
-from loom.tools import glob_match, plural
+from loom.tools import SKIP_DIRS, glob_match, plural
 
 # How much of the failing tests' output goes back to the agent
 RETRY_OUTPUT_CHARS = 5000
@@ -57,7 +57,16 @@ RESULTS = dict(
 )
 
 
+# Files under test folders that aren't tests, like Python's compiled ones
+NOT_TESTS = (".pyc", ".pyo", ".class", ".o")
+
+
 def is_test(path):
+    """Whether path is a test file: matches TEST_FILES, and isn't in a cache folder or
+    compiled."""
+    parts = path.split("/")
+    if any(part in SKIP_DIRS for part in parts[:-1]) or path.endswith(NOT_TESTS):
+        return False
     return any(glob_match(pattern, path) for pattern in TEST_FILES)
 
 
@@ -69,6 +78,9 @@ def file_hash(path):
 
 class TestDrivenBuilding:
     """Runs a test-driven project's Building phase for its orchestrator."""
+
+    # Not a test case, though its name starts with Test
+    __test__ = False
 
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
