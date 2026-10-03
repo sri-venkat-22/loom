@@ -449,6 +449,13 @@ class TestOrchestrator(unittest.TestCase):
             results = [m["content"] for m in testing[2]["messages"] if m["role"] == "tool"]
             self.assertIn("1 passed", results[-1])
 
+            # Each phase ran once, and logged it
+            for phase in PHASES:
+                [entry] = state.run_log(phase.key)
+                self.assertEqual(entry["outcome"], "done")
+            self.assertGreaterEqual(state.run_log("building")[0]["commits"], 1)
+            self.assertEqual(state.run_log("testing")[0]["verdict"], "PASS")
+
             # The phases' work was committed, and the main conversation is untouched
             self.assertFalse(repo.is_dirty(untracked_files=False))
             self.assertGreater(len(list(repo.iter_commits())), 6)
@@ -979,6 +986,174 @@ class TestProjectCommand(unittest.TestCase):
             completions = commands.get_completions("/project")
             self.assertIn("new", completions)
             self.assertIn("design", completions)
+
+
+class FakeAgent:
+    """Stands in for a phase's agent: spends a known cost and tokens, makes commits (the
+    last one with the phase's document) and can stop or fail instead."""
+
+    failed = None
+    stop_requested = False
+    interrupted = False
+
+    def __init__(self, coder, phase, cost=0.25, commits=2, outcome="done"):
+        self.phase = phase
+        self.cost = cost
+        self.commits = commits
+        self.outcome = outcome
+        self.total_cost = coder.total_cost
+        self.total_tokens_sent = coder.total_tokens_sent
+        self.total_tokens_received = coder.total_tokens_received
+        self.loom_commit_hashes = set()
+        self.repo = coder.repo.repo
+
+    def run(self, with_message=None, preproc=False):
+        self.total_cost += self.cost
+        self.total_tokens_sent += 1000
+        self.total_tokens_received += 200
+        if self.outcome == "interrupt":
+            raise KeyboardInterrupt
+        for num in range(self.commits):
+            last = num == self.commits - 1
+            path = Path(self.phase.document if last else f"work{num}.txt")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # Different every run, so there's always something to commit
+            stamp = str(len(list(self.repo.iter_commits()))).encode()
+            path.write_bytes(b"# Idea report: adder\n**Verdict:** GO\n" + stamp if last else stamp)
+            self.repo.git.add(str(path))
+            self.repo.git.commit("-m", f"step {num}")
+            self.loom_commit_hashes.add(self.repo.head.commit.hexsha)
+        if self.outcome == "stopped":
+            self.stop_requested = True
+        elif self.outcome == "failed":
+            self.failed = "the provider rejected the tools"
+
+
+class TestMetrics(unittest.TestCase):
+    def run_fake(self, orchestrator, **kwargs):
+        agents = []
+
+        def make_agent(phase):
+            agents.append(FakeAgent(orchestrator.coder, phase, **kwargs))
+            return agents[-1]
+
+        with patch.object(orchestrator, "make_agent", make_agent):
+            done = orchestrator.run_phase(PHASES_BY_KEY["idea"])
+        return done, agents[0]
+
+    def test_run_log_records_cost_time_and_commits(self):
+        with GitTemporaryDirectory():
+            repo = make_repo()
+            coder = make_coder()
+            coder.total_cost = 1.0
+            orchestrator = Orchestrator(coder)
+            orchestrator.new_project(IDEA)
+            base = repo.head.commit.hexsha
+
+            done, agent = self.run_fake(orchestrator, cost=0.25, commits=3)
+            self.assertTrue(done)
+            state = orchestrator.state
+            [entry] = state.run_log("idea")
+            self.assertEqual(entry["run"], 1)
+            self.assertEqual(entry["outcome"], "done")
+            self.assertEqual(entry["verdict"], "GO")
+            self.assertEqual(entry["cost"], 0.25)
+            self.assertEqual(entry["tokens_sent"], 1000)
+            self.assertEqual(entry["tokens_received"], 200)
+            self.assertEqual(entry["commits"], 3)
+            self.assertEqual(entry["base"], base)
+            self.assertEqual(entry["head"], repo.head.commit.hexsha)
+            self.assertGreaterEqual(entry["seconds"], 0)
+            self.assertTrue(entry["started"] <= entry["finished"])
+
+            # The coder that started the project pays for it
+            self.assertEqual(coder.total_cost, 1.25)
+            self.assertEqual(coder.total_tokens_sent, 1000)
+            self.assertEqual(len(coder.loom_commit_hashes), 3)
+
+            # Run it again: the metrics add up, and survive a reload
+            state.reject("idea", "Again")
+            self.run_fake(orchestrator, cost=0.5, commits=1)
+            loaded = ProjectState.load(".")
+            self.assertEqual([e["run"] for e in loaded.run_log("idea")], [1, 2])
+            metrics = loaded.metrics("idea")
+            self.assertEqual(metrics["runs"], 2)
+            self.assertEqual(metrics["cost"], 0.75)
+            self.assertEqual(metrics["commits"], 4)
+            self.assertEqual(metrics["tokens_sent"], 2000)
+            totals = loaded.totals()
+            self.assertEqual(totals["runs"], 2)
+            self.assertEqual(totals["cost"], 0.75)
+            self.assertEqual(loaded.metrics("planning")["runs"], 0)
+
+    def test_stopped_failed_and_interrupted_runs(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = Orchestrator(make_coder())
+            orchestrator.new_project(IDEA)
+
+            done, _ = self.run_fake(orchestrator, commits=0, outcome="stopped")
+            self.assertFalse(done)
+            done, _ = self.run_fake(orchestrator, commits=0, outcome="failed")
+            self.assertFalse(done)
+            with self.assertRaises(KeyboardInterrupt):
+                self.run_fake(orchestrator, commits=0, outcome="interrupt")
+            # The interrupted run was saved before the interrupt went on up
+            log = ProjectState.load(".").run_log("idea")
+            self.assertEqual([e["outcome"] for e in log], ["stopped", "failed", "stopped"])
+            self.assertEqual([e["commits"] for e in log], [0, 0, 0])
+            self.assertEqual(orchestrator.coder.total_cost, 0.75)
+
+    def test_status_shows_cost_and_time(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            io.tool_output = MagicMock()
+            orchestrator = Orchestrator(make_coder(io))
+            orchestrator.new_project(IDEA)
+            self.run_fake(orchestrator, cost=0.25, commits=2)
+            orchestrator.state.phase_data("idea")["run_log"][0]["seconds"] = 125
+            orchestrator.show_status()
+            shown = [c[0][0] for c in io.tool_output.call_args_list if c[0]]
+            idea = next(line for line in shown if "1. Idea Check" in line)
+            self.assertTrue(idea.endswith("waiting for review, GO  1 run, 2m 05s, $0.25"), idea)
+            planning = next(line for line in shown if "2. Planning" in line)
+            self.assertTrue(planning.endswith("pending"), planning)
+            self.assertIn(
+                "Total: 1 run, 2m 05s, $0.25, 1.0k tokens sent, 200 received, 2 commits", shown
+            )
+
+    def test_projects_without_a_run_log_still_load(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            state = ProjectState.new(".", IDEA)
+            for phase in PHASES[:2]:
+                state.start(phase.key)
+                state.finish(phase.key)
+                state.approve(phase.key)
+            # What an older loom saved: no run_log anywhere
+            for phase in PHASES:
+                self.assertNotIn("run_log", state.phase_data(phase.key))
+            state.save()
+
+            io = InputOutput(yes=True)
+            io.tool_output = MagicMock()
+            orchestrator = Orchestrator(make_coder(io))
+            self.assertEqual(orchestrator.state.metrics("idea")["runs"], 0)
+            self.assertEqual(orchestrator.state.totals()["cost"], 0)
+            orchestrator.show_status()
+            shown = [c[0][0] for c in io.tool_output.call_args_list if c[0]]
+            self.assertFalse(any(line.startswith("Total:") for line in shown))
+
+    def test_format_helpers(self):
+        from loom.orchestrator import format_cost, format_duration
+
+        self.assertEqual(format_cost(0), "$0.00")
+        self.assertEqual(format_cost(1.234), "$1.23")
+        self.assertEqual(format_cost(0.0012), "$0.0012")
+        self.assertEqual(format_duration(4.6), "5s")
+        self.assertEqual(format_duration(65), "1m 05s")
+        self.assertEqual(format_duration(3720), "1h 02m")
 
 
 class TestReadingDocuments(unittest.TestCase):

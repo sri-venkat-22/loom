@@ -17,12 +17,14 @@ sends the project back to an earlier phase and resets the phases after it to pen
 (their documents stay on disk for the agents to revise). The project is complete when
 every phase is approved.
 
-The checkpoints' outcomes, and the decisions the phase agents record, go in the same
-database. Each agent's task message lists them, and the agents can search them and the
-earlier documents (indexed in a vector store) with the recall tool.
+Each run of a phase's agent is logged in the phase's run_log: its time, cost, tokens and
+commits, and how it ended. The checkpoints' outcomes, and the decisions the phase agents
+record, go in the same database. Each agent's task message lists them, and the agents can
+search them and the earlier documents (indexed in a vector store) with the recall tool.
 """
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -38,7 +40,9 @@ from loom.memory import (
     chroma_installed,
 )
 from loom.phases import PHASES, PHASES_BY_KEY, get_phase, next_phase, read_verdict
-from loom.tools import count_changes, describe_changes
+from loom.repo import ANY_GIT_ERROR
+from loom.tools import count_changes, describe_changes, plural
+from loom.utils import format_tokens
 
 STATE_FILE = DB_FILE
 # Where projects were saved before the shared memory; loom moves them into it
@@ -67,9 +71,50 @@ MAX_DECISIONS = 40
 # How many passages of earlier documents the orchestrator looks up for an agent
 MAX_RECALLED = 3
 
+# What each entry of a phase's run_log adds up, for its metrics
+METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
+
 
 def now():
     return datetime.now().isoformat(timespec="seconds")
+
+
+def format_cost(cost):
+    """A cost in dollars, with enough digits to show a small one."""
+    if not cost:
+        return "$0.00"
+    if cost >= 0.01:
+        return f"${cost:.2f}"
+    return f"${cost:.4f}"
+
+
+def format_duration(seconds):
+    """A duration like 45s, 3m 05s or 1h 02m."""
+    seconds = int(round(seconds or 0))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+def describe_metrics(metrics):
+    """A phase's metrics, or the project's, like "2 runs, 3m 05s, $0.04"."""
+    return (
+        f"{plural(metrics['runs'], 'run')}, {format_duration(metrics['seconds'])},"
+        f" {format_cost(metrics['cost'])}"
+    )
+
+
+def usage(coder):
+    """What a coder has spent so far: its cost and tokens."""
+    return dict(
+        cost=coder.total_cost,
+        tokens_sent=coder.total_tokens_sent,
+        tokens_received=coder.total_tokens_received,
+    )
 
 
 def in_project(root, path):
@@ -238,6 +283,30 @@ class ProjectState:
     def stop(self, key, reason=""):
         self.transition(key, "stop", reason)
 
+    def run_log(self, key):
+        """A record of each run of the phase's agent: when, how long, what it cost, the
+        commits it made and how it ended. Projects from before loom kept it have none."""
+        return self.phase_data(key).get("run_log") or []
+
+    def metrics(self, key):
+        """The totals of a phase's runs: runs, seconds, cost, tokens sent and received,
+        and commits."""
+        runs = self.run_log(key)
+        total = dict(runs=len(runs))
+        for field in METRIC_FIELDS:
+            total[field] = sum(run.get(field) or 0 for run in runs)
+        total["cost"] = round(total["cost"], 6)
+        return total
+
+    def totals(self):
+        """The metrics of the whole project, every phase's added up."""
+        total = dict(runs=0, **{field: 0 for field in METRIC_FIELDS})
+        for phase in PHASES:
+            for field, value in self.metrics(phase.key).items():
+                total[field] += value
+        total["cost"] = round(total["cost"], 6)
+        return total
+
     def back(self, key, feedback="", attach=None):
         """Go back to phase key to redo it, with feedback and the documents of the phases in
         attach, like a test report for the Building agent. The phases after it go back to
@@ -347,31 +416,46 @@ class Orchestrator:
             bold=True,
         )
         agent = self.make_agent(phase)
+        meter = self.start_run(agent)
+        # How the run ended, if the agent raised
+        raised = "failed"
         try:
             agent.run(with_message=self.task_message(phase), preproc=False)
-            if not self.stopped(agent) and not self.document_text(phase):
+            if not (agent.failed or self.stopped(agent) or self.document_text(phase)):
                 self.io.tool_warning(f"The {phase.agent} didn't write {phase.document}.")
                 agent.run(
                     with_message=phase_prompts.missing_document.format(document=phase.document),
                     preproc=False,
                 )
+            raised = None
+        except KeyboardInterrupt:
+            raised = "stopped"
+            raise
         finally:
-            self.collect(agent)
+            self.collect(agent, meter)
+            if raised:
+                self.log_run(phase, agent, meter, raised)
+                self.save_quietly()
 
         reason = None
+        outcome = "failed"
         if agent.failed:
             reason = agent.failed
         elif self.stopped(agent):
             reason = "stopped by the user"
+            outcome = "stopped"
         elif not self.document_text(phase):
             reason = f"the agent didn't write {phase.document}"
         if reason:
+            self.log_run(phase, agent, meter, outcome)
             state.stop(phase.key, reason)
             state.save()
             self.io.tool_error(f"{phase.title} stopped: {reason}. Continue with /project run.")
             return False
 
-        state.finish(phase.key, read_verdict(phase, self.document_text(phase)))
+        verdict = read_verdict(phase, self.document_text(phase))
+        self.log_run(phase, agent, meter, "done", verdict)
+        state.finish(phase.key, verdict)
         state.save()
         self.remember_document(phase)
         return True
@@ -400,12 +484,70 @@ class Orchestrator:
             session=Session(),
         )
 
-    def collect(self, agent):
-        """Add the agent's costs and commits to the coder that started the project."""
-        self.coder.total_cost = agent.total_cost
-        self.coder.total_tokens_sent = agent.total_tokens_sent
-        self.coder.total_tokens_received = agent.total_tokens_received
-        self.coder.loom_commit_hashes = agent.loom_commit_hashes
+    def collect(self, agent, meter):
+        """Add what the agent spent since meter started, and its commits, to the coder that
+        started the project."""
+        for field, value in self.spent(agent, meter).items():
+            name = "total_cost" if field == "cost" else f"total_{field}"
+            setattr(self.coder, name, getattr(self.coder, name) + value)
+        self.coder.loom_commit_hashes.update(agent.loom_commit_hashes)
+
+    # Metrics of each run
+
+    def start_run(self, agent):
+        """Start measuring a run of agent: the time, what it has spent and the commit HEAD
+        is at."""
+        return dict(started=now(), clock=time.monotonic(), usage=usage(agent), base=self.head())
+
+    def spent(self, agent, meter):
+        """What agent has spent since meter started."""
+        before = meter["usage"]
+        return {field: value - before[field] for field, value in usage(agent).items()}
+
+    def log_run(self, phase, agent, meter, outcome, verdict=None):
+        """Add the run that meter measured to the phase's run_log. outcome is how it ended:
+        done, stopped or failed."""
+        data = self.state.phase_data(phase.key)
+        head = self.head()
+        spent = self.spent(agent, meter)
+        entry = dict(
+            run=data.get("runs", 0),
+            started=meter["started"],
+            finished=now(),
+            seconds=round(time.monotonic() - meter["clock"], 1),
+            cost=round(spent["cost"], 6),
+            tokens_sent=spent["tokens_sent"],
+            tokens_received=spent["tokens_received"],
+            base=meter["base"],
+            head=head,
+            commits=self.count_commits(meter["base"], head),
+            verdict=verdict,
+            outcome=outcome,
+        )
+        data.setdefault("run_log", []).append(entry)
+        return entry
+
+    def head(self):
+        """The commit HEAD is at, or None outside git or before the first commit."""
+        repo = self.coder.repo
+        return repo.get_head_commit_sha() if repo else None
+
+    def count_commits(self, base, head):
+        """How many commits there are from base to head."""
+        if not head or base == head:
+            return 0
+        try:
+            spec = f"{base}..{head}" if base else head
+            return int(self.coder.repo.repo.git.rev_list("--count", spec))
+        except (ValueError,) + ANY_GIT_ERROR:
+            return 0
+
+    def save_quietly(self):
+        """Save the state while something else has gone wrong, which matters more."""
+        try:
+            self.state.save()
+        except TransitionError as err:
+            self.io.tool_warning(str(err))
 
     def document_path(self, phase):
         return self.root / phase.document
@@ -839,6 +981,7 @@ class Orchestrator:
             approved="approved",
         )
         width = max(len(phase.title) for phase in PHASES)
+        rows = []
         for phase in PHASES:
             data = state.phase_data(phase.key)
             status = data["status"]
@@ -848,9 +991,23 @@ class Orchestrator:
             if data.get("verdict"):
                 label += f", {data['verdict']}"
             pointer = "▶" if phase is current else " "
+            line = f"{pointer} {marks[status]} {phase.number}. {phase.title:<{width}}  "
+            line += f"{phase.produces:<16}  "
+            rows.append((line, label, state.metrics(phase.key)))
+        label_width = max(len(label) for _, label, _ in rows)
+        for line, label, metrics in rows:
+            if metrics["runs"]:
+                line += f"{label:<{label_width}}  {describe_metrics(metrics)}"
+            else:
+                line += label
+            self.io.tool_output(line.rstrip())
+        totals = state.totals()
+        if totals["runs"]:
+            self.io.tool_output()
             self.io.tool_output(
-                f"{pointer} {marks[status]} {phase.number}. {phase.title:<{width}}  "
-                f"{phase.produces:<16}  {label}"
+                f"Total: {describe_metrics(totals)}, {format_tokens(totals['tokens_sent'])}"
+                f" tokens sent, {format_tokens(totals['tokens_received'])} received,"
+                f" {plural(totals['commits'], 'commit')}"
             )
         self.io.tool_output()
         if current:
