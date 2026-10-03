@@ -4,6 +4,10 @@ import { applyTheme, currentTheme } from "./theme";
 
 // Commands the browser handles itself, without loom: they open parts of the UI.
 export const LOCAL_COMMANDS: Command[] = [
+  {
+    cmd: "/dashboard",
+    desc: "Open the project dashboard: each phase's runs, cost, decisions, document and diffs",
+  },
   { cmd: "/files", desc: "Open the file tree, to add files to the chat or view them (⌘B)" },
   { cmd: "/memory", desc: "Search the project's shared memory: /memory [QUERY]" },
   { cmd: "/terminal", desc: "Show the output of /run" },
@@ -16,6 +20,9 @@ export function runLocal(text: string): boolean {
   const args = rest.join(" ");
   const ui = useUi.getState();
   switch (name) {
+    case "/dashboard":
+      ui.openProject();
+      return true;
     case "/files":
       ui.showPane("files");
       return true;

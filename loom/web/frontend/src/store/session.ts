@@ -7,6 +7,7 @@ import type {
   LineStyle,
   ServerEvent,
   SessionEvent,
+  Timeline,
 } from "../lib/protocol";
 
 export interface ToolLine {
@@ -46,6 +47,8 @@ const MAX_TERMINAL = 200_000;
 interface SessionState {
   connection: Connection;
   session: SessionEvent | null;
+  // The /project dashboard's timeline, or null until loom sends one
+  timeline: Timeline | null;
   entries: Entry[];
   // The output of commands like /run, for the side pane's terminal
   terminal: string;
@@ -177,14 +180,16 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
 export const useSession = create<SessionState>((set) => ({
   connection: "connecting",
   session: null,
+  timeline: null,
   entries: [],
   terminal: "",
   setConnection: (connection) => set({ connection }),
   // The server replays the whole conversation to every new connection
-  reset: () => set({ session: null, entries: [], terminal: "" }),
+  reset: () => set({ session: null, timeline: null, entries: [], terminal: "" }),
   apply: (event) =>
     set((state) => {
       if (event.type === "session") return { session: event };
+      if (event.type === "timeline") return { timeline: event };
       if (event.type === "conversation") return { entries: [] };
       if (event.type === "terminal") {
         const gap = event.start && state.terminal ? "\n" : "";

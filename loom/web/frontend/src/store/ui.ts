@@ -1,7 +1,9 @@
 import { create } from "zustand";
 
+import { useSession } from "./session";
+
 // The side pane's tabs. The editor shows only while loom waits for a document's edit.
-export type Pane = "changes" | "files" | "terminal" | "memory";
+export type Pane = "project" | "changes" | "files" | "terminal" | "memory";
 
 const SIDEBAR_KEY = "loom.sidebar";
 
@@ -25,6 +27,8 @@ interface UiState {
   // The file the viewer shows
   openFile: string | null;
   memoryQuery: string;
+  // The phase the project dashboard scrolls to; n counts the requests
+  projectFocus: { key: string | null; n: number };
   // Counts ⌘K presses, which open the command menu in the input
   paletteRequests: number;
   openPalette: () => void;
@@ -34,6 +38,8 @@ interface UiState {
   showPane: (pane: Pane | null) => void;
   togglePane: () => void;
   openInViewer: (path: string) => void;
+  // Show the project dashboard, at a phase's card if given
+  openProject: (key?: string) => void;
   setMemoryQuery: (query: string) => void;
 }
 
@@ -51,6 +57,7 @@ export const useUi = create<UiState>((set, get) => ({
   pane: null,
   openFile: null,
   memoryQuery: "",
+  projectFocus: { key: null, n: 0 },
   paletteRequests: 0,
   openPalette: () => set((state) => ({ paletteRequests: state.paletteRequests + 1 })),
   fill: { text: "", n: 0 },
@@ -58,10 +65,18 @@ export const useUi = create<UiState>((set, get) => ({
   // On narrow windows the side pane takes the sessions sidebar's room
   showPane: (pane) =>
     set((state) => ({ pane, sidebar: pane && window.innerWidth < 1100 ? false : state.sidebar })),
-  togglePane: () => get().showPane(get().pane ? null : "changes"),
+  // The project dashboard first when there's a project
+  togglePane: () =>
+    get().showPane(
+      get().pane ? null : useSession.getState().session?.project ? "project" : "changes",
+    ),
   openInViewer: (path) => {
     get().showPane("files");
     set({ openFile: path });
+  },
+  openProject: (key) => {
+    get().showPane("project");
+    set((state) => ({ projectFocus: { key: key ?? null, n: state.projectFocus.n + 1 } }));
   },
   setMemoryQuery: (memoryQuery) => set({ memoryQuery }),
 }));

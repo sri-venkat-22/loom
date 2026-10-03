@@ -20,7 +20,7 @@ class TestWebCommands(unittest.TestCase):
     def test_the_web_uis_commands_dont_hide_loom_s(self):
         loom = set(Commands(InputOutput(pretty=False, fancy_input=False), None).get_commands())
         browser = browser_commands()
-        self.assertEqual(set(browser), {"/files", "/memory", "/terminal", "/theme"})
+        self.assertEqual(set(browser), {"/dashboard", "/files", "/memory", "/terminal", "/theme"})
         for cmd in browser + [command["cmd"] for command in WEB_COMMANDS]:
             self.assertNotIn(cmd, loom, f"{cmd} would hide loom's own {cmd}")
 

@@ -1,4 +1,6 @@
-import type { DiffLine } from "./protocol";
+import type { Decision, DiffLine, RunOutcome, Timeline } from "./protocol";
+
+export type { Decision };
 
 // The side pane's reads of the project, from loom/web/backend/api.py.
 
@@ -22,16 +24,6 @@ export interface MemoryHit {
   title: string | null;
   text: string;
   score: number;
-}
-
-export interface Decision {
-  id: number;
-  time: string;
-  phase: string | null;
-  source: string;
-  kind: string;
-  text: string;
-  reason: string | null;
 }
 
 export interface Memory {
@@ -68,12 +60,26 @@ export interface Changes {
   files: FileChange[];
 }
 
+// What a run of a phase's agent changed
+export interface PhaseDiff {
+  available: boolean;
+  key: string;
+  // The run shown, and the runs that made commits to choose from
+  run: number | null;
+  base: string | null;
+  head: string | null;
+  runs: { run: number; started: string; commits: number; outcome: RunOutcome }[];
+  files: FileChange[];
+}
+
+export type ReportFormat = "md" | "html" | "docx" | "pdf";
+
 export interface Alias {
   alias: string;
   model: string;
 }
 
-async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
+async function fetchOk(path: string, params?: Record<string, string>): Promise<Response> {
   const query = params ? `?${new URLSearchParams(params)}` : "";
   const response = await fetch(`/api/${path}${query}`);
   if (!response.ok) {
@@ -85,7 +91,32 @@ async function get<T>(path: string, params?: Record<string, string>): Promise<T>
     }
     throw new Error(detail);
   }
-  return response.json();
+  return response;
+}
+
+async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
+  return (await fetchOk(path, params)).json();
+}
+
+// The file name in a response's Content-Disposition, like report.docx
+function attachmentName(response: Response, fallback: string) {
+  const match = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") ?? "");
+  return match ? match[1] : fallback;
+}
+
+// Download the /project report as format. Word may come as HTML when loom has no pandoc.
+async function downloadReport(format: ReportFormat) {
+  const response = await fetchOk("project/report", { format });
+  const name = attachmentName(response, `report.${format}`);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return name;
 }
 
 export const api = {
@@ -95,4 +126,8 @@ export const api = {
   models: () => get<{ aliases: Alias[] }>("models"),
   sessions: () => get<{ saved: boolean; sessions: SavedSession[] }>("sessions"),
   changes: (base: "session" | "branch") => get<Changes>("changes", { base }),
+  timeline: () => get<Timeline>("project/timeline"),
+  phaseDiff: (key: string, run?: number) =>
+    get<PhaseDiff>(`project/phase/${encodeURIComponent(key)}/diff`, run ? { run: `${run}` } : {}),
+  downloadReport,
 };

@@ -1,16 +1,16 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { type FileChange, type Files, type Memory, api } from "../lib/api";
+import { type Files, type Memory, api } from "../lib/api";
 import { answer } from "../lib/asks";
 import { changeTotals, useChanges } from "../lib/changes";
 import { send } from "../lib/socket";
 import { pendingAsk, useSession } from "../store/session";
 import { type Pane, useUi } from "../store/ui";
-import { DiffView } from "./DiffView";
-
-const MonacoView = lazy(() => import("./MonacoView"));
+import { Editor, FileChanges, NO_FILES, Note } from "./PaneParts";
+import { ProjectTab } from "./ProjectDashboard";
 
 const TABS: [Pane, string][] = [
+  ["project", "Project"],
   ["changes", "Changes"],
   ["files", "Files"],
   ["terminal", "Terminal"],
@@ -28,26 +28,7 @@ function quote(path: string) {
   return /\s/.test(path) ? `"${path}"` : path;
 }
 
-function Editor(props: React.ComponentProps<typeof MonacoView>) {
-  return (
-    <Suspense fallback={<div className="p-4 text-dim">Loading the editor…</div>}>
-      <MonacoView {...props} />
-    </Suspense>
-  );
-}
-
-function Note({ children, error = false }: { children: React.ReactNode; error?: boolean }) {
-  return <div className={`text-[13px] ${error ? "text-destructive" : "text-dim"}`}>{children}</div>;
-}
-
 // Changes
-
-const STATUS_LABEL: Record<FileChange["status"], string> = {
-  added: "new",
-  modified: "",
-  deleted: "deleted",
-  renamed: "renamed",
-};
 
 const BASES = [
   ["session", "Since loom started"],
@@ -57,20 +38,9 @@ const BASES = [
 function ChangesTab() {
   const [base, setBase] = useState<"session" | "branch">("session");
   const { changes, error } = useChanges(base);
-  const [folded, setFolded] = useState<Set<string>>(new Set());
-  const openInViewer = useUi((state) => state.openInViewer);
 
-  const files = changes?.files ?? [];
+  const files = changes?.files ?? NO_FILES;
   const { added, removed } = changeTotals(changes);
-
-  function fold(path: string) {
-    setFolded((before) => {
-      const next = new Set(before);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -110,61 +80,7 @@ function ChangesTab() {
           </Note>
         )}
         {changes?.available && !files.length && <Note>No changes {changes.label}.</Note>}
-        {files.map((file) => {
-          const open = !folded.has(file.path);
-          return (
-            <div
-              key={file.path}
-              className="overflow-hidden rounded-[10px] border border-selected bg-background"
-            >
-              <div className="flex items-center gap-2 px-2.5 py-2">
-                <button
-                  onClick={() => fold(file.path)}
-                  aria-label={open ? "Fold" : "Unfold"}
-                  className="w-[18px] shrink-0 text-[10px] text-dim"
-                >
-                  {open ? "▼" : "▶"}
-                </button>
-                <button
-                  onClick={() => file.status !== "deleted" && openInViewer(file.path)}
-                  title={file.status === "deleted" ? file.path : `View ${file.path}`}
-                  className="min-w-0 truncate text-left font-mono text-[12.5px] text-foreground hover:underline"
-                >
-                  {file.path}
-                </button>
-                {STATUS_LABEL[file.status] && (
-                  <span className="shrink-0 rounded-full bg-selected px-[7px] py-px text-[11px] text-muted-foreground">
-                    {STATUS_LABEL[file.status]}
-                    {file.old_path && ` from ${file.old_path}`}
-                  </span>
-                )}
-                <span className="ml-auto shrink-0 font-mono text-[12px]">
-                  <span className="text-add">+{file.added}</span>{" "}
-                  <span className="text-del">-{file.removed}</span>
-                </span>
-              </div>
-              {open &&
-                (file.binary ? (
-                  <div className="border-t border-raised px-3 py-2 text-[12px] text-dim">
-                    Binary file
-                  </div>
-                ) : (
-                  file.lines.length > 0 && (
-                    <DiffView
-                      inCard
-                      diff={{
-                        type: "diff",
-                        id: file.path,
-                        tool_id: null,
-                        file: file.path,
-                        lines: file.lines,
-                      }}
-                    />
-                  )
-                ))}
-            </div>
-          );
-        })}
+        <FileChanges files={files} />
       </div>
     </div>
   );
@@ -504,7 +420,10 @@ export function SidePane() {
   if (!pane && !editAsk) return null;
 
   return (
-    <aside className="flex w-[clamp(380px,38vw,620px)] min-w-[280px] shrink flex-col border-l border-line bg-pane text-[13px]">
+    <aside
+      aria-label="Side pane"
+      className="flex w-[clamp(380px,38vw,620px)] min-w-[280px] shrink flex-col border-l border-line bg-pane text-[13px]"
+    >
       <div className="flex h-[46px] shrink-0 items-center gap-1 border-b border-line px-2.5">
         {editAsk ? (
           <>
@@ -561,6 +480,8 @@ export function SidePane() {
             onChange={setDraft}
             onSave={() => answer(editAsk, draft)}
           />
+        ) : pane === "project" ? (
+          <ProjectTab />
         ) : pane === "changes" ? (
           <ChangesTab />
         ) : pane === "files" ? (
