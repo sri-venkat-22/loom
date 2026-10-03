@@ -82,11 +82,13 @@ def in_project(root, path):
 
 def read_project_file(root, path, limit=MAX_DOC_BYTES):
     """The text of a file in the project, at most limit bytes of it, or None when it's
-    missing or isn't a regular file inside root."""
+    missing or isn't a regular file inside root. Line endings are \n, as on Windows the
+    agents write \r\n."""
     if not in_project(root, path):
         return None
     with open(Path(path).resolve(), "rb") as f:
-        return f.read(limit).decode("utf-8", errors="replace")
+        text = f.read(limit).decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n")
 
 
 class TransitionError(Exception):

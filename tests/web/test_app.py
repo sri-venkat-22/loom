@@ -149,7 +149,7 @@ class TestStreaming(unittest.TestCase):
 
 class TestProtocol(unittest.TestCase):
     def test_frontend_knows_every_message_type(self):
-        source = (FRONTEND / "src" / "lib" / "protocol.ts").read_text()
+        source = (FRONTEND / "src" / "lib" / "protocol.ts").read_text(encoding="utf-8")
         quoted = set(re.findall(r'"([a-z_]+)"', source))
         for type in SERVER_EVENTS + CLIENT_EVENTS:
             self.assertIn(type, quoted, f"protocol.ts doesn't mention {type}")

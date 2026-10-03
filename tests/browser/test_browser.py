@@ -10,8 +10,8 @@ class TestBrowser(unittest.TestCase):
     def test_browser_flag_imports_streamlit(self, mock_launch_gui):
         os.environ["LOOM_ANALYTICS"] = "false"
 
-        # Run main with --browser and --yes flags
-        main(["--browser", "--yes"])
+        # Run main with --gui (--browser now opens the --web UI instead) and --yes
+        main(["--gui", "--yes"])
 
         # Check that launch_gui was called
         mock_launch_gui.assert_called_once()
@@ -26,7 +26,7 @@ class TestBrowser(unittest.TestCase):
 
         # Assert that streamlit was successfully imported
         self.assertTrue(
-            streamlit_imported, "Streamlit should be importable after running with --browser flag"
+            streamlit_imported, "Streamlit should be importable after running with --gui flag"
         )
 
 

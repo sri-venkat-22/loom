@@ -12,7 +12,7 @@ FRONTEND = ROOT / "loom" / "web" / "frontend" / "src"
 
 def browser_commands():
     """The commands the frontend handles itself, from LOCAL_COMMANDS in localCommands.ts."""
-    source = (FRONTEND / "lib" / "localCommands.ts").read_text()
+    source = (FRONTEND / "lib" / "localCommands.ts").read_text(encoding="utf-8")
     return re.findall(r'cmd: "(/[a-z-]+)"', source)
 
 
@@ -27,15 +27,15 @@ class TestWebCommands(unittest.TestCase):
 
 class TestWebDocs(unittest.TestCase):
     def test_the_docs_cover_the_options(self):
-        docs = (ROOT / "loom" / "docs" / "web.md").read_text()
+        docs = (ROOT / "loom" / "docs" / "web.md").read_text(encoding="utf-8")
         for option in ("--web", "--port", "--no-browser"):
             self.assertIn(option, docs)
         for cmd in browser_commands() + [command["cmd"] for command in WEB_COMMANDS]:
             self.assertIn(f"`{cmd}", docs, f"web.md doesn't mention {cmd}")
 
     def test_the_screenshot_exists(self):
-        readme = (ROOT / "README.md").read_text()
-        docs = (ROOT / "loom" / "docs" / "web.md").read_text()
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        docs = (ROOT / "loom" / "docs" / "web.md").read_text(encoding="utf-8")
         for base, text in ((ROOT, readme), (ROOT / "loom" / "docs", docs)):
             images = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
             self.assertTrue(images)
@@ -49,7 +49,7 @@ class TestBuiltFrontend(unittest.TestCase):
 
     def test_the_build_is_complete(self):
         static = ROOT / "loom" / "web" / "static"
-        index = (static / "index.html").read_text()
+        index = (static / "index.html").read_text(encoding="utf-8")
         assets = re.findall(r'(?:src|href)="/(assets/[^"]+)"', index)
         self.assertTrue(any(asset.endswith(".js") for asset in assets), index)
         self.assertTrue(any(asset.endswith(".css") for asset in assets), index)

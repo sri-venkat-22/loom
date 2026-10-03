@@ -872,17 +872,28 @@ class TestPermissions(unittest.TestCase):
         self.home.cleanup()
 
     def test_split_command(self):
-        self.assertEqual(split_command("pytest -q && git status"), ["pytest -q", "git status"])
-        self.assertEqual(split_command("echo 'a; b' | wc -l"), ["echo 'a; b'", "wc -l"])
-        self.assertEqual(split_command("pytest 2>&1"), ["pytest"])
-        self.assertEqual(split_command("pytest >/dev/null 2>&1; ls"), ["pytest", "ls"])
-        self.assertIsNone(split_command("pytest $(rm -rf x)"))
-        self.assertIsNone(split_command('echo "`rm -rf x`"'))
-        self.assertIsNone(split_command("pytest > out.txt"))
-        self.assertIsNone(split_command("echo 'unbalanced"))
+        def split(command):
+            # How a POSIX shell splits it, whatever this test runs on
+            return split_command(command, windows=False)
+
+        self.assertEqual(split("pytest -q && git status"), ["pytest -q", "git status"])
+        self.assertEqual(split("echo 'a; b' | wc -l"), ["echo 'a; b'", "wc -l"])
+        self.assertEqual(split("pytest 2>&1"), ["pytest"])
+        self.assertEqual(split("pytest >/dev/null 2>&1; ls"), ["pytest", "ls"])
+        self.assertIsNone(split("pytest $(rm -rf x)"))
+        self.assertIsNone(split('echo "`rm -rf x`"'))
+        self.assertIsNone(split("pytest > out.txt"))
+        self.assertIsNone(split("echo 'unbalanced"))
         # >&WORD writes a file called WORD
-        self.assertIsNone(split_command("pytest >&1.txt"))
-        self.assertIsNone(split_command("pytest >/dev/null.txt"))
+        self.assertIsNone(split("pytest >&1.txt"))
+        self.assertIsNone(split("pytest >/dev/null.txt"))
+
+    def test_split_command_on_windows(self):
+        # cmd.exe has no quotes to hide a separator in, so quoting fails closed there
+        self.assertEqual(
+            split_command("pytest -q && git status", windows=True), ["pytest -q", "git status"]
+        )
+        self.assertIsNone(split_command("echo 'a; b' | wc -l", windows=True))
 
     def test_split_command_fails_closed_on_quoting_it_does_not_parse(self):
         # In $'...' a \' doesn't end the string, so this is ls with one argument followed

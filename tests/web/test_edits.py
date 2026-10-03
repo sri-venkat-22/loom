@@ -62,7 +62,9 @@ class TestEditsFromTheBrowser(unittest.TestCase):
     def check_accept(self, stream):
         with GitTemporaryDirectory():
             history = run_request("yes", stream)
-            self.assertEqual(Path("calc.py").read_text(), "def add(a, b):\n    return a + b\n")
+            self.assertEqual(
+                Path("calc.py").read_text(encoding="utf-8"), "def add(a, b):\n    return a + b\n"
+            )
 
         card = next(msg for msg in history if msg["type"] == "tool_start")
         self.assertEqual(card["name"], "Update")
@@ -89,7 +91,9 @@ class TestEditsFromTheBrowser(unittest.TestCase):
     def test_reject(self):
         with GitTemporaryDirectory():
             history = run_request("no", stream=False)
-            self.assertEqual(Path("calc.py").read_text(), "def add(a, b):\n    return a - b\n")
+            self.assertEqual(
+                Path("calc.py").read_text(encoding="utf-8"), "def add(a, b):\n    return a - b\n"
+            )
 
         end = next(msg for msg in history if msg["type"] == "tool_end")
         self.assertEqual(end["status"], "failed")
