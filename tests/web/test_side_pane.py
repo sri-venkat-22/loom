@@ -184,7 +184,7 @@ class TestApi(unittest.TestCase):
         # A phase writes its document during a run, and loom's list of files catches up
         # only when it next waits for input
         (self.root / "loom-project").mkdir()
-        (self.root / "loom-project" / "1-idea-report.md").write_text("# Idea report\n")
+        (self.root / "loom-project" / "1-idea-report.md").write_bytes(b"# Idea report\n")
         response = self.client.get("/api/file", params=dict(path="loom-project/1-idea-report.md"))
         self.assertEqual(response.json()["text"], "# Idea report\n")
         response = self.client.get("/api/file", params=dict(path="loom-project/notes.md"))
