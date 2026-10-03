@@ -102,6 +102,7 @@ NO_TIMELINE = dict(
     complete=False,
     template=None,
     tdd=False,
+    workers=None,
     totals=None,
     phases=[],
     decisions=[],
@@ -119,6 +120,23 @@ def spec_summary(spec):
         tests=list(spec.get("tests") or []),
         locked=bool(spec.get("locked")),
     )
+
+
+def package_summaries(packages):
+    """Parallel Building's work packages, for the dashboard."""
+    return [
+        dict(
+            id=pid,
+            title=record.get("title") or pid,
+            status=record.get("status", "pending"),
+            wave=record.get("wave"),
+            cost=record.get("cost") or 0,
+            runs=record.get("runs") or 0,
+            attempts=record.get("attempts"),
+            error=record.get("error"),
+        )
+        for pid, record in (packages or {}).items()
+    ]
 
 
 def timeline(root):
@@ -155,6 +173,7 @@ def timeline(root):
                     for check in data.get("checks") or []
                 ],
                 spec=spec_summary(data.get("spec")),
+                packages=package_summaries(data.get("packages")),
             )
         )
     template = state.template_info
@@ -166,6 +185,7 @@ def timeline(root):
         complete=current is None,
         template=dict(name=template["name"], source=template.get("source")) if template else None,
         tdd=state.tdd,
+        workers=state.data.get("workers"),
         totals=state.totals(),
         phases=phases,
         # The decisions that aren't any phase's, like ones made once it was complete

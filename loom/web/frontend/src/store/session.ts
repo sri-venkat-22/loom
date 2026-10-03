@@ -16,12 +16,21 @@ export interface ToolLine {
   style: LineStyle;
 }
 
+// worker is the work package of the parallel builder an entry is from, if any
 export type Entry =
-  | { kind: "user"; id: string; text: string }
-  | { kind: "loom"; id: string; text: string; reasoning: string; streaming: boolean }
-  | { kind: "system"; id: string; level: Level; text: string }
+  | { kind: "user"; id: string; text: string; worker?: string }
+  | {
+      kind: "loom";
+      id: string;
+      text: string;
+      reasoning: string;
+      streaming: boolean;
+      worker?: string;
+    }
+  | { kind: "system"; id: string; level: Level; text: string; worker?: string }
   | {
       kind: "tool";
+      worker?: string;
       id: string;
       name: string;
       detail: string;
@@ -32,9 +41,9 @@ export type Entry =
       diffs: DiffEvent[];
     }
   // A diff that isn't on a tool's card
-  | { kind: "diff"; id: string; diff: DiffEvent }
+  | { kind: "diff"; id: string; diff: DiffEvent; worker?: string }
   // answer is undefined while loom waits, and null if the question was dropped
-  | { kind: "ask"; id: string; ask: AskEvent; answer?: string | null };
+  | { kind: "ask"; id: string; ask: AskEvent; answer?: string | null; worker?: string };
 
 export type ToolEntry = Extract<Entry, { kind: "tool" }>;
 export type AskEntry = Extract<Entry, { kind: "ask" }>;
@@ -77,7 +86,8 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
       const id = `loom-${event.id}`;
       if (!entries.some((entry) => entry.id === id)) {
         const { text, reasoning } = event;
-        return [...entries, { kind: "loom", id, text, reasoning, streaming: true }];
+        const worker = event.worker ?? undefined;
+        return [...entries, { kind: "loom", id, text, reasoning, streaming: true, worker }];
       }
       return update(entries, id, (entry) =>
         entry.kind !== "loom"
@@ -100,10 +110,14 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
     case "system": {
       // Consecutive lines of the same kind read as one block
       const last = entries[entries.length - 1];
-      if (last?.kind === "system" && last.level === event.level) {
+      const worker = event.worker ?? undefined;
+      if (last?.kind === "system" && last.level === event.level && last.worker === worker) {
         return [...entries.slice(0, -1), { ...last, text: `${last.text}\n${event.text}` }];
       }
-      return [...entries, { kind: "system", id: newId("s"), level: event.level, text: event.text }];
+      return [
+        ...entries,
+        { kind: "system", id: newId("s"), level: event.level, text: event.text, worker },
+      ];
     }
 
     case "tool_start":
@@ -112,6 +126,7 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
         {
           kind: "tool",
           id: `tool-${event.id}`,
+          worker: event.worker ?? undefined,
           name: event.name,
           detail: event.detail,
           args: event.args,
@@ -151,7 +166,10 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
           entry.kind === "tool" ? { ...entry, diffs: [...entry.diffs, event] } : entry,
         );
       }
-      return [...entries, { kind: "diff", id: `diff-${event.id}`, diff: event }];
+      return [
+        ...entries,
+        { kind: "diff", id: `diff-${event.id}`, diff: event, worker: event.worker ?? undefined },
+      ];
     }
 
     case "ask":

@@ -120,12 +120,74 @@ work as usual. Going back to an earlier phase has the acceptance tests written a
 Without a test command (the template's, or the architecture document's `**Test
 command:**` line) or a git repo, Building runs the usual way, with a warning.
 
+## Parallel builders
+
+The architecture document ends with a work plan: how Building splits into work packages,
+as a YAML block that loom reads.
+
+```yaml
+- id: core
+  title: Conversion functions
+  owns: ["src/app/convert.py"]
+  tests: ["tests/test_convert.py"]
+  depends_on: []
+  acceptance: [FR-1, FR-2]
+  test_command: "python -m pytest -q tests/test_convert.py"
+- id: cli
+  title: The command line
+  owns: ["src/app/cli.py"]
+  tests: ["tests/test_cli.py"]
+  depends_on: [core]
+  acceptance: [FR-3]
+```
+
+The Design checkpoint checks the plan and shows it, like `Work plan: 3 packages in 2
+waves: core → cli; web`, or what's wrong with it: two packages whose globs could match the
+same file, a dependency on a package that isn't there, a cycle of dependencies, or more
+packages than three per builder. A plan with problems isn't used.
+
+With a valid plan of more than one package, and more than one builder (`--build-workers`,
+3 by default, or `/project workers N` for the project), Building runs as:
+
+1. **The scaffold.** One agent, in the project itself, writes what the packages share:
+   the manifests and configuration, the layout, and the interfaces between the packages.
+   loom commits it.
+2. **Waves of builders.** The packages that depend on nothing go first, then the ones that
+   depend on them. Each package's builder works in its own git worktree,
+   `.loom/worktrees/ID`, on its own branch, `loom/build/ID`, made from the project's latest
+   commit, and up to N build at once. A builder may only write its package's files (its
+   `owns` and `tests`) and its notes, `loom-project/packages/ID.md`. Its questions, like
+   whether it may run a command, wait for you in the main conversation, marked with its
+   package, like `[cli] Run this command?`.
+3. **Merging.** Each built package is merged into the project, one at a time. When a merge
+   conflicts, the Integrator agent resolves it; if it can't, the merge is undone and
+   Building stops.
+4. **Integration.** A last agent runs the whole test command, fixes what's broken between
+   the packages and writes the build summary.
+
+^C (or Esc in the web UI) stops every builder, and the commands they run. Building keeps
+each package's status, branch, cost and attempts, so `/project run` carries on where it
+stopped, building only the packages that aren't merged yet. `/project status` lists
+them. When the Testing agent's report sends the project back, only the packages that own
+the files it names are built again, then the Integration agent runs again. Going back to
+an earlier phase starts parallel Building over; `/project reset` and `/project back`
+remove the builders' worktrees and branches.
+
+With [test-driven Building](#test-driven-building), the acceptance tests are written and
+locked first; a package with its own `test_command` runs the build loop on its tests,
+and the Integration agent runs it on the whole suite.
+
+Building runs as one agent, as it always has, when there's no valid plan, the plan has
+one package, there's one builder, or loom can't merge safely: no git repo, uncommitted
+changes, or `--no-auto-commits`.
+
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
 | `/project new [--template NAME] [--tdd] IDEA` | Start a project, from a [template](#project-templates) if given, [test-driven](#test-driven-building) with `--tdd`, and run its phases |
 | `/project templates` | List the project templates |
+| `/project workers [N]` | How many [builders](#parallel-builders) build the work packages at once |
 | `/project run` | Carry on from the phase the project is in |
 | `/project` or `/project status` | Show each phase's status |
 | `/project approve` | Approve the document waiting for review |

@@ -96,6 +96,11 @@ click the document's name to open it in the side pane:
   tests or a NO-GO.
 - **Abort** (Esc) stops the run; `/project run` picks it up again.
 
+When [parallel builders](project.md#parallel-builders) build the work packages, the chat
+shows each builder's work in a lane of its own, side by side, with its package's name and
+a dot that blinks while it works. Their questions show in the conversation itself,
+marked with their package.
+
 ## The side pane
 
 ⌘B, or the panel button at the right of the header, shows a pane beside the chat (the
@@ -129,7 +134,8 @@ as it runs:
   to Building, the template's checks after its last run, passed or failed, and the
   decisions made in it, which unfold. With [test-driven Building](project.md#test-driven-building),
   Building's card also shows its acceptance tests and each try of the build loop
-  (✗ ✗ ✓), and **Tests** opens the acceptance test plan.
+  (✗ ✗ ✓), and **Tests** opens the acceptance test plan. With parallel builders, it lists
+  the work packages, by wave, with their status, tries and cost.
 - **Document** opens the phase's document in a read-only editor.
 - **Diff** shows what a run of the phase changed: the diff of its commits, from where
   HEAD was when the run started to where it ended. Pick another run from the list.

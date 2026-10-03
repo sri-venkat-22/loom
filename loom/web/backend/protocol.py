@@ -67,7 +67,10 @@ Server to browser:
                  reason}, history entries {time, phase, event, note}, checks the
                  template's checks after its last run, {command, passed}, and spec
                  test-driven Building's acceptance tests, {status, document, tests,
-                 locked}, or null.
+                 locked}, or null. Building also has packages, its work packages when
+                 builders build them in parallel: [{id, title, status, wave, cost, runs,
+                 attempts, error}], status pending, running, built, merged, failed or
+                 stopped; and workers, how many build at once.
 
 Browser to server:
 
@@ -76,6 +79,11 @@ Browser to server:
   cancel         {}                         Stop the current work, like Esc in the terminal.
   mode           {mode}                     Switch the permission mode, like Shift-Tab in
                                             the terminal.
+
+Messages from a parallel builder (loom/parallel.py) also carry worker, the id of the work
+package it builds: assistant_delta, assistant_end, system, tool_start, tool_output,
+tool_end and diff. The chat shows each builder's in a lane of its own. Its questions come
+from the main thread, as asks without worker.
 
 On connecting, the browser gets the session and the latest timeline, followed by every
 other message so far, so a reloaded page shows the whole conversation.

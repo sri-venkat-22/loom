@@ -252,6 +252,14 @@ class TestParallelBuilding(unittest.TestCase):
             total = sum(run["cost"] for run in state.run_log("building"))
             self.assertAlmostEqual(coder.total_cost, total, places=6)
 
+            # The report lists them
+            from loom.project_report import ProjectReport
+
+            report = ProjectReport.from_orchestrator(orchestrator).markdown()
+            self.assertIn("**Parallel builders' work packages:**", report)
+            self.assertIn("| shout | Shouting | 1 | merged |", report)
+            self.assertIn("Run 1, package:", report)
+
             # /project status shows the packages
             io.tool_output = MagicMock()
             orchestrator.show_status()

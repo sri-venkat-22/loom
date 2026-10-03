@@ -42,7 +42,9 @@ def free_port():
         return sock.getsockname()[1]
 
 
-class TestDashboard(unittest.TestCase):
+class BrowserTest(unittest.TestCase):
+    """A test that drives loom --web in Chromium."""
+
     def setUp(self):
         self.playwright, self.browser = chromium()
         if not self.browser:
@@ -67,6 +69,8 @@ class TestDashboard(unittest.TestCase):
         url = start_server(session, port=free_port(), open_browser=False, io=web_io)
         return session, url
 
+
+class TestDashboard(BrowserTest):
     def test_click_through_the_timeline(self):
         with GitTemporaryDirectory() as root:
             make_repo()
@@ -130,6 +134,46 @@ class TestDashboard(unittest.TestCase):
         self.assertEqual(session.inputs.get(timeout=5), "/project back testing")
 
         page.close()
+
+
+class TestWorkerLanes(BrowserTest):
+    def test_builders_show_in_lanes(self):
+        import threading
+
+        from loom.workers import Asks, WorkerIO
+
+        with GitTemporaryDirectory() as root:
+            make_repo()
+            session, url = self.serve(root)
+            try:
+                io = WebIO(pretty=False, session=session)
+                io.tool_output("Parallel Building: 2 packages in 1 wave.")
+                lock, asks = threading.Lock(), Asks()
+                adder = WorkerIO(io, "adder", asks, lock)
+                shout = WorkerIO(io, "shout", asks, lock)
+                adder.tool_call("Write", "adder.py")
+                shout.tool_call("Write", "shout.py")
+                adder.tool_result("Wrote 2 lines to adder.py")
+                adder.tool_done("ok")
+                shout.tool_done("ok")
+                io.tool_output("Merging the adder package into the project.")
+
+                page = self.browser.new_page(viewport=dict(width=1280, height=900))
+                page.goto(url)
+                lanes = page.get_by_label("Parallel builders")
+                lanes.wait_for()
+                self.assertEqual(
+                    lanes.locator("section").evaluate_all("els => els.map(e => e.ariaLabel)"),
+                    ["Builder adder", "Builder shout"],
+                )
+                self.assertIn("adder.py", page.get_by_label("Builder adder").inner_text())
+                self.assertNotIn("adder.py", page.get_by_label("Builder shout").inner_text())
+                # The main thread's output stays outside the lanes
+                self.assertNotIn("Merging", lanes.inner_text())
+                page.get_by_text("Merging the adder package").wait_for()
+                page.close()
+            finally:
+                self.watcher.stop()
 
 
 if __name__ == "__main__":
