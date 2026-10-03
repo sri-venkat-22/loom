@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 from loom.memory import ProjectDB, ProjectMemory, ProjectMemoryError
 from loom.models import MODEL_ALIASES
-from loom.phases import PHASES, PHASES_BY_KEY
+from loom.phases import PHASES, PHASES_BY_KEY, SPEC
 from loom.project_report import FORMATS, ProjectReport, ReportError, export_bytes
 from loom.sessions import list_sessions
 
@@ -17,7 +17,7 @@ from .project import read_state, timeline
 
 # The /project documents, which can be read as soon as a phase writes them, before loom's
 # own list of the project's files includes them
-DOCUMENTS = {phase.document for phase in PHASES}
+DOCUMENTS = {phase.document for phase in PHASES} | {SPEC.document}
 
 # Largest file the viewer opens
 MAX_FILE_BYTES = 1_000_000

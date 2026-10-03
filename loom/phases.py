@@ -78,10 +78,14 @@ class Phase:
     verdicts: tuple = ()
     # What the orchestrator looks up in the earlier documents not in the agent's message
     recall: str = ""
+    # A step of a phase that isn't its own phase, like test-driven Building's acceptance
+    # tests ("spec"), and the agent's name when it isn't the phase's
+    mode: str = None
+    agent_name: str = None
 
     @property
     def agent(self):
-        return f"{self.title} agent"
+        return self.agent_name or f"{self.title} agent"
 
 
 PHASES = [
@@ -165,6 +169,24 @@ PHASES = [
 ]
 
 PHASES_BY_KEY = {phase.key: phase for phase in PHASES}
+
+# Test-driven Building's first step (loom/tdd.py): the Testing agent, in spec mode, writes
+# acceptance tests from the PRD before anything is built. It's part of Building.
+SPEC = Phase(
+    4,
+    "building",
+    "Acceptance tests",
+    f"{DOCS_DIR}/4a-acceptance-tests.md",
+    "acceptance test plan",
+    "acceptance tests",
+    phase_prompts.SPEC,
+    tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("bash", "todo_write"),
+    writable=TEST_FILES,
+    inputs=("planning", "design"),
+    recall="acceptance criteria requirements interfaces edge cases errors",
+    mode="spec",
+    agent_name="Testing agent (spec mode)",
+)
 
 
 def get_phase(name):

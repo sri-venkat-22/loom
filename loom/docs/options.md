@@ -53,8 +53,9 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--agent-diffs | --no-agent-diffs] [--allow]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
-            [--mcp-config] [--hooks | --no-hooks] [--lint]
-            [--lint-cmd] [--auto-lint | --no-auto-lint] [--test-cmd]
+            [--mcp-config] [--hooks | --no-hooks] [--build-retries]
+            [--build-budget] [--lint] [--lint-cmd]
+            [--auto-lint | --no-auto-lint] [--test-cmd]
             [--auto-test | --no-auto-test] [--test]
             [--analytics | --no-analytics] [--analytics-log]
             [--analytics-disable] [--analytics-posthog-host]
@@ -573,6 +574,17 @@ Environment variable: `LOOM_HOOKS`
 Aliases:
   - `--hooks`
   - `--no-hooks`
+
+## Projects:
+
+### `--build-retries N`
+With test-driven Building (/project new --tdd), how many more times the Building agent may try after the acceptance tests fail (default: 3)  
+Default: 3  
+Environment variable: `LOOM_BUILD_RETRIES`  
+
+### `--build-budget DOLLARS`
+With test-driven Building, stop trying again once a Building run has cost this much (default: no limit)  
+Environment variable: `LOOM_BUILD_BUDGET`  
 
 ## Fixing and committing:
 

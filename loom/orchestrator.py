@@ -82,6 +82,9 @@ MAX_RECALLED = 3
 # Who the template's decisions and its checks' results come from
 TEMPLATE_SOURCE = "template"
 
+# The defaults of the options that change how projects run
+DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None)
+
 # What each entry of a phase's run_log adds up, for its metrics
 METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
 
@@ -394,6 +397,13 @@ class ProjectState:
             data.pop("verdict", None)
             data.pop("feedback", None)
             data.pop("attach", None)
+            spec = data.get("spec")
+            if phase is not target and spec and spec.get("status") != "pending":
+                # Test-driven Building's acceptance tests are written again, from the
+                # earlier phases' new documents
+                spec.update(status="pending", stale=True)
+                for name in ("locked", "commit", "first_run"):
+                    spec.pop(name, None)
         data = self.phase_data(key)
         data["feedback"] = feedback
         data["redo"] = True
@@ -416,6 +426,8 @@ class Orchestrator:
         self.outside_warned = set()
         # The project's template, once loaded (False when it has none or it's gone)
         self.loaded_template = None
+        # Settings from loom's options, like --build-retries
+        self.settings = dict(DEFAULT_SETTINGS, **(getattr(coder, "project_settings", None) or {}))
 
     # Starting and running
 
@@ -525,18 +537,41 @@ class Orchestrator:
         )
         if phase.key == "building":
             self.apply_skeleton()
+            if state.tdd:
+                from loom.tdd import TestDrivenBuilding
+
+                building = TestDrivenBuilding(self)
+                if building.ready():
+                    return building.run(phase)
+
         agent = self.make_agent(phase)
         meter = self.start_run(agent)
+        self.guarded(phase, agent, meter, lambda: self.do_task(agent, phase))
+        return self.end_run(phase, agent, meter)
+
+    def do_task(self, agent, phase, message=None):
+        """Have agent do phase's task (or message), then write its document if it didn't."""
+        agent.run(with_message=message or self.task_message(phase), preproc=False)
+        self.nudge_for_document(agent, phase)
+
+    def nudge_for_document(self, agent, phase):
+        """Remind agent once to write phase's document, if it finished without it."""
+        if agent.failed or self.stopped(agent) or self.document_text(phase):
+            return
+        self.io.tool_warning(f"The {phase.agent} didn't write {phase.document}.")
+        agent.run(
+            with_message=phase_prompts.missing_document.format(document=phase.document),
+            preproc=False,
+        )
+
+    def guarded(self, phase, agent, meter, work, extra=None):
+        """Run work(), which runs agent. Whatever happens, add what agent spent to the
+        coder's totals, and if work raises, log the run in phase's run_log (with extra) and
+        save it before the error goes on up."""
         # How the run ended, if the agent raised
         raised = "failed"
         try:
-            agent.run(with_message=self.task_message(phase), preproc=False)
-            if not (agent.failed or self.stopped(agent) or self.document_text(phase)):
-                self.io.tool_warning(f"The {phase.agent} didn't write {phase.document}.")
-                agent.run(
-                    with_message=phase_prompts.missing_document.format(document=phase.document),
-                    preproc=False,
-                )
+            work()
             raised = None
         except KeyboardInterrupt:
             raised = "stopped"
@@ -544,9 +579,14 @@ class Orchestrator:
         finally:
             self.collect(agent, meter)
             if raised:
-                self.log_run(phase, agent, meter, raised)
+                self.log_run(phase, agent, meter, raised, extra=extra)
                 self.save_quietly()
 
+    def end_run(self, phase, agent, meter, extra=None):
+        """After agent's run of phase: stop the phase if the agent failed, was stopped or
+        didn't write its document, or finish it for review and run the template's checks.
+        Either way the run is logged, with extra. Returns whether the phase finished."""
+        state = self.state
         reason = None
         outcome = "failed"
         if agent.failed:
@@ -557,14 +597,14 @@ class Orchestrator:
         elif not self.document_text(phase):
             reason = f"the agent didn't write {phase.document}"
         if reason:
-            self.log_run(phase, agent, meter, outcome)
+            self.log_run(phase, agent, meter, outcome, extra=extra)
             state.stop(phase.key, reason)
             state.save()
             self.io.tool_error(f"{phase.title} stopped: {reason}. Continue with /project run.")
             return False
 
         verdict = read_verdict(phase, self.document_text(phase))
-        self.log_run(phase, agent, meter, "done", verdict)
+        self.log_run(phase, agent, meter, "done", verdict, extra=extra)
         state.finish(phase.key, verdict)
         state.save()
         self.remember_document(phase)
@@ -574,7 +614,8 @@ class Orchestrator:
     def stopped(self, agent):
         return agent.stop_requested or agent.interrupted
 
-    def make_agent(self, phase):
+    def make_agent(self, phase, locked=None):
+        """A new agent for phase. locked are paths of tests it may not change."""
         from loom.coders import Coder
         from loom.coders.phase_coder import PhaseCoder
         from loom.sessions import Session
@@ -589,6 +630,7 @@ class Orchestrator:
             phase=phase,
             shared_memory=self.memory,
             template=self.template,
+            locked=locked,
             fnames=[],
             read_only_fnames=[],
             done_messages=[],
@@ -616,9 +658,9 @@ class Orchestrator:
         before = meter["usage"]
         return {field: value - before[field] for field, value in usage(agent).items()}
 
-    def log_run(self, phase, agent, meter, outcome, verdict=None):
+    def log_run(self, phase, agent, meter, outcome, verdict=None, extra=None):
         """Add the run that meter measured to the phase's run_log. outcome is how it ended:
-        done, stopped or failed."""
+        done, stopped or failed. extra adds fields to the entry."""
         data = self.state.phase_data(phase.key)
         head = self.head()
         spent = self.spent(agent, meter)
@@ -636,6 +678,7 @@ class Orchestrator:
             verdict=verdict,
             outcome=outcome,
         )
+        entry.update(extra or {})
         data.setdefault("run_log", []).append(entry)
         return entry
 
@@ -678,10 +721,11 @@ class Orchestrator:
             return ""
         return text.strip()
 
-    def task_message(self, phase):
+    def task_message(self, phase, data=None):
         """The agent's first message: the idea, the documents it works from, the decisions
-        so far, related passages from the project memory and its task."""
-        data = self.state.phase_data(phase.key)
+        so far, related passages from the project memory and its task. data is the phase's
+        state (its feedback, say), by default the phase's own."""
+        data = self.state.phase_data(phase.key) if data is None else data
         parts = [f"# The project idea\n\n{self.state.idea}"]
 
         inputs = list(phase.inputs) + [key for key in data.get("attach") or [] if key]
@@ -707,7 +751,7 @@ class Orchestrator:
             parts.append(recalled)
 
         task = [f"You are the {phase.agent}."]
-        if phase.key == "building":
+        if phase.key == "building" and not phase.mode:
             task.append(
                 "Build the project described in the PRD, following the architecture document,"
                 f" then write the build summary to {phase.document}."
@@ -729,7 +773,7 @@ class Orchestrator:
                     document_title=phase.document_title, document=phase.document, why=why
                 )
             )
-            if phase.key == "building":
+            if phase.key == "building" and not phase.mode:
                 task.append("The code from that run is in the project; build on it.")
         if feedback:
             prefix = phase_prompts.feedback_prefix.format(document_title=phase.document_title)
@@ -1044,6 +1088,12 @@ class Orchestrator:
                     f"The {phase.document_title} has no Test command line loom can read, so"
                     " loom can't run the project's tests itself."
                 )
+        if phase.key == "building":
+            from loom.tdd import describe_build
+
+            runs = self.state.run_log(phase.key)
+            for line, warn in describe_build(runs[-1] if runs else None):
+                (self.io.tool_warning if warn else self.io.tool_output)(line)
         checks = self.state.phase_data(phase.key).get("checks")
         if checks:
             self.io.tool_output("The template's checks:")

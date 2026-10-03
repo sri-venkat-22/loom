@@ -383,6 +383,7 @@ class Coder:
         mcp=None,
         hooks=None,
         auto_compact=True,
+        project_settings=None,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -463,6 +464,8 @@ class Coder:
         # Shell commands to run before and after the agent's tool calls
         self.hooks = hooks
         self.auto_compact = auto_compact
+        # Options for /project, like --build-retries
+        self.project_settings = dict(project_settings or {})
 
         self.shell_commands = []
 

@@ -18,10 +18,16 @@ class PhaseCoder(AgentCoder):
     # Why the phase can't run, like the provider rejecting tools
     failed = None
 
-    def __init__(self, main_model, io, phase=None, shared_memory=None, template=None, **kwargs):
+    # Paths of acceptance tests it may not change (test-driven Building)
+    locked = frozenset()
+
+    def __init__(
+        self, main_model, io, phase=None, shared_memory=None, template=None, locked=None, **kwargs
+    ):
         self.phase = phase
         self.shared_memory = shared_memory
         self.template = template
+        self.locked = frozenset(locked or ())
         if phase.tools is not None:
             # Building keeps the coding agent's own prompt
             self.gpt_prompts = PhasePrompts()
@@ -91,6 +97,11 @@ class PhaseCoder(AgentCoder):
         phase = self.phase
         if phase.tools is not None and name not in phase.tools:
             return f"the {phase.agent} can't use {name}. Its tools are: {', '.join(phase.tools)}."
+        if action.kind == "edit" and action.inside and action.target in self.locked:
+            return (
+                f"{action.target} is one of the approved acceptance tests, which are locked."
+                " Make the code pass it instead; if the test is wrong, say so in your summary."
+            )
         if action.kind == "edit" and not self.may_write(action):
             return (
                 f"the {phase.agent} may only write {phase.document} and files matching"

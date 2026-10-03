@@ -626,6 +626,29 @@ def get_parser(default_config_files, git_root):
     )
 
     ##########
+    group = parser.add_argument_group("Projects")
+    group.add_argument(
+        "--build-retries",
+        type=int,
+        metavar="N",
+        default=3,
+        help=(
+            "With test-driven Building (/project new --tdd), how many more times the Building"
+            " agent may try after the acceptance tests fail (default: 3)"
+        ),
+    )
+    group.add_argument(
+        "--build-budget",
+        type=float,
+        metavar="DOLLARS",
+        default=None,
+        help=(
+            "With test-driven Building, stop trying again once a Building run has cost this"
+            " much (default: no limit)"
+        ),
+    )
+
+    ##########
     group = parser.add_argument_group("Fixing and committing")
     group.add_argument(
         "--lint",

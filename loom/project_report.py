@@ -34,7 +34,7 @@ from loom.orchestrator import (
     format_duration,
     read_project_file,
 )
-from loom.phases import DOCS_DIR, PHASES, PHASES_BY_KEY
+from loom.phases import DOCS_DIR, PHASES, PHASES_BY_KEY, SPEC
 from loom.repo import EMPTY_TREE
 
 FORMATS = ("md", "html", "docx", "pdf")
@@ -263,7 +263,43 @@ class ProjectReport:
                 parts.append(f"{heading}\n\n*No {phase.document_title} yet.*")
                 continue
             parts.append(f"{heading}\n\n{where}{self.checks(phase)}\n\n{shift_headings(text)}")
+            if phase.key == "building":
+                parts += self.test_driven()
         return "\n\n".join(parts)
+
+    def test_driven(self):
+        """Test-driven Building's acceptance test plan and attempts, as report parts."""
+        parts = []
+        spec = self.state.phase_data("building").get("spec") or {}
+        text = self.document_text(SPEC)
+        if text:
+            locked = ", ".join(f"`{path}`" for path in spec.get("locked") or {}) or "none"
+            parts.append(
+                f"*The {SPEC.document_title}, `{SPEC.document}`. Locked tests: {locked}.*"
+                f"\n\n{shift_headings(text)}"
+            )
+        for run in self.state.run_log("building"):
+            attempts = run.get("attempts")
+            if not attempts:
+                continue
+            rows = [
+                [
+                    str(a["attempt"]),
+                    {True: "pass", False: "fail"}.get(a["passed"], "not run"),
+                    format_duration(a.get("seconds")),
+                    format_cost(a.get("cost") or 0),
+                    ", ".join(a.get("restored") or []),
+                ]
+                for a in attempts
+            ]
+            table_md = table(
+                ["Attempt", "Tests", "Time", "Cost so far", "Locked tests put back"], rows
+            )
+            parts.append(f"**Test-driven Building, run {run.get('run')}:**\n\n{table_md}")
+            if run.get("skips"):
+                skips = "\n".join(f"- `{skip}`" for skip in run["skips"])
+                parts.append(f"Test changes that skip tests or expect them to fail:\n\n{skips}")
+        return parts
 
     def checks(self, phase):
         """The template's checks after the phase's last run, as a paragraph, or ""."""
@@ -325,8 +361,9 @@ class ProjectReport:
                     continue
                 span = f"{(run.get('base') or 'start')[:7]}..{run['head'][:7]}"
                 commits = run["commits"]
+                step = f", {run['step']}" if run.get("step") else ""
                 section.append(
-                    f"Run {run.get('run')}: {commits} commit{'s' if commits != 1 else ''}"
+                    f"Run {run.get('run')}{step}: {commits} commit{'s' if commits != 1 else ''}"
                     f" ({span})\n\n```\n{stat}\n```"
                 )
             if len(section) > 1:

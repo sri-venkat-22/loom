@@ -87,11 +87,44 @@ the project root, without input, with a 10-minute timeout, and only when your pe
 allow it (an allow rule like `/permissions allow bash(pytest*)` saves the question). It
 keeps the end of the output, where test runners sum up the failures.
 
+## Test-driven Building
+
+Start a project with `/project new --tdd IDEA` (or from a template with `tdd: true`) and
+its Building has two steps:
+
+1. **Acceptance tests.** The Testing agent, in spec mode, turns the PRD's acceptance
+   criteria into tests before anything is built, using the interfaces the architecture
+   defines. It may only write test files, and it writes
+   `loom-project/4a-acceptance-tests.md`, which maps each requirement to its tests. loom
+   runs the test command once (the tests should fail: nothing is built yet), then stops
+   at a checkpoint: approve the tests, edit the plan (or the tests, in your editor), or
+   reject them with feedback for the Testing agent. Once you approve, the tests are
+   **locked**: loom commits them and keeps their hashes.
+2. **The build loop.** The Building agent builds, then loom runs the test command. While
+   tests fail, the end of their output goes back into the same agent conversation, and
+   it tries again: up to `--build-retries` more times (3 by default), or until the run
+   has cost `--build-budget` dollars.
+
+The Building agent has to make the tests pass, not change them:
+
+- its edits to a locked test are refused;
+- after each try, loom checks the locked tests' hashes, and puts back any that changed
+  some other way (a command, say), and tells the agent;
+- the Building checkpoint shows each try (✗ ✗ ✓), and flags test changes that skip a
+  test or mark it as expected to fail, like `@pytest.mark.skip`, `xfail`, `it.skip` or
+  `t.Skip()`.
+
+If the tests still fail when the tries run out, Building still goes to its checkpoint,
+which says so; the Testing phase afterwards, and sending its failures back to Building,
+work as usual. Going back to an earlier phase has the acceptance tests written again.
+Without a test command (the template's, or the architecture document's `**Test
+command:**` line) or a git repo, Building runs the usual way, with a warning.
+
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `/project new [--template NAME] [--tdd] IDEA` | Start a project, from a [template](#project-templates) if given, and run its phases |
+| `/project new [--template NAME] [--tdd] IDEA` | Start a project, from a [template](#project-templates) if given, [test-driven](#test-driven-building) with `--tdd`, and run its phases |
 | `/project templates` | List the project templates |
 | `/project run` | Carry on from the phase the project is in |
 | `/project` or `/project status` | Show each phase's status |

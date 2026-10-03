@@ -1257,6 +1257,9 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             session=session,
             done_messages=session.messages or None,
             auto_compact=args.auto_compact,
+            project_settings=dict(
+                build_retries=max(0, args.build_retries), build_budget=args.build_budget
+            ),
             mcp=mcp,
             hooks=hooks,
         )
