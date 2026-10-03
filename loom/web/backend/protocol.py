@@ -57,13 +57,17 @@ Server to browser:
                  metrics ({runs, seconds, cost, tokens_sent, tokens_received, commits})
                  and decisions the ones of no phase. Each phase is {key, number, title,
                  agent, document, document_title, produces, status, stale, verdict,
-                 current, metrics, run_log, fix_rounds, decisions, history, checks}:
-                 run_log has one entry per run of its agent, {run, started, finished,
-                 seconds, cost, tokens_sent, tokens_received, base, head, commits,
-                 verdict, outcome}, outcome done, stopped or failed; decisions are {id,
-                 time, phase, source, kind, text, reason}, history entries {time, phase,
-                 event, note} and checks the template's checks after its last run,
-                 {command, passed}.
+                 current, metrics, run_log, fix_rounds, decisions, history, checks,
+                 spec}: run_log has one entry per run of an agent, {run, started,
+                 finished, seconds, cost, tokens_sent, tokens_received, base, head,
+                 commits, verdict, outcome}, outcome done, stopped or failed; with
+                 test-driven Building also step ("acceptance tests" or "build"), and for
+                 a build its attempts ([{attempt, passed, seconds, cost, restored}]),
+                 result and skips. decisions are {id, time, phase, source, kind, text,
+                 reason}, history entries {time, phase, event, note}, checks the
+                 template's checks after its last run, {command, passed}, and spec
+                 test-driven Building's acceptance tests, {status, document, tests,
+                 locked}, or null.
 
 Browser to server:
 

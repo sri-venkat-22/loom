@@ -54,6 +54,32 @@ export interface RunEntry {
   commits: number;
   verdict: string | null;
   outcome: RunOutcome;
+  // Test-driven Building: which step the run was, and a build's tries
+  step?: "acceptance tests" | "build";
+  attempts?: Attempt[];
+  // How a build ended: passed, failed, budget, not_run or stopped
+  result?: string;
+  // Test changes that skip tests or expect them to fail
+  skips?: string[];
+}
+
+// A try of test-driven Building: the agent built, then loom ran the tests
+export interface Attempt {
+  attempt: number;
+  // null when the tests weren't run
+  passed: boolean | null;
+  seconds: number;
+  cost: number;
+  // Locked tests loom put back
+  restored: string[];
+}
+
+// Test-driven Building's acceptance tests
+export interface Spec {
+  status: "pending" | "review" | "approved";
+  document: string;
+  tests: string[];
+  locked: boolean;
 }
 
 export interface Decision {
@@ -95,6 +121,8 @@ export interface PhaseTimeline {
   history: HistoryEntry[];
   // The template's checks after its last run
   checks: { command: string; passed: boolean }[];
+  // Building's acceptance tests, when it's test-driven
+  spec: Spec | null;
 }
 
 export interface Timeline {

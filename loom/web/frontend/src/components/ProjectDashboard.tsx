@@ -334,7 +334,65 @@ function GoBack({ phase }: { phase: PhaseTimeline }) {
   );
 }
 
-type View = { kind: "document" | "diff"; phase: PhaseTimeline };
+// Test-driven Building: the acceptance tests and the latest build's tries
+function TestDriven({ phase }: { phase: PhaseTimeline }) {
+  const { spec } = phase;
+  if (!spec) return null;
+  const build = [...phase.run_log].reverse().find((run) => run.step === "build");
+  const attempts = build?.attempts ?? [];
+  const label =
+    spec.status === "approved"
+      ? `${plural(spec.tests.length, "acceptance test file")} locked`
+      : spec.status === "review"
+        ? "acceptance tests waiting for review"
+        : "acceptance tests to write";
+  return (
+    <div className="flex flex-col gap-1 text-[12px]">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-muted-foreground">Test-driven · {label}</span>
+        {attempts.map((attempt) => (
+          <span
+            key={attempt.attempt}
+            title={`Attempt ${attempt.attempt}: ${
+              attempt.passed
+                ? "the tests pass"
+                : attempt.passed === false
+                  ? "tests fail"
+                  : "not run"
+            } · ${formatDuration(attempt.seconds)} · ${formatCost(attempt.cost)} so far`}
+            className={`rounded px-1 font-mono text-[11px] ${
+              attempt.passed ? "bg-success/12 text-add" : "bg-destructive/12 text-del"
+            }`}
+          >
+            {attempt.passed ? "✓" : "✗"}
+          </span>
+        ))}
+        {build?.result && (
+          <span className={build.result === "passed" ? "text-add" : "text-warning"}>
+            {RESULTS[build.result] ?? build.result}
+          </span>
+        )}
+      </div>
+      {(build?.skips ?? []).length > 0 && (
+        <div className="text-warning">
+          {build!.skips!.length === 1
+            ? "1 test change skips a test or expects it to fail"
+            : `${build!.skips!.length} test changes skip tests or expect them to fail`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const RESULTS: Record<string, string> = {
+  passed: "tests pass",
+  failed: "tests still fail",
+  budget: "budget ran out",
+  not_run: "tests not run",
+  stopped: "stopped",
+};
+
+type View = { kind: "document" | "diff"; phase: PhaseTimeline; path?: string };
 
 function PhaseCard({
   phase,
@@ -385,6 +443,7 @@ function PhaseCard({
             <span className="text-warning"> · last run {lastRun.outcome}</span>
           )}
         </div>
+        <TestDriven phase={phase} />
         <Checks checks={phase.checks} />
         <Decisions decisions={phase.decisions} />
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
@@ -395,6 +454,14 @@ function PhaseCard({
           >
             Document
           </SmallButton>
+          {phase.spec && phase.spec.status !== "pending" && (
+            <SmallButton
+              title={`Read ${phase.spec.document}`}
+              onClick={() => show({ kind: "document", phase, path: phase.spec!.document })}
+            >
+              Tests
+            </SmallButton>
+          )}
           <SmallButton
             disabled={!committed}
             title={committed ? "What its runs changed" : "Its runs made no commits"}
@@ -423,7 +490,7 @@ function BackBar({ onBack, children }: { onBack: () => void; children: React.Rea
   );
 }
 
-function DocumentView({ phase, onBack }: { phase: PhaseTimeline; onBack: () => void }) {
+function DocumentView({ path, onBack }: { path: string; onBack: () => void }) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState("");
   const busy = useSession((state) => state.session?.busy ?? false);
@@ -432,18 +499,18 @@ function DocumentView({ phase, onBack }: { phase: PhaseTimeline; onBack: () => v
     if (busy) return;
     let live = true;
     api
-      .file(phase.document)
+      .file(path)
       .then((file) => live && (setText(file.text), setError("")))
       .catch((err: Error) => live && (setText(null), setError(err.message)));
     return () => {
       live = false;
     };
-  }, [phase.document, busy]);
+  }, [path, busy]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <BackBar onBack={onBack}>
-        <span className="min-w-0 truncate font-mono text-[12px] text-soft">{phase.document}</span>
+        <span className="min-w-0 truncate font-mono text-[12px] text-soft">{path}</span>
         <span className="ml-auto shrink-0 text-[11px] text-dim">read-only</span>
       </BackBar>
       <div className="min-h-0 flex-1">
@@ -452,7 +519,7 @@ function DocumentView({ phase, onBack }: { phase: PhaseTimeline; onBack: () => v
             <Note error>{error}</Note>
           </div>
         )}
-        {text !== null && <Editor path={phase.document} value={text} readOnly />}
+        {text !== null && <Editor path={path} value={text} readOnly />}
       </div>
     </div>
   );
@@ -550,7 +617,9 @@ export function ProjectTab() {
   const latest = (phase: PhaseTimeline) =>
     timeline.phases.find((found) => found.key === phase.key) ?? phase;
   if (view?.kind === "document") {
-    return <DocumentView phase={latest(view.phase)} onBack={() => setView(null)} />;
+    return (
+      <DocumentView path={view.path ?? latest(view.phase).document} onBack={() => setView(null)} />
+    );
   }
   if (view?.kind === "diff") {
     return <RunDiffView phase={latest(view.phase)} onBack={() => setView(null)} />;

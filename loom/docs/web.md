@@ -127,7 +127,9 @@ as it runs:
   running, pending, or to redo after you went back), its verdict, how many times its
   agent ran, for how long and at what cost, the rounds of fixes failing tests sent back
   to Building, the template's checks after its last run, passed or failed, and the
-  decisions made in it, which unfold.
+  decisions made in it, which unfold. With [test-driven Building](project.md#test-driven-building),
+  Building's card also shows its acceptance tests and each try of the build loop
+  (✗ ✗ ✓), and **Tests** opens the acceptance test plan.
 - **Document** opens the phase's document in a read-only editor.
 - **Diff** shows what a run of the phase changed: the diff of its commits, from where
   HEAD was when the run started to where it ended. Pick another run from the list.
