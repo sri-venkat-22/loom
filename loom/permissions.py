@@ -316,6 +316,17 @@ class Permissions:
         # In bypass mode loom's other yes/no questions don't ask either
         self.io.bypass_permissions = mode == "bypass"
 
+    def copy_for(self, io):
+        """The same permissions for another io, like a parallel builder's: the same mode
+        and the same rules (an "always" answer to one is an answer for all). It doesn't
+        ask about the project's rules again."""
+        copy = Permissions(io, mode=self.mode)
+        copy.settings_file = self.settings_file
+        copy.rules = self.rules
+        copy.pending = []
+        copy.project_approved = bool(self.project_approved)
+        return copy
+
     def add_rule(self, rule, source):
         if rule not in [r for r, _ in self.rules]:
             self.rules.append((rule, source))

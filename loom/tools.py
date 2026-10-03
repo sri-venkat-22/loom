@@ -15,6 +15,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -620,6 +621,22 @@ def finish_killed(proc, grace=None):
     return out or b"", errout or b""
 
 
+# The commands running now, {thread id: process}, so parallel builders' commands can be
+# killed from the main thread
+RUNNING = {}
+RUNNING_LOCK = threading.Lock()
+
+
+def kill_running(thread_ids):
+    """Kill the commands that the threads with thread_ids are running, and everything they
+    started."""
+    with RUNNING_LOCK:
+        procs = [proc for ident, proc in RUNNING.items() if ident in thread_ids]
+    for proc in procs:
+        kill_process_tree(proc)
+    return len(procs)
+
+
 def run_command(command, cwd, timeout):
     """Run a shell command without stdin. Returns (exit code or None on timeout, output)."""
     kwargs = {}
@@ -640,6 +657,9 @@ def run_command(command, cwd, timeout):
         stderr=subprocess.STDOUT,
         **kwargs,
     )
+    ident = threading.get_ident()
+    with RUNNING_LOCK:
+        RUNNING[ident] = proc
     try:
         out, _ = proc.communicate(timeout=timeout)
         code = proc.returncode
@@ -651,6 +671,9 @@ def run_command(command, cwd, timeout):
         kill_process_tree(proc)
         finish_killed(proc)
         raise
+    finally:
+        with RUNNING_LOCK:
+            RUNNING.pop(ident, None)
     return code, out.decode("utf-8", errors="replace")
 
 

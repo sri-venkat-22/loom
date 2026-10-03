@@ -193,11 +193,15 @@ class ProjectWatcher:
         self.stopped.set()
 
     def stamp(self):
-        try:
-            stat = (self.root / DB_FILE).stat()
-        except OSError:
-            return None
-        return (stat.st_mtime_ns, stat.st_size)
+        """When the database last changed: its file's, and its write-ahead log's."""
+        found = []
+        for name in (DB_FILE, DB_FILE + "-wal"):
+            try:
+                stat = (self.root / name).stat()
+                found.append((stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                found.append(None)
+        return tuple(found) if found[0] else None
 
     def watch(self):
         last = self.stamp()
