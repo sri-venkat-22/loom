@@ -15,9 +15,18 @@ def commit_in(path, name, data, message):
     Path(path, name).parent.mkdir(parents=True, exist_ok=True)
     Path(path, name).write_bytes(data)
     tree = git.Repo(path)
-    tree.git.add(name)
-    tree.git.commit("-m", message)
-    return tree.head.commit.hexsha
+    try:
+        tree.git.add(name)
+        tree.git.commit("-m", message)
+        return tree.head.commit.hexsha
+    finally:
+        # On Windows its git processes would keep the worktree from being removed
+        tree.close()
+
+
+def text(path):
+    """A file's text with \n line endings, which git checks out as \r\n on Windows."""
+    return Path(path).read_bytes().replace(b"\r\n", b"\n")
 
 
 class TestWorktrees(unittest.TestCase):
@@ -28,14 +37,16 @@ class TestWorktrees(unittest.TestCase):
             path = worktrees.create(repo, root, "core", base)
             self.assertEqual(path, Path(root) / WORKTREES_DIR / "core")
             self.assertTrue((path / "calc.py").exists())
-            self.assertEqual(git.Repo(path).active_branch.name, "loom/build/core")
+            tree = git.Repo(path)
+            self.assertEqual(tree.active_branch.name, "loom/build/core")
+            tree.close()
 
             commit_in(path, "src/core.py", b"def core():\n    return 1\n", "Add the core")
             # The project's checkout doesn't see the worktree
             self.assertFalse(repo.is_dirty(untracked_files=True))
 
             self.assertEqual(worktrees.merge(repo, "loom/build/core", "Merge core"), [])
-            self.assertEqual(Path("src/core.py").read_bytes(), b"def core():\n    return 1\n")
+            self.assertEqual(text("src/core.py"), b"def core():\n    return 1\n")
             self.assertEqual(repo.head.commit.message.strip(), "Merge core")
             self.assertEqual(len(repo.head.commit.parents), 2)
 
@@ -76,7 +87,7 @@ class TestWorktrees(unittest.TestCase):
             self.assertEqual(worktrees.merge(repo, "loom/build/one", "Merge one"), ["calc.py"])
             worktrees.abort_merge(repo)
             self.assertFalse(worktrees.merging(repo))
-            self.assertEqual(Path("calc.py").read_bytes(), b"y = 2\n")
+            self.assertEqual(text("calc.py"), b"y = 2\n")
 
             with self.assertRaises(WorktreeError):
                 worktrees.merge(repo, "loom/build/nope", "Merge nothing")

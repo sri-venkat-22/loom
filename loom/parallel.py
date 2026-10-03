@@ -101,7 +101,8 @@ class ParallelBuilding:
         if not plan.valid:
             self.io.tool_warning(
                 "The architecture document's work plan has problems, so Building runs as one"
-                " agent: " + " ".join(plan.problems)
+                " agent: "
+                + " ".join(plan.problems)
             )
             return False
         if not coder.auto_commits or coder.dry_run:
@@ -129,8 +130,10 @@ class ParallelBuilding:
         """Run Building in parallel. Returns whether it finished, like run_phase."""
         orchestrator = self.orchestrator
         self.io.tool_output(
-            f"Parallel Building: {self.plan.describe()}, with up to"
-            f" {plural(orchestrator.workers, 'builder')} at once.",
+            (
+                f"Parallel Building: {self.plan.describe()}, with up to"
+                f" {plural(orchestrator.workers, 'builder')} at once."
+            ),
             bold=True,
         )
         tdd = self.test_driven()
@@ -526,8 +529,7 @@ class ParallelBuilding:
         Returns whether it did; if not, the merge is undone and Building stops."""
         orchestrator = self.orchestrator
         self.io.tool_warning(
-            f"Merging {pid} conflicts in {', '.join(conflicts)}: the Integrator agent resolves"
-            " it."
+            f"Merging {pid} conflicts in {', '.join(conflicts)}: the Integrator agent resolves it."
         )
         step = dataclasses.replace(
             PHASES_BY_KEY["building"],
@@ -551,10 +553,14 @@ class ParallelBuilding:
         )
         left = [path for path in conflicts if has_conflict_markers(self.root / path)]
         stopped = agent.failed or orchestrator.stopped(agent)
-        orchestrator.log_run(step, agent, meter, "done" if not (left or stopped) else "failed", extra=extra)
+        orchestrator.log_run(
+            step, agent, meter, "done" if not (left or stopped) else "failed", extra=extra
+        )
         if left or stopped:
             worktrees.abort_merge(self.git)
-            why = f"still conflicts in {', '.join(left)}" if left else "the Integrator agent stopped"
+            why = (
+                f"still conflicts in {', '.join(left)}" if left else "the Integrator agent stopped"
+            )
             return self.stop(f"merging {pid} {why}")
         try:
             worktrees.finish_merge(self.git, conflicts)

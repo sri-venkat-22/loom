@@ -18,7 +18,8 @@ from loom.utils import GitTemporaryDirectory
 from .test_agent import FakeLLM, call, make_repo, reply
 from .test_orchestrator import BUILD_SUMMARY, IDEA, PRD, write_doc
 
-PYTEST = f"{sys.executable} -m pytest -q -p no:cacheprovider tests"
+# -B: no stale bytecode when a test rewrites a module within the same second
+PYTEST = f"{sys.executable} -B -m pytest -q -p no:cacheprovider tests"
 ARCHITECTURE = (
     f"# Architecture: adder\n## Testing approach\npytest.\n**Test command:** `{PYTEST}`\n"
 )
