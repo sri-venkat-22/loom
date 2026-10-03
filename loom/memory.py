@@ -39,12 +39,12 @@ SCHEMA_VERSION = 1
 STORE_ENV = "LOOM_MEMORY_STORE"
 CHUNK_CHARS = 1200
 
-# Who decided: the founder, or a phase agent by name
+# Who decided: the founder, a phase agent by name, or the project's template
 FOUNDER = "founder"
 # The kinds of decision. "approved" is only kept for the record; the rest are context the
-# phase agents get.
-DECISION_KINDS = ("decision", "approved", "edited", "rejected", "sent back", "override")
-CONTEXT_KINDS = ("decision", "edited", "rejected", "sent back", "override")
+# phase agents get. "check" is the outcome of the template's checks after a phase.
+DECISION_KINDS = ("decision", "approved", "edited", "rejected", "sent back", "override", "check")
+CONTEXT_KINDS = ("decision", "edited", "rejected", "sent back", "override", "check")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);

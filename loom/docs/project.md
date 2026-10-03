@@ -91,7 +91,8 @@ keeps the end of the output, where test runners sum up the failures.
 
 | Command | What it does |
 |---------|--------------|
-| `/project new IDEA` | Start a project and run its phases |
+| `/project new [--template NAME] [--tdd] IDEA` | Start a project, from a [template](#project-templates) if given, and run its phases |
+| `/project templates` | List the project templates |
 | `/project run` | Carry on from the phase the project is in |
 | `/project` or `/project status` | Show each phase's status |
 | `/project approve` | Approve the document waiting for review |
@@ -126,13 +127,71 @@ it made, its verdict, and how it ended (`done`, `stopped` or `failed`). The stat
 the runs up per phase and for the whole project. A model loom has no prices for costs
 $0.00.
 
+## Project templates
+
+A template gives a project of a known kind a head start: decisions made up front, a
+brief for each phase's agent, a skeleton of files to start the code from, the test
+command, and checks that run after the phases. Start a project from one with:
+
+```
+agent> /project new --template fastapi-react A web app where students swap used textbooks
+```
+
+`/project templates` lists them. loom comes with three:
+
+| Template | What it is | Test command |
+|----------|------------|--------------|
+| `python-cli` | A Python command-line tool: argparse, src layout, pyproject.toml, pytest | `python -m pytest -q` |
+| `fastapi-react` | A FastAPI backend in `api/` and a React + Vite + TypeScript frontend in `web/`, served from one container | `python -m pytest -q api && npm --prefix web test -- --run` |
+| `ml-pipeline` | A reproducible scikit-learn pipeline: config-driven load, features, train and evaluate stages | `python -m pytest -q` |
+
+A template is a folder with a `template.yml` and, optionally, a `skeleton/` folder:
+
+```yaml
+name: fastapi-react
+description: FastAPI backend + React (Vite) frontend
+tdd: false
+test_command: "python -m pytest -q api && npm --prefix web test -- --run"
+decisions: ["Backend is FastAPI on Python 3.11; frontend is React + Vite + TypeScript"]
+briefs: {design: "...", building: "...", testing: "...", launch: "..."}
+checks: {building: ["npm --prefix web run build"], launch: ["docker build -t app ."]}
+writable: {launch: ["fly.toml"]}
+```
+
+loom looks for templates in three places, and a later one replaces an earlier one with
+the same name: its own (`loom/templates/`), yours (`~/.loom/templates/`) and the
+project's (`.loom/templates/`). How a project uses its template:
+
+- **decisions** are recorded in the [shared memory](#shared-memory) from `template`,
+  so every agent sees them.
+- **briefs** are added to the brief of the phase's agent: `design`, `building` and so on.
+- **writable** adds files the phase's agent may write, like `fly.toml` for Launch.
+- **test_command** is the project's [test command](#the-test-command), in place of the
+  architecture document's.
+- **skeleton/** is copied into the project and committed when Building first starts.
+  Files the project already has are kept, except that a skeleton's `gitignore` (stored
+  without its dot) adds its missing lines to the project's `.gitignore`.
+- **checks** run after the phase, like a build or a linter. The checkpoint shows which
+  passed, and the results go in the shared memory for the next agents. A failed check
+  warns but doesn't stop the project.
+- **tdd: true** makes Building test-driven, like `--tdd`.
+
+The checks of a project's own template come with the repo, so they're shell commands
+you haven't seen: loom asks before it first runs them, and an "always" answer is kept
+with the approved [project hooks](hooks.md#project-hooks-need-your-approval), in
+`~/.loom/hooks-approvals.json`, until the checks change. `--yes-always` doesn't approve
+them. loom's own templates' checks and yours run without asking.
+
+The project remembers its template's name and a hash of its contents. If the template
+changes later, loom says so and uses it as it is now.
+
 ## The project report
 
 `/project report` writes everything the project did into one document, to read or to
 hand in:
 
-- a cover with the idea, when the project started and finished, the models and loom's
-  version, and the totals: runs, time, cost, tokens and commits
+- a cover with the idea, when the project started and finished, the models, the
+  template, loom's version, and the totals: runs, time, cost, tokens and commits
 - a timeline of the phases: status, verdict, runs, time, cost, and how many rounds of
   fixes a failing test report sent Building
 - each phase's document, its headings one level down

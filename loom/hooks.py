@@ -74,6 +74,28 @@ def approvals_file():
     return Path.home() / ".loom" / "hooks-approvals.json"
 
 
+def load_approvals():
+    """What the user said to always trust: {key: hash of what they approved}. The project
+    hooks' keys are project folders; project templates' checks use the same file."""
+    try:
+        data = json.loads(approvals_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_approval(key, value, io=None):
+    data = load_approvals()
+    data[key] = value
+    try:
+        path = approvals_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as err:
+        if io:
+            io.tool_warning(f"Unable to save the approval to {approvals_file()}: {err}")
+
+
 @dataclass
 class Hook:
     event: str
@@ -391,28 +413,14 @@ class Hooks:
         configs = [hook.config(self.root) for hook in self.project_hooks()]
         return hashlib.sha256(json.dumps(configs).encode()).hexdigest()
 
-    def load_approvals(self):
-        try:
-            data = json.loads(approvals_file().read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
-            return {}
-
     def project_key(self):
         return str(Path(self.root).resolve())
 
     def is_approved(self):
-        return self.load_approvals().get(self.project_key()) == self.project_hash()
+        return load_approvals().get(self.project_key()) == self.project_hash()
 
     def save_approval(self):
-        data = self.load_approvals()
-        data[self.project_key()] = self.project_hash()
-        try:
-            path = approvals_file()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        except OSError as err:
-            self.io.tool_warning(f"Unable to save the approval to {approvals_file()}: {err}")
+        save_approval(self.project_key(), self.project_hash(), self.io)
 
     def start(self):
         """Before a request: reload changed config and ask about new project hooks."""

@@ -13,12 +13,15 @@ class PhaseCoder(AgentCoder):
     phase = None
     # The project's shared memory (loom/memory.py), which recall and record_decision use
     shared_memory = None
+    # The project's template (loom/project_templates.py), or None
+    template = None
     # Why the phase can't run, like the provider rejecting tools
     failed = None
 
-    def __init__(self, main_model, io, phase=None, shared_memory=None, **kwargs):
+    def __init__(self, main_model, io, phase=None, shared_memory=None, template=None, **kwargs):
         self.phase = phase
         self.shared_memory = shared_memory
+        self.template = template
         if phase.tools is not None:
             # Building keeps the coding agent's own prompt
             self.gpt_prompts = PhasePrompts()
@@ -53,10 +56,36 @@ class PhaseCoder(AgentCoder):
         if phase.writable is None:
             lines.append("- Any file in the project")
         else:
-            lines += [f"- {pattern}" for pattern in phase.writable]
+            lines += [f"- {pattern}" for pattern in self.writable()]
+        lines += self.template_brief()
         if self.shared_memory:
             lines += ["", memory_brief]
         return "\n".join(lines)
+
+    def template_brief(self):
+        """The project template's brief for this phase, as lines of the phase's brief."""
+        template = self.template
+        if not template:
+            return []
+        parts = []
+        if template.brief(self.phase.key):
+            parts.append(template.brief(self.phase.key))
+        if self.phase.key == "design" and template.test_command:
+            parts.append(
+                f"The template runs the tests with `{template.test_command}`: put that on the"
+                " Test command line unless the design needs another."
+            )
+        if not parts:
+            return []
+        return ["", f"## The project template: {template.name}", ""] + parts
+
+    def writable(self):
+        """The globs of the files the phase may write besides its document, the template's
+        for the phase included, or None for any file."""
+        if self.phase.writable is None:
+            return None
+        extra = self.template.writable_for(self.phase.key) if self.template else []
+        return tuple(self.phase.writable) + tuple(extra)
 
     def refuse_action(self, name, action):
         phase = self.phase
@@ -65,18 +94,19 @@ class PhaseCoder(AgentCoder):
         if action.kind == "edit" and not self.may_write(action):
             return (
                 f"the {phase.agent} may only write {phase.document} and files matching"
-                f" {', '.join(phase.writable) or 'nothing else'}, not {action.target}."
+                f" {', '.join(self.writable()) or 'nothing else'}, not {action.target}."
             )
         return None
 
     def may_write(self, action):
-        if self.phase.writable is None:
+        writable = self.writable()
+        if writable is None:
             return True
         if not action.inside:
             return False
         if action.target == self.phase.document:
             return True
-        return any(glob_match(pattern, action.target) for pattern in self.phase.writable)
+        return any(glob_match(pattern, action.target) for pattern in writable)
 
     def preapproved(self, action):
         # The user reviews the document when the phase is done, so writing it needs no

@@ -43,8 +43,26 @@ PROJECT_SUBCOMMANDS = (
     "recall",
     "memory",
     "report",
+    "templates",
     "reset",
 )
+
+
+def parse_new_project(args):
+    """(template name or None, whether test-driven, the idea) from /project new's
+    arguments, like --template python-cli --tdd A tool that adds numbers."""
+    name = None
+    tdd = False
+    while True:
+        match = re.match(r"\s*(--tdd|--template(?:=|\s+)(\S+))(?=\s|$)", args)
+        if not match:
+            break
+        if match.group(1) == "--tdd":
+            tdd = True
+        else:
+            name = match.group(2)
+        args = args[match.end() :]
+    return name, tdd, args.strip()
 
 
 class SwitchCoder(Exception):
@@ -1467,7 +1485,7 @@ class Commands:
         return list(PROJECT_SUBCOMMANDS) + [phase.key for phase in PHASES]
 
     def cmd_project(self, args):
-        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], reset"  # noqa
+        "Take an idea through six phase agents (Idea Check, Planning, Design, Building, Testing, Launch): /project new [--template NAME] [--tdd] IDEA, run, status, approve, edit, reject FEEDBACK, redo [FEEDBACK], back PHASE [FEEDBACK], decide DECISION, decisions, recall QUERY, memory, report [md|html|docx|pdf] [--out FILE] [--summary], templates, reset"  # noqa
         from loom.orchestrator import Orchestrator, TransitionError
 
         words = args.strip().split(maxsplit=1)
@@ -1482,16 +1500,10 @@ class Commands:
         state = orchestrator.state
 
         if sub == "new":
-            if not rest:
-                self.io.tool_error("Describe the idea: /project new IDEA")
-                return
-            if state and not state.complete:
-                if not self.io.confirm_ask(
-                    "There is already an unfinished project. Start a new one instead?", default="n"
-                ):
-                    return
-            orchestrator.new_project(rest)
-            orchestrator.run()
+            self.project_new(orchestrator, rest)
+            return
+        if sub == "templates":
+            self.project_templates()
             return
 
         if sub not in PROJECT_SUBCOMMANDS:
@@ -1563,6 +1575,59 @@ class Commands:
                     self.io.tool_output("The project was reset.")
         except TransitionError as err:
             self.io.tool_error(str(err))
+
+    def project_new(self, orchestrator, args):
+        """/project new [--template NAME] [--tdd] IDEA"""
+        from loom.orchestrator import TransitionError
+        from loom.project_templates import TemplateError, load_template
+
+        name, tdd, idea = parse_new_project(args)
+        if not idea:
+            self.io.tool_error("Describe the idea: /project new [--template NAME] [--tdd] IDEA")
+            return
+        template = None
+        if name:
+            try:
+                template = load_template(self.coder.root, name, warn=self.io.tool_warning)
+            except TemplateError as err:
+                self.io.tool_error(str(err))
+                return
+        state = orchestrator.state
+        if state and not state.complete:
+            if not self.io.confirm_ask(
+                "There is already an unfinished project. Start a new one instead?", default="n"
+            ):
+                return
+        try:
+            orchestrator.new_project(idea, template, tdd)
+        except TransitionError as err:
+            self.io.tool_error(str(err))
+            return
+        if template:
+            self.io.tool_output(f"Starting from the {template.name} template.")
+        orchestrator.run()
+
+    def project_templates(self):
+        """/project templates: the templates a project can start from."""
+        from loom.project_templates import find_templates
+
+        templates = find_templates(self.coder.root, warn=self.io.tool_warning)
+        if not templates:
+            self.io.tool_output("There are no project templates.")
+            return
+        self.io.tool_output(
+            "Project templates (a project's own replace yours, and yours replace loom's):",
+            bold=True,
+        )
+        width = max(len(name) for name in templates)
+        for name in sorted(templates):
+            template = templates[name]
+            tdd = " [test-driven]" if template.tdd else ""
+            self.io.tool_output(
+                f"  {name:<{width}}  {template.source:<8}  {template.description}{tdd}"
+            )
+        self.io.tool_output()
+        self.io.tool_output("Start a project from one with /project new --template NAME IDEA")
 
     def project_report(self, orchestrator, args):
         """/project report [md|html|docx|pdf] [--out FILE] [--summary]"""

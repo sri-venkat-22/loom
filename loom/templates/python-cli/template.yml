@@ -1,0 +1,27 @@
+name: python-cli
+description: A Python command-line tool with argparse, packaged with pyproject.toml and tested with pytest
+tdd: false
+test_command: "python -m pytest -q"
+decisions:
+  - "The tool is a Python 3.10+ package in src/ (src layout), installed with pyproject.toml and run as a console script"
+  - "The command-line interface uses argparse from the standard library, with no third-party CLI framework"
+  - "Tests use pytest and call the CLI's main(argv) directly, without starting a process"
+briefs:
+  design: |
+    The project starts from the python-cli template's skeleton, which loom copies in when Building starts:
+    - pyproject.toml: the package (setuptools, src layout), its console script and pytest's settings
+    - src/app/__init__.py, src/app/__main__.py (python -m app) and src/app/cli.py: main(argv) with argparse subcommands, and a sample hello command
+    - tests/test_cli.py: tests that call main([...]) and check the exit code and output
+    Design within that layout. Name the package and the command after the project (in place of app), keep cli.py a thin layer over plain functions in the package's other modules, and give each command a test. Use only the standard library unless the PRD needs more, and say which packages and why.
+  building: |
+    The python-cli skeleton is in place: pyproject.toml, src/app/ and tests/test_cli.py. Rename the package app and its console script to the project's name everywhere, pyproject.toml and the tests included, keep the src layout, and replace the sample hello command.
+    Put the logic in plain functions that cli.py calls. main(argv) returns the exit code (0 for success, 1 for an error, 2 for bad arguments) instead of calling sys.exit, and errors go to stderr.
+    Run the tests with python -m pytest -q as you go: pyproject.toml puts src on the path, so nothing needs installing.
+  testing: |
+    Test the CLI by calling main([...]) and reading its output with capsys, and the functions behind it directly. Cover --help, bad arguments (exit code 2), and each command's success and error paths. Use tmp_path for files, never the real home directory.
+  launch: |
+    Ship it as a Python package. Check that python -m pip wheel --no-deps . builds it, document installing it with pipx install . or pip install . in the README, and add a GitHub Actions workflow that runs the tests on Python 3.10 to 3.13. A Dockerfile is optional for a command-line tool.
+checks:
+  building: ["python -m compileall -q src tests"]
+  testing: ["python -m pytest -q"]
+  launch: ["python -m pip wheel --no-deps -q -w .loom/dist ."]

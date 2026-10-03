@@ -1,0 +1,27 @@
+name: ml-pipeline
+description: A reproducible machine-learning pipeline in Python (load, features, train, evaluate) with scikit-learn
+tdd: false
+test_command: "python -m pytest -q"
+decisions:
+  - "The pipeline is a Python 3.11 package in src/pipeline/ with one module per stage: data, features, train and evaluate, run from a command line"
+  - "A run is set by a YAML config (configs/config.yaml) with a fixed random seed, so the same config and data give the same model and metrics"
+  - "Models use scikit-learn on pandas data frames; a trained model is saved with joblib under models/ and its metrics as JSON under reports/, and neither is committed"
+briefs:
+  design: |
+    The project starts from the ml-pipeline template's skeleton, which loom copies in when Building starts:
+    - configs/config.yaml: the seed, the data's source and target column, the model and its parameters, and where outputs go
+    - src/pipeline/: config.py (loads and checks the config), data.py (loads and splits the data), features.py (a ColumnTransformer: scaled numbers, one-hot categories), train.py (a scikit-learn Pipeline of features and model), evaluate.py (metrics) and cli.py (pipeline train, pipeline evaluate)
+    - tests/: tests on small synthetic data frames
+    Design within that layout. Say where the data comes from and its schema (columns, types, target), how it's split (and whether stratified), the baseline model and the one to beat it, the metrics that decide which is better and why, and what a run writes. Training must be reproducible from the config and the seed.
+  building: |
+    The ml-pipeline skeleton is in place: configs/config.yaml, src/pipeline/ and tests/. Keep one module per stage and drive everything from the config, with the seed passed to every random step (splits, models).
+    Adapt data.py to the project's data source and schema, features.py to its columns, and train.py to the models in the architecture. Never commit raw data, models or reports: they go in data/raw/, models/ and reports/, which are ignored.
+    Test with small synthetic data frames made in the tests (no downloads), and run python -m pytest -q as you go.
+  testing: |
+    Test each stage on small synthetic data: loading checks the schema and fails clearly on missing columns, the split is the right size and stratified when it should be, the features have the expected columns, training is reproducible (same seed, same predictions), and the metrics are in range and written to the report. Also run the command line end to end on a tiny CSV in tmp_path.
+  launch: |
+    Package the pipeline to run anywhere: a Dockerfile whose entry point is the pipeline command, with the data and outputs mounted as volumes, and a GitHub Actions workflow that runs the tests. Document how to run training and evaluation, the config's settings, and where the model and metrics end up. Model files and data stay out of git.
+checks:
+  building: ["python -m compileall -q src tests"]
+  testing: ["python -m pytest -q"]
+  launch: ["docker build -t pipeline ."]
