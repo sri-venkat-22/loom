@@ -129,7 +129,9 @@ class TestEditingDocuments(unittest.TestCase):
             coder, orchestrator, llm, done = run_project(SCRIPT_IDEA, SCRIPT_PLANNING, io=io)
             thread.join(5)
 
-            self.assertEqual(Path(PHASES_BY_KEY["idea"].document).read_text(), edited)
+            self.assertEqual(
+                Path(PHASES_BY_KEY["idea"].document).read_text(encoding="utf-8"), edited
+            )
             self.assertEqual(orchestrator.state.status("idea"), "approved")
             messages = [commit.message for commit in repo.iter_commits()]
             self.assertTrue(any("at the Idea Check checkpoint" in m for m in messages))
@@ -148,7 +150,7 @@ class TestApi(unittest.TestCase):
         self.memory_store.start()
         self.dir = tempfile.TemporaryDirectory()
         self.root = Path(self.dir.name)
-        (self.root / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+        (self.root / "calc.py").write_bytes(b"def add(a, b):\n    return a + b\n")
         (self.root / "logo.png").write_bytes(b"\x89PNG\0\0\0")
         (self.root.parent / "secret.txt").write_text("not yours")
         self.io, self.session = make_io()

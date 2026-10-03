@@ -981,5 +981,16 @@ class TestProjectCommand(unittest.TestCase):
             self.assertIn("design", completions)
 
 
+class TestReadingDocuments(unittest.TestCase):
+    def test_windows_line_endings_read_as_newlines(self):
+        from loom.orchestrator import read_project_file
+
+        with IgnorantTemporaryDirectory() as root:
+            # What the agents write on Windows
+            Path(root, "report.md").write_bytes(b"# Report\r\n**Verdict:** GO\r\n")
+            text = read_project_file(root, Path(root, "report.md"))
+            self.assertEqual(text, "# Report\n**Verdict:** GO\n")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -605,7 +605,16 @@ class InputOutput:
                     except OSError:
                         pass
                     raise
-                os.replace(tmp, filename)
+                try:
+                    os.replace(tmp, filename)
+                except PermissionError:
+                    # Windows can't replace a file another program has open, but can
+                    # write into it, as loom did before writing atomically
+                    if os.name != "nt" or not os.path.isfile(filename):
+                        raise
+                    with open(filename, "wb") as f:
+                        f.write(data)
+                    os.unlink(tmp)
                 return
             except PermissionError as err:
                 if tmp and os.path.exists(tmp):

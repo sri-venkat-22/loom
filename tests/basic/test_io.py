@@ -655,3 +655,36 @@ class TestAtomicWriteText(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), "a\nb\nc")
             # No stray temp files left behind
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["file.txt"])
+
+    def test_a_file_open_elsewhere_on_windows_is_written_in_place(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "open.txt"
+            path.write_text("old\n", encoding="utf-8")
+            io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+            io.newline = "\n"
+            # Windows refuses to replace a file another program has open
+            refused = PermissionError(13, "Access is denied")
+            with patch("loom.io.os.replace", side_effect=refused), patch("loom.io.os.name", "nt"):
+                io.write_text(str(path), "new\n")
+            self.assertEqual(path.read_text(encoding="utf-8"), "new\n")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["open.txt"])
+
+    def test_a_refused_replace_elsewhere_still_fails(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "locked.txt"
+            path.write_text("old\n", encoding="utf-8")
+            io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+            io.tool_error = lambda *a, **kw: None
+            refused = PermissionError(13, "Permission denied")
+            with (
+                patch("loom.io.os.replace", side_effect=refused),
+                patch("loom.io.os.name", "posix"),
+            ):
+                with self.assertRaises(PermissionError):
+                    io.write_text(str(path), "new\n", initial_delay=0)
+            self.assertEqual(path.read_text(encoding="utf-8"), "old\n")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["locked.txt"])

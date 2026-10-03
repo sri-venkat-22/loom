@@ -159,7 +159,7 @@ class TestChanges(unittest.TestCase):
             base = repo.head.commit.hexsha
 
             # A committed edit, like loom's auto-commits, and an uncommitted one
-            text = Path("calc.py").read_text().replace("line 30\n", "line thirty\n")
+            text = Path("calc.py").read_text(encoding="utf-8").replace("line 30\n", "line thirty\n")
             Path("calc.py").write_text(text)
             Path("old.py").rename("new.py")
             Path("gone.py").unlink()
