@@ -201,3 +201,8 @@ export const pendingAsk = (entries: Entry[]): AskEntry | undefined => {
   }
   return undefined;
 };
+
+// Whether nothing has happened in the conversation yet but loom's own messages, like the
+// banner it prints at startup
+export const isFresh = (entries: Entry[]): boolean =>
+  entries.every((entry) => entry.kind === "system");

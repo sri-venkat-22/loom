@@ -37,6 +37,8 @@ class WebSession:
             phase=None,
             phases=[],
             conversation=None,
+            branch=None,
+            permission_mode=None,
             busy=False,
         )
         self.history = []
@@ -57,6 +59,9 @@ class WebSession:
         self.turn_cancelled = False
         # Whether the main thread was signalled for it; if not, check_cancel() interrupts
         self.signalled = False
+        # Switches the permission mode for the browser's mode message; WebIO sets it once
+        # loom has a coder. Returns whether it did.
+        self.set_mode = None
 
     @property
     def busy(self):
@@ -134,6 +139,11 @@ class WebSession:
             return self.answer(ask_id, value)
         if kind == "cancel":
             return self.cancel()
+        if kind == "mode":
+            mode = message.get("mode")
+            if not isinstance(mode, str) or not self.set_mode:
+                return False
+            return self.set_mode(mode)
         return False
 
     def answer(self, ask_id, value):

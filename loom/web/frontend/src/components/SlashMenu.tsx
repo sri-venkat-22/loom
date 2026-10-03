@@ -22,30 +22,40 @@ export function SlashMenu({
   }, [selected]);
 
   return (
-    <div
-      ref={list}
-      role="listbox"
-      className="scroll-thin absolute bottom-full left-0 mb-2 max-h-64 w-full overflow-y-auto border border-border bg-popover py-1 text-[13px]"
-    >
-      {commands.map((command, i) => (
-        <button
-          key={command.cmd}
-          role="option"
-          aria-selected={i === selected}
-          onMouseEnter={() => onHover(i)}
-          onMouseDown={(event) => {
-            // Keep the input focused
-            event.preventDefault();
-            onPick(command);
-          }}
-          className={`flex w-full gap-4 px-3 py-0.5 text-left ${
-            i === selected ? "text-primary" : "text-muted-foreground"
-          }`}
-        >
-          <span className="w-36 shrink-0">{command.cmd}</span>
-          <span className="min-w-0 truncate text-dim">{command.desc}</span>
-        </button>
-      ))}
+    <div className="absolute inset-x-6 bottom-full z-10 mb-2 rounded-[14px] border border-border-strong bg-popover p-1.5 shadow-[0_12px_32px_rgb(0_0_0/0.45)]">
+      <div ref={list} role="listbox" className="scroll-thin max-h-[260px] overflow-y-auto">
+        {commands.map((command, i) => (
+          <button
+            key={command.cmd}
+            role="option"
+            aria-selected={i === selected}
+            onMouseEnter={() => onHover(i)}
+            onMouseDown={(event) => {
+              // Keep the input focused
+              event.preventDefault();
+              onPick(command);
+            }}
+            className={`grid w-full grid-cols-[130px_minmax(0,1fr)] gap-3 rounded-lg px-2.5 py-[7px] text-left ${
+              i === selected ? "bg-popover-selected" : ""
+            }`}
+          >
+            <span
+              className={`font-mono text-[13px] ${i === selected ? "text-primary" : "text-soft"}`}
+            >
+              {command.cmd}
+            </span>
+            <span className={`truncate text-[13px] ${i === selected ? "text-subtle" : "text-dim"}`}>
+              {command.desc}
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-1 flex gap-3.5 border-t border-border-strong px-2.5 pb-1 pt-2 text-[11.5px] text-dim">
+        <span>↑↓ choose</span>
+        <span>⇥ complete</span>
+        <span>↵ run</span>
+        <span>esc close</span>
+      </div>
     </div>
   );
 }

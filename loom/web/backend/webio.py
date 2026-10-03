@@ -14,6 +14,7 @@ from rich.text import Text
 from loom import __version__
 from loom.display import sanitize_for_display
 from loom.io import HUNK_RE, InputOutput
+from loom.permissions import MODES
 from loom.phases import PHASES, get_phase
 from loom.reasoning_tags import REASONING_END, REASONING_START
 from loom.sessions import get_title
@@ -248,6 +249,7 @@ class WebIO(InputOutput):
         self.remember_files(coder, root, rel_fnames, addable_rel_fnames)
         self.follow_conversation(coder)
         self.remember_repo(coder)
+        self.web.set_mode = lambda mode: self.set_mode(coder, mode)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
         inp = self.web.wait_for_input()
         self.add_to_input_history(inp)
@@ -315,6 +317,25 @@ class WebIO(InputOutput):
             read_only=sorted(read_only),
         )
 
+    def set_mode(self, coder, mode):
+        """Switch the agent's permission mode, for the browser's mode pill. Runs on the
+        server's thread, like Shift-Tab runs during the terminal's prompt."""
+        permissions = getattr(coder, "permissions", None)
+        if not permissions or mode not in MODES:
+            return False
+        permissions.mode = mode
+        self.web.update(permission_mode=mode)
+        return True
+
+    def current_branch(self):
+        if not self.git:
+            return None
+        try:
+            return self.git.active_branch.name
+        except (TypeError, ValueError):
+            # A detached HEAD, or a repo with no commits
+            return None
+
     def session_state(self, coder, root, rel_fnames, commands):
         state = dict(
             version=__version__,
@@ -324,6 +345,8 @@ class WebIO(InputOutput):
             tokens=dict(self.usage),
             cost=self.cost,
             conversation=self.conversation_id,
+            branch=self.current_branch(),
+            permission_mode=None,
             **project_state(root),
         )
         if coder:
@@ -334,6 +357,9 @@ class WebIO(InputOutput):
                 edit_format=coder.edit_format,
                 read_only_files=sorted(coder.get_rel_fname(f) for f in coder.abs_read_only_fnames),
             )
+            permissions = getattr(coder, "permissions", None)
+            if permissions:
+                state.update(permission_mode=permissions.mode)
         return state
 
     # Esc comes from the browser, as a cancel message

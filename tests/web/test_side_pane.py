@@ -180,6 +180,16 @@ class TestApi(unittest.TestCase):
             response = self.client.get("/api/file", params=dict(path=path))
             self.assertEqual(response.status_code, 404, path)
 
+    def test_project_documents_before_the_file_list_has_them(self):
+        # A phase writes its document during a run, and loom's list of files catches up
+        # only when it next waits for input
+        (self.root / "loom-project").mkdir()
+        (self.root / "loom-project" / "1-idea-report.md").write_text("# Idea report\n")
+        response = self.client.get("/api/file", params=dict(path="loom-project/1-idea-report.md"))
+        self.assertEqual(response.json()["text"], "# Idea report\n")
+        response = self.client.get("/api/file", params=dict(path="loom-project/notes.md"))
+        self.assertEqual(response.status_code, 404)
+
     def test_binary_files(self):
         response = self.client.get("/api/file", params=dict(path="logo.png"))
         self.assertEqual(response.status_code, 415)

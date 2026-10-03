@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "@fontsource/geist-sans/latin-400.css";
+@import "@fontsource/geist-sans/latin-500.css";
+@import "@fontsource/geist-sans/latin-600.css";
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-700.css";
 
@@ -6,37 +9,66 @@
 :root {
   --background: #1a1a1a;
   --foreground: #e5e5e5;
-  --card: oklch(22% 0 0);
-  --popover: oklch(24% 0 0);
+  /* The sessions sidebar and the side pane, a step darker than the chat */
+  --sidebar: #151515;
+  --pane: #171717;
+  /* Tool cards, then the input box and hovers, then bubbles and selected rows */
+  --card: #1e1e1e;
+  --raised: #222222;
+  --selected: #262626;
+  --bubble: #2a2a2a;
+  --popover: #232323;
+  --popover-selected: #2f2f2f;
   --primary: #d97757;
+  --primary-hover: #e48a6c;
+  --on-primary: #1a1a1a;
+  /* Secondary text, from brightest to dimmest */
+  --soft: #c9c9c9;
+  --subtle: #b5b5b5;
   --muted-foreground: #8a8a8a;
-  --dim: oklch(48% 0.004 75);
+  --dim: #6b6966;
+  --faint: #5a5856;
+  --line: #242424;
   --border: #2a2a2a;
-  --destructive: oklch(65% 0.17 25);
+  --border-strong: #333333;
+  --destructive: #e5675b;
   --warning: oklch(80% 0.12 80);
   /* Inline code in replies, like Claude Code's */
   --code: #b1b9f9;
-  --success: oklch(74% 0.13 150);
-  --add: oklch(78% 0.12 150);
-  --add-bg: oklch(42% 0.08 150 / 0.22);
-  --del: oklch(72% 0.14 25);
-  --del-bg: oklch(45% 0.12 25 / 0.22);
+  --success: #5fc98a;
+  --add: #8fd6a3;
+  --add-bg: rgb(70 160 100 / 0.14);
+  --del: #ef8a7a;
+  --del-bg: rgb(200 80 60 / 0.14);
   color-scheme: dark;
 }
 
 :root.light {
-  --background: oklch(97.5% 0.006 85);
+  --background: oklch(98.5% 0.004 85);
   --foreground: oklch(25% 0.01 60);
-  --card: oklch(95.5% 0.006 85);
-  --popover: oklch(99% 0.004 85);
+  --sidebar: oklch(96% 0.006 85);
+  --pane: oklch(97% 0.005 85);
+  --card: oklch(99.5% 0.002 85);
+  --raised: oklch(99.5% 0.002 85);
+  --selected: oklch(92.5% 0.007 85);
+  --bubble: oklch(93% 0.008 85);
+  --popover: oklch(99.5% 0.002 85);
+  --popover-selected: oklch(94% 0.007 85);
   --primary: oklch(60% 0.14 40);
+  --primary-hover: oklch(55% 0.14 40);
+  --on-primary: oklch(99% 0.004 85);
+  --soft: oklch(35% 0.01 60);
+  --subtle: oklch(40% 0.01 60);
   --muted-foreground: oklch(48% 0.01 60);
-  --dim: oklch(60% 0.008 60);
+  --dim: oklch(58% 0.008 60);
+  --faint: oklch(68% 0.006 60);
+  --line: oklch(90% 0.007 85);
   --border: oklch(88% 0.008 85);
-  --destructive: oklch(50% 0.17 25);
+  --border-strong: oklch(84% 0.008 85);
+  --destructive: oklch(52% 0.17 25);
   --warning: oklch(55% 0.13 70);
   --code: #4f5bc4;
-  --success: oklch(50% 0.13 150);
+  --success: oklch(52% 0.13 150);
   --add: oklch(45% 0.13 150);
   --add-bg: oklch(85% 0.08 150 / 0.4);
   --del: oklch(50% 0.17 25);
@@ -47,12 +79,25 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-sidebar: var(--sidebar);
+  --color-pane: var(--pane);
   --color-card: var(--card);
+  --color-raised: var(--raised);
+  --color-selected: var(--selected);
+  --color-bubble: var(--bubble);
   --color-popover: var(--popover);
+  --color-popover-selected: var(--popover-selected);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-on-primary: var(--on-primary);
+  --color-soft: var(--soft);
+  --color-subtle: var(--subtle);
   --color-muted-foreground: var(--muted-foreground);
   --color-dim: var(--dim);
+  --color-faint: var(--faint);
+  --color-line: var(--line);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-destructive: var(--destructive);
   --color-warning: var(--warning);
   --color-code: var(--code);
@@ -61,8 +106,8 @@
   --color-add-bg: var(--add-bg);
   --color-del: var(--del);
   --color-del-bg: var(--del-bg);
-  /* Monospace everywhere: there is no sans-serif in the UI */
-  --font-sans: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* Prose in Geist; code, paths and commands in JetBrains Mono */
+  --font-sans: "Geist Sans", system-ui, -apple-system, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -79,12 +124,24 @@
     margin: 0;
     background: var(--background);
     color: var(--foreground);
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
     font-size: 14px;
     -webkit-font-smoothing: antialiased;
   }
   button {
     cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  button:focus-visible,
+  textarea:focus-visible,
+  input:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  a {
+    color: var(--primary);
   }
   ::selection {
     background: color-mix(in oklch, var(--primary) 35%, transparent);
@@ -103,7 +160,11 @@
 
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
 }
 
 /* Diff syntax highlighting: shiki gives each token both themes' colors */

@@ -7,12 +7,15 @@ Server to browser:
 
   session        {version, model, weak_model, edit_format, cwd, files, read_only_files,
                   commands: [{cmd, desc}], tokens: {sent, received}, cost, project,
-                  phase, phases: [{key, title, status}], busy}
+                  phase, phases: [{key, title, status}], conversation, branch,
+                  permission_mode, busy}
                  The current state. Sent first on every connection and again when it changes.
                  project is the /project idea (null without one), phase the key of the
                  phase it's in (null when there's none or it's complete), and each phase's
                  status pending, running, review or approved. conversation is the id of
-                 the saved conversation the chat is.
+                 the saved conversation the chat is. branch is the git branch, or null
+                 outside a repo or on a detached HEAD. permission_mode is the agent's
+                 ask, accept-edits, plan or bypass, or null when the coder has none.
   conversation   {id, title}                The chat is now another conversation, like
                                             one /resume continues: clear it, and the
                                             messages that follow show that one.
@@ -51,6 +54,8 @@ Browser to server:
   input          {text}                     The user's next message or /command.
   answer         {ask_id, value}            The answer to an ask.
   cancel         {}                         Stop the current work, like Esc in the terminal.
+  mode           {mode}                     Switch the permission mode, like Shift-Tab in
+                                            the terminal.
 
 On connecting, the browser gets the session followed by every other message so far, so a
 reloaded page shows the whole conversation.
@@ -80,6 +85,7 @@ CLIENT_EVENTS = (
     "input",
     "answer",
     "cancel",
+    "mode",
 )
 
 LEVELS = ("info", "warning", "error")

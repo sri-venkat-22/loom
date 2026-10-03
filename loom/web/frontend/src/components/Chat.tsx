@@ -1,26 +1,110 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
-import { type AskEntry, pendingAsk, useSession } from "../store/session";
+import {
+  type AskEntry,
+  type Entry,
+  type ToolEntry,
+  pendingAsk,
+  useSession,
+} from "../store/session";
 import { Message } from "./Messages";
+import { ToolGroup } from "./ToolCard";
 
 // Within this many pixels of the bottom, new output keeps the chat scrolled to the end
 const STICK_DISTANCE = 80;
 
 const NO_ASKS: AskEntry[] = [];
 
+// Tools that only look at the project. Finished calls of these in a row show as one
+// "Explored" card, like Claude Code's.
+const EXPLORING = new Set(["Read", "List", "Glob", "Grep", "Recall"]);
+
+type Item = { kind: "entry"; entry: Entry } | { kind: "group"; id: string; tools: ToolEntry[] };
+
+function groupTools(entries: Entry[], cards: Map<string, AskEntry[]>): Item[] {
+  const items: Item[] = [];
+  let run: ToolEntry[] = [];
+  const flush = () => {
+    if (run.length > 1) items.push({ kind: "group", id: `group-${run[0].id}`, tools: run });
+    else if (run.length === 1) items.push({ kind: "entry", entry: run[0] });
+    run = [];
+  };
+  for (const entry of entries) {
+    const quiet =
+      entry.kind === "tool" &&
+      EXPLORING.has(entry.name) &&
+      entry.status !== "running" &&
+      !entry.diffs.length &&
+      !cards.has(entry.id);
+    if (quiet) {
+      run.push(entry);
+      continue;
+    }
+    flush();
+    items.push({ kind: "entry", entry });
+  }
+  flush();
+  return items;
+}
+
+// A new conversation: the question, above the input. Warnings and errors loom printed
+// while starting show above it; its banner doesn't.
+export function Welcome() {
+  const cwd = useSession((state) => state.session?.cwd ?? "");
+  const entries = useSession((state) => state.entries);
+  const project = cwd.split(/[\\/]/).filter(Boolean).pop();
+  const problems = entries.filter((entry) => entry.kind === "system" && entry.level !== "info");
+  return (
+    <div className="scroll-thin flex flex-1 flex-col justify-end overflow-y-auto px-6 pb-7">
+      <div className="mx-auto flex w-full max-w-[760px] flex-col items-center gap-2.5 text-center">
+        {problems.length > 0 && (
+          <div className="mb-6 flex w-full flex-col gap-2 text-left">
+            {problems.map((entry) => (
+              <Message key={entry.id} entry={entry} asks={NO_ASKS} />
+            ))}
+          </div>
+        )}
+        <span className="font-mono text-[15px] font-bold text-primary">loom</span>
+        <h1 className="m-0 text-balance text-[30px] font-medium tracking-[-0.015em]">
+          {project ? `What should we work on in ${project}?` : "What should we work on?"}
+        </h1>
+      </div>
+    </div>
+  );
+}
+
 export function Chat() {
   const entries = useSession((state) => state.entries);
   const busy = useSession((state) => state.session?.busy ?? false);
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const stuck = useRef(true);
+  // Where the chat last scrolled itself to, so its own scrolling isn't mistaken for the
+  // user's: the event can arrive after more content, when it no longer looks like the end
+  const pinnedAt = useRef(-1);
 
-  useLayoutEffect(() => {
+  function pin() {
     const el = scroller.current;
-    if (el && stuck.current) el.scrollTop = el.scrollHeight;
-  }, [entries, busy]);
+    if (!el || !stuck.current) return;
+    el.scrollTop = el.scrollHeight;
+    pinnedAt.current = el.scrollTop;
+  }
+
+  useLayoutEffect(pin, [entries, busy]);
+
+  // Content also grows without new messages, like a checkpoint's document arriving or the
+  // side pane narrowing the chat: stay at the end then too
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || !content.current) return;
+    const observer = new ResizeObserver(pin);
+    observer.observe(el);
+    observer.observe(content.current);
+    return () => observer.disconnect();
+  }, []);
 
   // Questions about a tool call show on its card
-  const { onCards, cards } = useMemo(() => {
+  const { onCards, items } = useMemo(() => {
     const cards = new Set<string>();
     const onCards = new Map<string, AskEntry[]>();
     for (const entry of entries) {
@@ -30,12 +114,12 @@ export function Chat() {
         onCards.set(card, [...(onCards.get(card) ?? []), entry]);
       }
     }
-    return { onCards, cards };
+    const shown = entries.filter(
+      (entry) =>
+        entry.kind !== "ask" || !entry.ask.tool_id || !cards.has(`tool-${entry.ask.tool_id}`),
+    );
+    return { onCards, items: groupTools(shown, onCards) };
   }, [entries]);
-  const shown = entries.filter(
-    (entry) =>
-      entry.kind !== "ask" || !entry.ask.tool_id || !cards.has(`tool-${entry.ask.tool_id}`),
-  );
 
   const last = entries[entries.length - 1];
   const active =
@@ -48,26 +132,28 @@ export function Chat() {
       ref={scroller}
       onScroll={(event) => {
         const el = event.currentTarget;
-        stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_DISTANCE;
+        const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_DISTANCE;
+        if (!atEnd && el.scrollTop === pinnedAt.current) return;
+        stuck.current = atEnd;
       }}
-      className="scroll-thin flex-1 overflow-y-auto"
+      className="scroll-thin min-h-0 flex-1 overflow-y-auto"
     >
-      <div className="mx-auto max-w-[868px] space-y-5 px-5 pb-6 pt-[58px]">
-        {entries.length === 0 && (
-          <div>
-            <div className="mb-2 text-[13px] text-muted-foreground">loom</div>
-            <div className="text-[16px] leading-6">
-              Ready when you are. Ask loom to inspect a project, plan a change, or run a command.
-            </div>
-          </div>
+      <div ref={content} className="mx-auto flex max-w-[760px] flex-col gap-[22px] px-6 pb-7 pt-9">
+        {items.map((item) =>
+          item.kind === "group" ? (
+            <ToolGroup key={item.id} tools={item.tools} />
+          ) : (
+            <Message
+              key={item.entry.id}
+              entry={item.entry}
+              asks={onCards.get(item.entry.id) ?? NO_ASKS}
+            />
+          ),
         )}
-        {shown.map((entry) => (
-          <Message key={entry.id} entry={entry} asks={onCards.get(entry.id) ?? NO_ASKS} />
-        ))}
         {working && (
-          <div className="text-dim">
-            <span className="blink text-primary">●</span> working…{" "}
-            <span className="text-dim">(esc to interrupt)</span>
+          <div className="flex items-center gap-2 text-[13.5px] text-muted-foreground">
+            <span className="blink text-primary">●</span>
+            Working… <span className="text-dim">esc to interrupt</span>
           </div>
         )}
       </div>
