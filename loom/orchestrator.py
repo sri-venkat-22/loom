@@ -701,7 +701,8 @@ class Orchestrator:
             status = f"Timed out after {timeout} seconds."
         else:
             status = f"Exit code: {code}"
-        output = keep_end(output.rstrip(), TEST_OUTPUT_CHARS) or "(no output)"
+        output = output.replace("\r\n", "\n").rstrip()
+        output = keep_end(output, TEST_OUTPUT_CHARS) or "(no output)"
         passed = code == 0
         self.show_test_output(io, output, passed, status)
         result = f"{status}\n{output}"
