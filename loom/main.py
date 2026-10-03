@@ -1264,6 +1264,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                 build_retries=max(0, args.build_retries),
                 build_budget=args.build_budget,
                 build_workers=max(1, args.build_workers),
+                allow_deploy=args.allow_deploy,
             ),
             mcp=mcp,
             hooks=hooks,

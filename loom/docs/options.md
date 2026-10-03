@@ -54,9 +54,9 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
-            [--build-workers] [--build-budget] [--lint] [--lint-cmd]
-            [--auto-lint | --no-auto-lint] [--test-cmd]
-            [--auto-test | --no-auto-test] [--test]
+            [--build-workers] [--allow-deploy] [--build-budget]
+            [--lint] [--lint-cmd] [--auto-lint | --no-auto-lint]
+            [--test-cmd] [--auto-test | --no-auto-test] [--test]
             [--analytics | --no-analytics] [--analytics-log]
             [--analytics-disable] [--analytics-posthog-host]
             [--analytics-posthog-project-api-key]
@@ -586,6 +586,11 @@ Environment variable: `LOOM_BUILD_RETRIES`
 How many builders may build the architecture's work packages at once, each in its own git worktree; 1 builds with one agent (default: 3)  
 Default: 3  
 Environment variable: `LOOM_BUILD_WORKERS`  
+
+### `--allow-deploy`
+Let /project ship and /project rollback deploy without asking, under --yes-always or bypass permissions, like in a script (default: False)  
+Default: False  
+Environment variable: `LOOM_ALLOW_DEPLOY`  
 
 ### `--build-budget DOLLARS`
 With test-driven Building, stop trying again once a Building run has cost this much (default: no limit)  
