@@ -102,9 +102,22 @@ Write the architecture document in this format:
 **Test command:** `<the one command that runs the whole test suite>`
 ## Build order
 <Numbered steps for the Building agent.>
+## Work packages
+<How Building splits into packages that builders can build at the same time, each in its own copy of the repo, as one YAML block:>
+```yaml
+- id: <short-id>
+  title: <what it builds>
+  owns: [<globs of the files only this package writes>]
+  tests: [<globs of its test files>]
+  depends_on: [<ids of the packages it needs built first>]
+  acceptance: [<the FR ids it covers>]
+  test_command: "<the command that runs just its tests>"
+```
 ## Decisions and trade-offs
 
-The test command line must give one shell command, in backticks, that runs every test from the project root without asking for input and exits non-zero when a test fails, like `pytest -q` or `npm test -- --run`. loom reads it and runs it to check the build."""
+The test command line must give one shell command, in backticks, that runs every test from the project root without asking for input and exits non-zero when a test fails, like `pytest -q` or `npm test -- --run`. loom reads it and runs it to check the build.
+
+loom reads the work packages too, so keep to that YAML. The shared files (the manifest, the configuration and the interfaces between packages) are written first and belong to no package; give each package its own files, which no other package's globs match, and only the dependencies it needs, so packages without them are built at once. A small project is one package."""
 
 
 BUILDING = """You are the Building agent: loom's coding agent, working from the approved PRD and architecture document in the user's message.
