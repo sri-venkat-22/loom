@@ -42,3 +42,29 @@ class TestWebDocs(unittest.TestCase):
             for image in images:
                 self.assertTrue((base / image).is_file(), f"no image {image}")
         self.assertIn("loom/docs/web.md", readme)
+
+
+class TestBuiltFrontend(unittest.TestCase):
+    """loom/web/static is committed, so `pip install git+...` ships the web UI."""
+
+    def test_the_build_is_complete(self):
+        static = ROOT / "loom" / "web" / "static"
+        index = (static / "index.html").read_text()
+        assets = re.findall(r'(?:src|href)="/(assets/[^"]+)"', index)
+        self.assertTrue(any(asset.endswith(".js") for asset in assets), index)
+        self.assertTrue(any(asset.endswith(".css") for asset in assets), index)
+        for asset in assets:
+            self.assertTrue((static / asset).is_file(), f"index.html needs {asset}")
+
+    def test_the_build_is_in_git(self):
+        import subprocess
+
+        tracked = subprocess.run(
+            ["git", "ls-files", "loom/web/static/index.html"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if tracked.returncode:
+            self.skipTest("not a git checkout")
+        self.assertEqual(tracked.stdout.strip(), "loom/web/static/index.html")

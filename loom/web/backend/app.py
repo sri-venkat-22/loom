@@ -23,7 +23,8 @@ NOT_BUILT = """<!doctype html>
 <meta charset="utf-8">
 <title>loom</title>
 <body style="background:#1a1a1a;color:#e5e5e5;font:14px ui-monospace,monospace;padding:40px">
-<p>loom's web frontend hasn't been built. In a loom checkout, run:</p>
+<p>loom's web frontend is missing from this install. Reinstall loom, or in a loom
+checkout, run:</p>
 <pre>cd loom/web/frontend
 npm install
 npm run build</pre>

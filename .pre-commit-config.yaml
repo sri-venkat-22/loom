@@ -18,5 +18,7 @@ repos:
     rev: v2.2.6
     hooks:
       - id: codespell
+        # The web UI's committed build is minified code
+        exclude: ^loom/web/static/
         additional_dependencies:
           - tomli

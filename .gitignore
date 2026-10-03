@@ -19,6 +19,5 @@ tmp.benchmarks/
 .loom*
 .idea/
 
-# loom --web: the built frontend and its node modules
-loom/web/static/
+# loom --web's frontend dependencies (its build, loom/web/static, is committed)
 loom/web/frontend/node_modules/

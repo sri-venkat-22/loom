@@ -1,18 +1,21 @@
 name: Web Frontend
 
-# Checks that loom --web's frontend (loom/web/frontend) is formatted and builds.
+# Checks that loom --web's frontend (loom/web/frontend) is formatted and builds, and that
+# the committed build (loom/web/static), which installs ship, is the build of the source.
 
 on:
   workflow_dispatch:
   push:
     paths:
       - 'loom/web/frontend/**'
+      - 'loom/web/static/**'
       - '.github/workflows/web-frontend.yml'
     branches:
       - main
   pull_request:
     paths:
       - 'loom/web/frontend/**'
+      - 'loom/web/static/**'
       - '.github/workflows/web-frontend.yml'
     branches:
       - main
@@ -43,3 +46,13 @@ jobs:
 
     - name: Type-check and build
       run: npm run build
+
+    - name: Check the committed build is up to date
+      working-directory: .
+      run: |
+        if [ -n "$(git status --porcelain -- loom/web/static)" ]; then
+          git status --short -- loom/web/static
+          echo "loom/web/static doesn't match the frontend's source: run npm run build in"
+          echo "loom/web/frontend and commit loom/web/static."
+          exit 1
+        fi
