@@ -215,6 +215,40 @@ class TestApi(unittest.TestCase):
         found = self.client.get("/api/memory").json()
         self.assertEqual(found["decisions"][0]["text"], "Use argparse for the arguments")
 
+    def test_project_report(self):
+        response = self.client.get("/api/project/report")
+        self.assertEqual(response.status_code, 404)
+        # Asking doesn't create the project's memory
+        self.assertFalse((self.root / ".loom").exists())
+
+        state = ProjectState.new(self.root, "A CLI adder")
+        state.save()
+        ProjectMemory(self.root).record_decision("planning", "Use argparse")
+        self.session.update(model="gpt-4o-mini", weak_model="gpt-4o-mini")
+
+        response = self.client.get("/api/project/report", params=dict(format="md"))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("text/markdown"))
+        self.assertIn('filename="report.md"', response.headers["content-disposition"])
+        self.assertIn('title: "Project report: A CLI adder"', response.text)
+        self.assertIn("- Use argparse", response.text)
+        self.assertIn("- **Model:** gpt-4o-mini", response.text)
+
+        response = self.client.get("/api/project/report", params=dict(format="rtf"))
+        self.assertEqual(response.status_code, 400)
+
+        from loom import project_report
+
+        with patch.object(project_report, "pandoc_version", return_value=None):
+            # Word without pandoc comes as HTML, and a PDF can't be made
+            response = self.client.get("/api/project/report", params=dict(format="docx"))
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('filename="report.html"', response.headers["content-disposition"])
+            self.assertIn("<html", response.text)
+            response = self.client.get("/api/project/report", params=dict(format="pdf"))
+            self.assertEqual(response.status_code, 501)
+            self.assertIn("needs pandoc", response.json()["detail"])
+
     def test_models(self):
         aliases = self.client.get("/api/models").json()["aliases"]
         self.assertIn("sonnet", [a["alias"] for a in aliases])

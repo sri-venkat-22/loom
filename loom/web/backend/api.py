@@ -1,14 +1,16 @@
-"""The web UI's side pane reads the project through these: its files, a file's text, and
-the /project shared memory. The chat itself goes over the /ws WebSocket."""
+"""The web UI's side pane reads the project through these: its files, a file's text, the
+/project shared memory and its report. The chat itself goes over the /ws WebSocket."""
 
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from loom.memory import ProjectDB, ProjectMemory, ProjectMemoryError
 from loom.models import MODEL_ALIASES
+from loom.orchestrator import ProjectState, TransitionError
 from loom.phases import PHASES
+from loom.project_report import FORMATS, ProjectReport, ReportError, export_bytes
 from loom.sessions import list_sessions
 
 from .changes import branch_base, changes
@@ -22,6 +24,13 @@ MAX_FILE_BYTES = 1_000_000
 MAX_HITS = 20
 MAX_DECISIONS = 100
 MAX_SESSIONS = 50
+
+REPORT_TYPES = dict(
+    md="text/markdown; charset=utf-8",
+    html="text/html; charset=utf-8",
+    docx="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pdf="application/pdf",
+)
 
 
 def make_router(io):
@@ -125,6 +134,40 @@ def make_router(io):
         except Exception as err:
             raise HTTPException(500, f"Unable to diff against {commit[:7]}: {err}")
         return dict(available=True, base=commit[:7], label=label, files=files)
+
+    def project(base):
+        """The /project in base, and its decisions."""
+        if not ProjectDB(base).exists():
+            raise HTTPException(404, "There is no project here.")
+        try:
+            state = ProjectState.load(base)
+            decisions = ProjectMemory(base).decisions()
+        except (TransitionError, ProjectMemoryError) as err:
+            raise HTTPException(500, str(err))
+        if state is None:
+            raise HTTPException(404, "There is no project here.")
+        return state, decisions
+
+    @router.get("/project/report")
+    def project_report(format: str = "md"):
+        """The /project's report, to download as md, html, docx or pdf. Word needs pandoc
+        (without it the report comes as HTML), and PDF a PDF engine too."""
+        base = root()
+        if format not in FORMATS:
+            raise HTTPException(400, f"Unknown format {format!r}: use one of {', '.join(FORMATS)}")
+        state, decisions = project(base)
+        snapshot = getattr(getattr(io, "web", None), "snapshot", None) or {}
+        models = dict(main=snapshot.get("model"), weak=snapshot.get("weak_model"))
+        report = ProjectReport(base, state, decisions, io.git, models)
+        try:
+            data, fmt = export_bytes(report.markdown(), format)
+        except ReportError as err:
+            raise HTTPException(501, str(err))
+        return Response(
+            data,
+            media_type=REPORT_TYPES[fmt],
+            headers={"Content-Disposition": f'attachment; filename="report.{fmt}"'},
+        )
 
     @router.get("/models")
     def models():

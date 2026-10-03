@@ -103,6 +103,7 @@ keeps the end of the output, where test runners sum up the failures.
 | `/project decisions` | List every decision: yours, the agents' and the checkpoints' |
 | `/project recall QUERY` | Search the project memory, as the agents' `recall` tool does |
 | `/project memory` | Show where the memory is and how it searches |
+| `/project report [md\|html\|docx\|pdf] [--out FILE] [--summary]` | Write the [project report](#the-project-report) |
 | `/project reset` | Forget the project's progress, decisions and memory; its documents and code stay |
 
 `/project status` shows where the project is:
@@ -124,6 +125,43 @@ tokens it sent and received, the commit HEAD was at before and after it, how man
 it made, its verdict, and how it ended (`done`, `stopped` or `failed`). The status adds
 the runs up per phase and for the whole project. A model loom has no prices for costs
 $0.00.
+
+## The project report
+
+`/project report` writes everything the project did into one document, to read or to
+hand in:
+
+- a cover with the idea, when the project started and finished, the models and loom's
+  version, and the totals: runs, time, cost, tokens and commits
+- a timeline of the phases: status, verdict, runs, time, cost, and how many rounds of
+  fixes a failing test report sent Building
+- each phase's document, its headings one level down
+- every decision, grouped by phase and kind (decisions, approvals, edits, changes asked
+  for, send-backs and overrides)
+- the files each phase's runs changed, as `git diff --stat`
+- an appendix with the project's history
+
+```
+agent> /project report docx
+Wrote the project report to loom-project/report.docx
+```
+
+The format is `md` (the default), `html`, `docx` or `pdf`, and `--out FILE` writes it
+somewhere else (its extension picks the format if you don't name one). `--summary` asks
+the weak model for a one-page executive summary, which goes after the cover.
+
+Markdown needs nothing else. The other formats use [pandoc](https://pandoc.org/installing.html):
+
+- **HTML** without pandoc is still written, more plainly.
+- **Word** is styled for an academic report (Cambria text, navy headings, each section
+  on a new page, A4 with page numbers), from `loom/resources/report-reference.docx`.
+  Word fills in the table of contents when it opens the file. Without pandoc, loom
+  writes HTML instead and says so.
+- **PDF** also needs a PDF engine for pandoc: [typst](https://typst.app) (loom's
+  first choice), tectonic, a LaTeX like xelatex, weasyprint or wkhtmltopdf. Without
+  one, loom writes Word and HTML instead and says so.
+
+In [loom --web](web.md), `GET /api/project/report?format=docx` downloads the report.
 
 ## Shared memory
 

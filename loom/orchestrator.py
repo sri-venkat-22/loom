@@ -1114,6 +1114,26 @@ class Orchestrator:
         else:
             self.io.tool_output("The project is complete.")
 
+    def write_report(self, fmt, out=None, summary=False):
+        """Write the project's report (see loom/project_report.py) as fmt, at out or at
+        loom-project/report.FMT, with an executive summary by the weak model if summary.
+        Returns the paths written."""
+        from loom import project_report
+
+        report = project_report.ProjectReport.from_orchestrator(self)
+        text = report.markdown()
+        if summary:
+            model = self.coder.main_model.weak_model or self.coder.main_model
+            self.io.tool_output(f"{model.name} is writing the executive summary...")
+            try:
+                text = report.markdown(report.write_summary(model, text))
+            except project_report.ReportError as err:
+                self.io.tool_warning(f"{err} The report has no summary.")
+        path = Path(out).expanduser() if out else project_report.default_path(self.root, fmt)
+        if not path.is_absolute():
+            path = self.root / path
+        return project_report.export(text, fmt, path, warn=self.io.tool_warning)
+
     def show_documents(self):
         for phase in PHASES:
             if self.document_text(phase):
