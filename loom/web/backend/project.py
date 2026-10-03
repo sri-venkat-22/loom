@@ -12,7 +12,7 @@ from pathlib import Path
 
 from loom.memory import DB_FILE
 from loom.orchestrator import ProjectState
-from loom.phases import PHASES
+from loom.phases import PHASES, SPEC
 
 # How often the watcher looks for changes to the project
 WATCH_SECONDS = 0.5
@@ -108,6 +108,19 @@ NO_TIMELINE = dict(
 )
 
 
+def spec_summary(spec):
+    """Test-driven Building's acceptance tests, for the dashboard: {status, document,
+    tests, locked}, or None."""
+    if not spec:
+        return None
+    return dict(
+        status=spec.get("status", "pending"),
+        document=SPEC.document,
+        tests=list(spec.get("tests") or []),
+        locked=bool(spec.get("locked")),
+    )
+
+
 def timeline(root):
     """What the project dashboard shows of the project in root: every phase with its
     status, verdict, metrics, runs, decisions and history, and the project's totals."""
@@ -141,6 +154,7 @@ def timeline(root):
                     dict(command=check["command"], passed=check["passed"])
                     for check in data.get("checks") or []
                 ],
+                spec=spec_summary(data.get("spec")),
             )
         )
     template = state.template_info

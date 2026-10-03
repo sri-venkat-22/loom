@@ -310,3 +310,33 @@ class TestDashboard(unittest.TestCase):
                 found["phases"][0]["checks"], [dict(command="ruff check .", passed=False)]
             )
             self.assertEqual(found["phases"][1]["checks"], [])
+
+    def test_timeline_shows_test_driven_building(self):
+        with IgnorantTemporaryDirectory() as root:
+            state = ProjectState.new(root, "A CLI", tdd=True)
+            building = state.phase_data("building")
+            building["spec"] = dict(
+                status="approved", tests=["tests/test_cli.py"], locked={"tests/test_cli.py": "x"}
+            )
+            attempts = [
+                dict(attempt=1, passed=False, seconds=3.0, cost=0.01, restored=[]),
+                dict(attempt=2, passed=True, seconds=2.0, cost=0.02, restored=[]),
+            ]
+            building["run_log"] = [
+                dict(run=1, step="acceptance tests", outcome="done", commits=1),
+                dict(run=1, step="build", outcome="done", attempts=attempts, result="passed"),
+            ]
+            state.save()
+            found = timeline(root)
+            phase = found["phases"][3]
+            self.assertEqual(
+                phase["spec"],
+                dict(
+                    status="approved",
+                    document="loom-project/4a-acceptance-tests.md",
+                    tests=["tests/test_cli.py"],
+                    locked=True,
+                ),
+            )
+            self.assertEqual(phase["run_log"][1]["attempts"], attempts)
+            self.assertIsNone(found["phases"][2]["spec"])
