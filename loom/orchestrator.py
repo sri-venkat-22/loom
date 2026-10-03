@@ -83,7 +83,9 @@ MAX_RECALLED = 3
 TEMPLATE_SOURCE = "template"
 
 # The defaults of the options that change how projects run
-DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None)
+DEFAULT_SETTINGS = dict(build_retries=3, build_budget=None, build_workers=3)
+# A work plan may have this many packages per builder
+PACKAGES_PER_WORKER = 3
 
 # What each entry of a phase's run_log adds up, for its metrics
 METRIC_FIELDS = ("seconds", "cost", "tokens_sent", "tokens_received", "commits")
@@ -851,6 +853,42 @@ class Orchestrator:
         styles.append(None if passed else io.tool_error_color or "red")
         io.tool_result(lines, styles=styles)
 
+    # The work plan, for parallel builders (loom/workplan.py)
+
+    @property
+    def workers(self):
+        """How many builders may work at once: /project workers, or --build-workers."""
+        workers = self.state.data.get("workers") if self.state else None
+        return max(1, int(workers or self.settings.get("build_workers") or 1))
+
+    def work_plan(self, text=None):
+        """The architecture document's work plan, or None if it has none."""
+        from loom.workplan import read_workplan
+
+        if text is None:
+            text = self.document_text(PHASES_BY_KEY["design"])
+        files = []
+        if self.coder.repo:
+            try:
+                files = self.coder.repo.get_tracked_files()
+            except ANY_GIT_ERROR:
+                files = []
+        return read_workplan(text, self.workers * PACKAGES_PER_WORKER, files)
+
+    def show_work_plan(self, text):
+        plan = self.work_plan(text)
+        if plan is None:
+            return
+        if plan.valid:
+            how = "at once" if self.workers > 1 and len(plan.packages) > 1 else "one by one"
+            self.io.tool_output(f"Work plan: {plan.describe()}. Builders: {self.workers}, {how}.")
+            return
+        self.io.tool_warning(
+            "The work plan has problems, so Building will run as one agent unless you fix them:"
+        )
+        for problem in plan.problems:
+            self.io.tool_warning(f"  - {problem}")
+
     # The template's skeleton and checks
 
     def apply_skeleton(self):
@@ -1094,6 +1132,8 @@ class Orchestrator:
             runs = self.state.run_log(phase.key)
             for line, warn in describe_build(runs[-1] if runs else None):
                 (self.io.tool_warning if warn else self.io.tool_output)(line)
+        if phase.key == "design":
+            self.show_work_plan(text)
         checks = self.state.phase_data(phase.key).get("checks")
         if checks:
             self.io.tool_output("The template's checks:")
