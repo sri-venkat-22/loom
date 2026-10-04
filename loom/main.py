@@ -1277,6 +1277,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                 enabled=args.subagents,
                 max_steps=max(1, args.subagent_max_steps),
                 budget=args.subagent_budget,
+                max_parallel=max(1, args.max_parallel_tasks),
                 models=args.subagent_model,
             ),
         )

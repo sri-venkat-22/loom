@@ -74,8 +74,8 @@ class Asks:
         except queue.Empty:
             return False
         args = list(request["args"])
-        if args and isinstance(args[0], str):
-            # Say which builder asks
+        if request["worker"] is not None and args and isinstance(args[0], str):
+            # Say which builder asks; a sub-agent says it itself
             args[0] = f"[{request['worker']}] {args[0]}"
         try:
             request["answer"] = getattr(io, request["name"])(*args, **request["kwargs"])

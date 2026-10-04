@@ -1366,11 +1366,12 @@ class InputOutput:
         """The agent's tool call finished, and result is what the model gets back. The
         terminal has already shown it compactly, with tool_result."""
 
-    def task_board(self, verbose=False):
-        """What shows running sub-agents' tool calls (loom/subagent_io.py)."""
+    def task_board(self, verbose=False, headers=False):
+        """What shows running sub-agents' tool calls (loom/subagent_io.py). headers when
+        several run at once."""
         from loom.subagent_io import TaskBoard
 
-        return TaskBoard(self, verbose=verbose)
+        return TaskBoard(self, verbose=verbose, headers=headers)
 
     def usage_output(self, report, sent=0, received=0, cost=0.0):
         """Show the tokens and cost of a request: report says them, and sent, received and

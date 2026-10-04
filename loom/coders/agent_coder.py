@@ -2,8 +2,9 @@ import json
 import re
 import threading
 import time
+from dataclasses import dataclass
 
-from loom import plans, prompts
+from loom import plans, prompts, subagents
 from loom import tools as agent_tools
 from loom.editor import pipe_editor
 from loom.tools import ToolError
@@ -432,22 +433,82 @@ class AgentCoder(Coder):
     def run_tool_calls(self, calls):
         if self.checkpoint_steps:
             self.checkpoint_step(calls)
+        # Several tasks in one reply run at once, where the first of them is; the other
+        # calls run in order
+        tasks = [call for call in calls if call["function"]["name"] == "task"]
+        parallel = len(tasks) > 1 and self.max_parallel_tasks() > 1
+        results = {}
         # Every call needs a result message, even ones that don't run
         for call in calls:
-            if self.stop_requested:
+            if call["id"] in results:
+                result = results[call["id"]]
+            elif self.stop_requested:
                 result = "Not run, because the user stopped an earlier action."
+            elif parallel and call in tasks:
+                results.update(self.run_task_batch(tasks))
+                result = results[call["id"]]
             else:
                 try:
                     result = self.run_tool_call(call)
                     self.io.tool_done(result)
                 except KeyboardInterrupt:
-                    self.keyboard_interrupt()
-                    self.stop_requested = True
-                    result = "Interrupted by the user. Stop and wait for their instructions."
-                    self.io.tool_done(result, error=True)
+                    result = self.tool_call_interrupted()
             self.cur_messages.append(dict(role="tool", tool_call_id=call["id"], content=result))
 
         self.continue_loop = not self.stop_requested
+
+    def tool_call_interrupted(self):
+        """Esc or ^C stopped a tool call: stop and wait for the user."""
+        self.keyboard_interrupt()
+        self.stop_requested = True
+        result = "Interrupted by the user. Stop and wait for their instructions."
+        self.io.tool_done(result, error=True)
+        return result
+
+    def max_parallel_tasks(self):
+        return max(1, self.subagent_settings.get("max_parallel") or subagents.MAX_PARALLEL)
+
+    def run_task_batch(self, calls):
+        """Run a reply's task calls at once, each sub-agent on its own thread. Returns
+        {call id: result}."""
+        results = {}
+        steps = []
+        # The checks, and any questions they ask, one call at a time on this thread
+        for call in calls:
+            if self.stop_requested:
+                results[call["id"]] = "Not run, because the user stopped an earlier action."
+                continue
+            step = self.start_tool_call(call, show=False)
+            if step.result is not None:
+                results[call["id"]] = step.result
+                self.io.tool_done(step.result)
+            else:
+                steps.append((call, step))
+        if not steps:
+            return results
+
+        tasks = [step.action.extra["task"] for _, step in steps]
+        try:
+            outcomes = subagents.run_parallel(self, tasks, self.max_parallel_tasks())
+        except KeyboardInterrupt:
+            outcomes = None
+        for (call, step), task in zip(steps, tasks):
+            step.action.summary = task.summary()
+            if outcomes is None or task.status == "interrupted":
+                results[call["id"]] = (
+                    "Interrupted by the user. Stop and wait for their instructions."
+                )
+                self.io.tool_done(results[call["id"]], error=True)
+                continue
+            result = self.end_tool_call(step, outcomes[task.number], show=False)
+            self.io.tool_done(result)
+            results[call["id"]] = result
+        if outcomes is None or any(task.status == "interrupted" for task in tasks):
+            self.keyboard_interrupt()
+            self.stop_requested = True
+        elif any(task.status == "denied" for task in tasks):
+            self.action_denied()
+        return results
 
     def checkpoint_step(self, calls):
         """With --checkpoint-steps: checkpoint before a step that edits files or runs
@@ -470,60 +531,100 @@ class AgentCoder(Coder):
             self.take_checkpoint(", ".join(shown), kind="step")
 
     def run_tool_call(self, call):
-        name = call["function"]["name"]
+        step = self.start_tool_call(call)
+        if step.result is not None:
+            return step.result
+        result, ok = self.execute_tool_call(step)
+        return self.end_tool_call(step, result) if ok else result
+
+    def start_tool_call(self, call, show=True):
+        """Everything before a tool call runs: check its arguments, prepare its action, and
+        ask the coder's limits, the PreToolUse hooks and the permissions about it. Returns
+        a ToolStep, whose result is set when the call ends here. show=False leaves showing
+        the call to the caller, unless it ends here."""
+        step = ToolStep(call["function"]["name"])
+        name = step.name
         try:
             args = json.loads(call["function"]["arguments"] or "{}")
         except json.JSONDecodeError as err:
             self.io.tool_call(name)
             self.io.tool_result("Error: the model sent invalid arguments", error=True)
-            return f"Error: the arguments were not valid JSON ({err}). Try again with valid JSON."
+            step.result = (
+                f"Error: the arguments were not valid JSON ({err}). Try again with valid JSON."
+            )
+            return step
+        step.args = args
 
         try:
             action = agent_tools.prepare(self, name, args)
         except ToolError as err:
             self.io.tool_call(name, describe_args(args), args=args)
             self.io.tool_result(f"Error: {err}", error=True)
-            return f"Error: {err}"
+            step.result = f"Error: {err}"
+            return step
         except Exception as err:
             # Never let an unexpected failure escape: the model\'s tool_calls message is
             # already on the way to the chat history, and a missing tool reply would make
             # the next request a 400 forever
             self.io.tool_call(name, describe_args(args), args=args)
             self.io.tool_result(f"Error: {err}", error=True)
-            return f"Error preparing {name}: {err.__class__.__name__}: {err}"
+            step.result = f"Error preparing {name}: {err.__class__.__name__}: {err}"
+            return step
+        step.action = action
 
-        self.io.tool_call(action.name or name, action.detail, args=args)
+        if show:
+            self.show_tool_call(step)
         refusal = self.refuse_action(name, action)
         if refusal:
-            self.io.tool_result(f"Refused: {refusal}", error=True)
-            return f"Refused: {refusal}"
+            return self.end_early(step, f"Refused: {refusal}", f"Refused: {refusal}")
 
         hook_allowed = self.preapproved(action)
-        hook_input = agent_tools.hook_input(name, args)
+        step.hook_input = agent_tools.hook_input(name, args)
         if self.hooks:
             hook = self.hooks.run(
-                "PreToolUse", self, agent_tools.hook_name(name), hook_input, action
+                "PreToolUse", self, agent_tools.hook_name(name), step.hook_input, action
             )
             if hook.decision == "block":
                 reason = hook.message.strip().split("\n", 1)[0]
-                self.io.tool_result(f"Blocked by a hook: {reason}", error=True)
-                return (
-                    f"Blocked by the user's PreToolUse hook: {hook.message}\nDon't retry the"
-                    " same call; do something else or ask the user."
+                return self.end_early(
+                    step,
+                    f"Blocked by a hook: {reason}",
+                    (
+                        f"Blocked by the user's PreToolUse hook: {hook.message}\nDon't retry the"
+                        " same call; do something else or ask the user."
+                    ),
                 )
             hook_allowed = hook_allowed or hook.decision == "allow"
 
         # When the user is asked, the question shows the diff or the command
-        asked = self.permissions.decide(action, hook_allowed) == "ask"
+        step.asked = self.permissions.decide(action, hook_allowed) == "ask"
         outcome, message = self.permissions.request(action, hook_allowed, io=self.io)
         if outcome == "deny":
-            self.io.tool_result("Refused in plan mode", error=True)
-            return message
+            return self.end_early(step, "Refused in plan mode", message)
         if outcome == "user-deny":
-            self.io.tool_result("Denied", error=True)
+            self.end_early(step, "Denied", message)
             self.action_denied()
-            return message
+        return step
 
+    def show_tool_call(self, step):
+        """Show the call's line, like ● Read(loom/io.py), once."""
+        if not step.shown:
+            step.shown = True
+            action = step.action
+            self.io.tool_call(action.name or step.name, action.detail, args=step.args)
+
+    def end_early(self, step, shown, result):
+        """The call ends before it runs: show why, and give the model result."""
+        self.show_tool_call(step)
+        self.io.tool_result(shown, error=True)
+        step.result = result
+        return step
+
+    def execute_tool_call(self, step):
+        """Run a prepared call's action. Returns (result, ok): not ok means it failed and
+        the error is shown and in result."""
+        action = step.action
+        name = step.name
         if action.kind == "edit":
             self.before_edit(action)
         try:
@@ -535,22 +636,33 @@ class AgentCoder(Coder):
                 result = action.run()
         except (ToolError, OSError) as err:
             self.io.tool_result(f"Error: {err}", error=True)
-            return f"Error: {err}"
+            return f"Error: {err}", False
         except KeyboardInterrupt:
             raise
         except Exception as err:
             # A buggy tool can\'t take the session down: return the error to the model so
             # this call still has a matching tool reply
             self.io.tool_result(f"Error: {err}", error=True)
-            return f"Error running {name}: {err.__class__.__name__}: {err}"
+            return f"Error running {name}: {err.__class__.__name__}: {err}", False
+        return result, True
 
+    def end_tool_call(self, step, result, show=True):
+        """After a call ran: lint an edit, show the outcome (unless show is False) and run
+        the PostToolUse hooks. Returns the result for the model."""
+        action = step.action
         if action.kind == "edit":
             result += self.after_edit(action)
-        self.show_tool_result(action, result, diff_shown=asked)
+        if show:
+            self.show_tool_result(action, result, diff_shown=step.asked)
 
         if self.hooks:
             hook = self.hooks.run(
-                "PostToolUse", self, agent_tools.hook_name(name), hook_input, action, result
+                "PostToolUse",
+                self,
+                agent_tools.hook_name(step.name),
+                step.hook_input,
+                action,
+                result,
             )
             if hook.message:
                 self.show_hook_feedback(hook.message)
@@ -1012,6 +1124,23 @@ class AgentCoder(Coder):
         content = (self.request_text or request["content"]) + "\n\n" + summary + todos
         self.cur_messages = [dict(request, content=content)] + self.cur_messages[end:]
         return max(num_steps, 1)
+
+
+@dataclass
+class ToolStep:
+    """A tool call on its way through start_tool_call, execute_tool_call and
+    end_tool_call."""
+
+    name: str
+    args: dict = None
+    action: agent_tools.Action = None
+    hook_input: dict = None
+    # The user was asked about it, so the question showed its diff
+    asked: bool = False
+    # Its call line is shown
+    shown: bool = False
+    # The result for the model, when it ended before running
+    result: str = None
 
 
 def new_task_usage():

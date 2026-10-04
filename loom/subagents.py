@@ -52,6 +52,7 @@ spends is added to the parent's tokens and cost.
 import hashlib
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -67,6 +68,8 @@ from loom.tools import ToolError, plural, truncate
 from loom.utils import format_tokens
 
 DEFAULT_AGENT = "general"
+# How many tasks of one reply run at once, unless --max-parallel-tasks says otherwise
+MAX_PARALLEL = 4
 # Steps a sub-agent may take, unless --subagent-max-steps says otherwise
 MAX_STEPS = 40
 # The longest report the parent gets; longer ones keep their start and end
@@ -567,8 +570,6 @@ class Task:
             cur_messages=[],
             session=Session(),
             map_tokens=map_tokens,
-            # Its replies aren't shown, and it never runs spinners or commits
-            stream=False,
             total_cost=0.0,
             total_tokens_sent=0,
             total_tokens_received=0,
@@ -587,9 +588,10 @@ class Task:
         self.status = "running"
         self.started = time.time()
         self.io = io
+        self.changed()
         interrupted = False
         try:
-            self.child = self.make_child(io)
+            self.child = self.child or self.make_child(io)
             self.report = self.child.do_task(self.prompt)
             child = self.child
             if child.interrupted:
@@ -613,10 +615,25 @@ class Task:
         finally:
             self.seconds = time.time() - self.started
             self.merge()
+            self.changed()
 
         if interrupted:
             raise KeyboardInterrupt()
         return self.result()
+
+    def changed(self):
+        """Show that it started or finished."""
+        view = getattr(self.io, "view", None)
+        if view is not None:
+            view.changed()
+
+    def cancel(self):
+        """Esc while tasks run at once: stop the sub-agent as soon as it can, or keep it
+        from starting."""
+        if self.child:
+            self.child.cancel()
+        if self.status == "pending":
+            self.status = "interrupted"
 
     def merge(self):
         """Give the parent what the sub-agent spent and the files it edited."""
@@ -690,6 +707,67 @@ class Task:
             body = self.report or "(The sub-agent gave no report.)"
         body = truncate(body.strip(), MAX_REPORT_CHARS)
         return f"{body}\n\n[task: {self.stats()}]"
+
+
+def run_parallel(parent, tasks, workers=MAX_PARALLEL):
+    """Run tasks at once, each sub-agent on a thread of its own, at most workers at a time.
+    Their questions come here, to the main thread, which answers them one at a time.
+    Returns {task number: result}. Esc or ^C stops them all, waits for them to stop, and
+    goes on up."""
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import wait as wait_for
+
+    from loom.subagent_io import BoardAsker, SubAgentIO
+    from loom.workers import Asks, stop_workers
+
+    asks = Asks()
+    board = parent.io.task_board(verbose=parent.verbose, headers=True)
+    ios = {}
+    for task in tasks:
+        parent.register_task(task)
+        ios[task.number] = io = SubAgentIO(parent.io, task, board.view(task), asks=asks)
+        # Made here, so only running them happens on the threads
+        task.io = io
+        task.child = task.make_child(io)
+    threads = {}
+
+    def work(task):
+        if task.status != "pending":
+            # Stopped before it started
+            return None
+        threads[task.number] = threading.get_ident()
+        try:
+            return task.run(ios[task.number])
+        except KeyboardInterrupt:
+            return None
+
+    results = {}
+    asker = BoardAsker(parent.io, board)
+    board.update()
+    try:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="loom-task") as pool:
+            futures = {pool.submit(work, task): task for task in tasks}
+            try:
+                while not all(future.done() for future in futures):
+                    asks.serve(asker)
+            except KeyboardInterrupt:
+                for task in tasks:
+                    task.cancel()
+                stop_workers(asks, [], list(threads.values()))
+                wait_for(futures)
+                raise
+            for future, task in futures.items():
+                try:
+                    results[task.number] = future.result()
+                except Exception as err:
+                    task.status = "failed"
+                    task.error = f"{err.__class__.__name__}: {err}"
+                    results[task.number] = task.result()
+    finally:
+        board.close()
+        for task in tasks:
+            parent.save_task(task)
+    return results
 
 
 def describe_record(record):

@@ -36,6 +36,10 @@ class SubAgentCoder(AgentCoder):
     denied = False
     incomplete = False
     tool_uses = 0
+    # Esc stopped it while tasks ran at once
+    cancelled = False
+    # Its reply is streaming in
+    in_stream = False
 
     def __init__(self, main_model, io, parent=None, task=None, **kwargs):
         kwargs = {key: value for key, value in kwargs.items() if key in CODER_ARGS}
@@ -150,6 +154,8 @@ class SubAgentCoder(AgentCoder):
 
     def send_request(self, message, final=False):
         """One request of the agent loop. final allows a single step, without tools."""
+        if self.cancelled:
+            return
         self.final_step = final
         self.limit = None
         self.io.user_input(message)
@@ -175,7 +181,36 @@ class SubAgentCoder(AgentCoder):
     def limit_reached(self, reason):
         self.limit = reason
 
+    def cancel(self):
+        """Stop as soon as it can: Esc while tasks run at once, from the main thread."""
+        self.cancelled = True
+        self.stop_requested = True
+        self.interrupted = True
+
+    def show_pretty(self):
+        # Its streamed reply goes to the io's hidden Markdown stream rather than straight to
+        # the terminal, and it never runs spinners
+        return self.in_stream
+
+    def live_incremental_response(self, final):
+        pass
+
+    def show_send_output_stream(self, completion):
+        def chunks():
+            for chunk in completion:
+                if self.cancelled:
+                    raise KeyboardInterrupt()
+                yield chunk
+
+        self.in_stream = True
+        try:
+            yield from super().show_send_output_stream(chunks())
+        finally:
+            self.in_stream = False
+
     def run_tool_calls(self, calls):
+        if self.cancelled:
+            self.stop_requested = True
         if not self.final_step:
             return super().run_tool_calls(calls)
         for call in calls:

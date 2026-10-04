@@ -66,19 +66,28 @@ def more_line(hidden, style=None):
 
 
 class TaskBoard:
-    """Shows the tool calls of running tasks in the terminal, under their Task lines."""
+    """Shows the tool calls of running tasks in the terminal.
 
-    def __init__(self, io, verbose=False):
+    For one task (the parent shows its Task line and outcome), its latest few tool calls
+    roll under the Task line. For tasks running at once (headers), each gets a block with
+    its own Task line, its latest tool call and, once it's done, its outcome. With
+    --verbose, or when the output isn't a terminal, every line is printed as it comes,
+    labelled with its task when several run."""
+
+    def __init__(self, io, verbose=False, headers=False):
         self.io = io
+        self.headers = headers
         self.rolling = not verbose and live_ok(io)
         self.views = []
         self.live = None
         self.lock = threading.RLock()
+        # While a question is on the screen, lines wait here
+        self.held = None
 
     def view(self, task):
         """The part of the board for task."""
         with self.lock:
-            view = TaskView(self, task)
+            view = TaskView(self, task, window=1 if self.headers else ROLLING_LINES)
             self.views.append(view)
             return view
 
@@ -90,6 +99,8 @@ class TaskBoard:
         if not self.rolling:
             return
         with self.lock:
+            if self.held is not None:
+                return
             if self.live is None:
                 self.live = Live(
                     console=self.io.console,
@@ -106,8 +117,8 @@ class TaskBoard:
             return Group(*[line for view in self.views for line in view.block()])
 
     def pause(self):
-        """Before a question, and when the tasks are done: stop redrawing, and leave the
-        lines shown on the screen."""
+        """Before a question about one task: stop redrawing, and leave its lines on the
+        screen."""
         with self.lock:
             if self.live is None:
                 return
@@ -118,12 +129,50 @@ class TaskBoard:
                     self.print(line)
                 view.printed = len(view.lines)
 
+    def hold(self, view=None):
+        """Before a question while several tasks run: clear the board, show the Task line
+        and latest line of view, the task asking, and keep new lines off the screen until
+        release."""
+        with self.lock:
+            if self.live is not None:
+                self.live.stop()
+                self.live = None
+            if view is not None:
+                self.print(view.header())
+                if view.lines:
+                    self.print(view.prefixed(view.lines[-1][0], True))
+            if self.held is None:
+                self.held = []
+
+    def release(self):
+        """After the question: show what came meanwhile."""
+        with self.lock:
+            held, self.held = self.held or [], None
+            for text in held:
+                self.print(text)
+            self.update()
+
     def close(self):
-        self.pause()
+        """The tasks are done: leave their final lines on the screen."""
+        with self.lock:
+            self.held = None
+            if self.headers:
+                if self.live is not None:
+                    self.live.stop()
+                    self.live = None
+                for view in self.views:
+                    for line in view.final_block():
+                        self.print(line)
+            else:
+                self.pause()
 
     def print(self, text):
-        self.io.append_chat_history(text.plain, linebreak=True, blockquote=True)
-        self.io._print_text(text, no_wrap=True, overflow="ellipsis")
+        with self.lock:
+            if self.held is not None:
+                self.held.append(text)
+                return
+            self.io.append_chat_history(text.plain, linebreak=True, blockquote=True)
+            self.io._print_text(text, no_wrap=True, overflow="ellipsis")
 
 
 class TaskView:
@@ -156,37 +205,106 @@ class TaskView:
             self.lines.append((text, call))
             if board.rolling:
                 board.update()
-                return
-            board.print(self.prefixed(text, len(self.lines) - 1 == 0))
-            self.printed = len(self.lines)
+            elif board.headers:
+                label = Text(f"{PREFIX}[{self.task.label}] ", style=board.style("dim"))
+                board.print(label + text)
+            else:
+                board.print(self.prefixed(text, len(self.lines) == 1))
+            if not board.rolling:
+                self.printed = len(self.lines)
+
+    def changed(self):
+        """The task started or finished."""
+        self.board.update()
 
     def block(self):
-        """The lines to show: the latest few, and how many tool calls are hidden."""
+        """The lines to show while it runs: its Task line when several tasks run, its
+        latest few lines, how many tool calls are hidden, and its outcome once done."""
+        res = [self.header()] if self.board.headers else []
+        status = self.task.status
+        if self.board.headers and status not in ("pending", "running"):
+            return res + [self.outcome()]
         start = max(self.printed, len(self.lines) - self.window)
         hidden = sum(1 for _, call in self.lines[self.printed : start] if call)
-        res = [
+        res += [
             self.prefixed(text, index == start and self.printed == 0)
             for index, (text, _) in enumerate(self.lines[start:], start)
         ]
         if hidden:
             res.append(more_line(hidden, self.board.style("dim")))
+        if self.board.headers and not self.lines:
+            waiting = "Waiting to start…" if status == "pending" else "Starting…"
+            res.append(self.prefixed(Text(waiting, style=self.board.style("dim")), True))
         return res
+
+    def final_block(self):
+        """Its Task line and outcome, left on the screen when the tasks are done."""
+        return [self.header(), self.outcome()]
+
+    def header(self):
+        name, detail = tool_call_parts(
+            "Task", self.task.description, self.board.io.console.width - 4
+        )
+        text = Text()
+        text.append("● ", style=self.board.style("green"))
+        text.append(name, style=self.board.style("bold"))
+        text.append(f"({detail})")
+        return text
+
+    def outcome(self):
+        failed = self.task.status not in ("done", "incomplete")
+        style = self.board.io.tool_error_color if failed else "dim"
+        return self.prefixed(Text(self.task.summary(), style=self.board.style(style)), True)
 
     def prefixed(self, text, first):
         line = Text(FIRST_PREFIX if first else PREFIX, style=self.board.style("dim"))
         return line + text
 
 
+class BoardAsker:
+    """Asks the parent's io the questions of tasks running at once (see workers.Asks),
+    with the board out of the way."""
+
+    def __init__(self, io, board):
+        self.io = io
+        self.board = board
+
+    def __getattr__(self, name):
+        if name not in ASKS:
+            raise AttributeError(name)
+
+        def ask(*args, **kwargs):
+            question = args[0] if args else kwargs.get("question")
+            asking = next(
+                (
+                    view
+                    for view in self.board.views
+                    if isinstance(question, str) and question.startswith(f"[{view.task.label}] ")
+                ),
+                None,
+            )
+            self.board.hold(asking)
+            try:
+                return getattr(self.io, name)(*args, **kwargs)
+            finally:
+                self.board.release()
+
+        return ask
+
+
 class SubAgentIO:
     """The io of a sub-agent doing task, wrapped around the parent's io. view shows its
     tool calls."""
 
-    def __init__(self, io, task, view=None):
+    def __init__(self, io, task, view=None, asks=None):
+        """asks (workers.Asks) takes its questions to the main thread, when it runs on a
+        thread of its own."""
         own = vars(self)
         own.update(
             main=io,
             task=task,
             view=view or TaskBoard(io).view(task),
+            asks=asks,
             # No spinners or live Markdown from a sub-agent
             pretty=False,
             # Everything it showed, said and was told: {time, kind, ...}
@@ -216,8 +334,11 @@ class SubAgentIO:
             args = (label + args[0],) + args[1:]
         elif isinstance(kwargs.get("question"), str):
             kwargs["question"] = label + kwargs["question"]
-        self.view.board.pause()
-        answer = getattr(self.main, name)(*args, **kwargs)
+        if self.asks is not None:
+            answer = self.asks.ask(None, name, args, kwargs)
+        else:
+            self.view.board.pause()
+            answer = getattr(self.main, name)(*args, **kwargs)
         question = args[0] if args else kwargs.get("question")
         self.record("ask", question=question, answer=answer)
         return answer

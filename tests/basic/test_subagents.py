@@ -1,5 +1,6 @@
 import json
 import re
+import sys
 import threading
 import unittest
 from pathlib import Path
@@ -8,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from litellm.types.utils import Choices, Message, ModelResponse
 
 from loom import subagents, tools
+from loom.coders import Coder
 from loom.coders.subagent_coder import SubAgentCoder
 from loom.io import InputOutput
 from loom.llm import litellm
@@ -512,6 +514,11 @@ def capture(io, terminal=False, width=100):
 
 class FakeTask:
     label = "explore: auth flow"
+    description = "Explore auth flow"
+    status = "running"
+
+    def summary(self):
+        return "Done (5 tool uses · 2k tokens · 3s)"
 
 
 class TestTaskDisplay(HomeDirMixin, unittest.TestCase):
@@ -1171,3 +1178,342 @@ class TestTaskHooks(HomeDirMixin, unittest.TestCase):
             self.assertTrue(result.startswith("Second report, with the tests."))
             self.assertIn("[task: 2 tool uses", result)
             self.assertTrue(log[4]["tool_response"].startswith("Second report"))
+
+
+class PromptsLLM:
+    """Stands in for litellm.completion while sub-agents run at once: each sub-agent gets
+    the replies scripted for its task's prompt, and the parent those for "parent". A
+    scripted reply can be a function of the request, which may wait for other threads."""
+
+    def __init__(self, **scripts):
+        self.scripts = {name: list(replies) for name, replies in scripts.items()}
+        self.requests = {name: [] for name in scripts}
+        self.threads = {name: set() for name in scripts}
+        self.times = {name: [] for name in scripts}
+        self.lock = threading.Lock()
+        self.turns = 0
+
+    def __call__(self, **kwargs):
+        import time
+
+        if not kwargs.get("tools"):
+            message = Message(content="Fix the adder")
+            return ModelResponse(choices=[Choices(message=message, finish_reason="stop")])
+        messages = kwargs["messages"]
+        name = messages[1]["content"] if agent_of(kwargs) != "parent" else "parent"
+        with self.lock:
+            script = self.scripts.get(name)
+            if not script:
+                raise AssertionError(f"{name!r} asked for more replies than scripted")
+            self.requests[name].append(kwargs)
+            self.threads[name].add(threading.current_thread().name)
+            scripted = script.pop(0)
+            self.turns += 1
+            turn = self.turns
+        start = time.monotonic()
+        if callable(scripted):
+            scripted = scripted(kwargs)
+        self.times[name].append((start, time.monotonic()))
+        if kwargs["stream"]:
+            return stream_response(scripted, turn)
+        return full_response(scripted, turn)
+
+    def left(self):
+        return {name: len(script) for name, script in self.scripts.items() if script}
+
+
+def task_call(prompt, description=None, agent="explore"):
+    return call("task", description=description or prompt.rstrip("."), prompt=prompt, agent=agent)
+
+
+def waits_for(barrier, then):
+    """A scripted reply that waits at barrier first: it only passes when every sub-agent
+    meant to be running at once is."""
+
+    def scripted(kwargs):
+        barrier.wait()
+        return then
+
+    return scripted
+
+
+class TestParallelTasks(HomeDirMixin, unittest.TestCase):
+    def run_parent(self, llm, io=None, **kwargs):
+        io = io or InputOutput(pretty=False, yes=True)
+        coder = make_coder(io, **kwargs)
+        with patch.object(litellm, "completion", llm):
+            coder.run(with_message="go")
+        return coder
+
+    def test_tasks_in_one_reply_run_at_once(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            # Neither can pass the barrier until the other reaches it
+            barrier = threading.Barrier(2, timeout=10)
+            llm = PromptsLLM(
+                parent=[
+                    reply(None, task_call("Look at calc."), task_call("Look at the tests.")),
+                    reply("Done."),
+                ],
+                **{
+                    "Look at calc.": [
+                        waits_for(barrier, reply(None, call("read_file", path="calc.py"))),
+                        reply("calc.py:2 subtracts."),
+                    ],
+                    "Look at the tests.": [
+                        waits_for(barrier, reply(None, call("read_file", path="test_calc.py"))),
+                        reply("test_calc.py:5 expects 5."),
+                    ],
+                },
+            )
+            coder = self.run_parent(llm)
+            self.assertEqual(llm.left(), {})
+            (a_start, a_end), (b_start, b_end) = (
+                llm.times["Look at calc."][0],
+                llm.times["Look at the tests."][0],
+            )
+            # The first replies overlapped
+            self.assertLess(max(a_start, b_start), min(a_end, b_end))
+            threads = llm.threads["Look at calc."] | llm.threads["Look at the tests."]
+            self.assertEqual(len(threads), 2)
+            self.assertTrue(all(name.startswith("loom-task") for name in threads))
+            tasks = coder.session.tasks
+            self.assertEqual([(t.number, t.status) for t in tasks], [(1, "done"), (2, "done")])
+
+    def test_results_come_back_in_call_order(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            second_done = threading.Event()
+
+            def slow(kwargs):
+                # The first task finishes after the second
+                self.assertTrue(second_done.wait(10))
+                return reply("First report.")
+
+            def fast(kwargs):
+                second_done.set()
+                return reply("Second report.")
+
+            llm = PromptsLLM(
+                parent=[
+                    reply(
+                        None,
+                        task_call("First."),
+                        call("read_file", path="calc.py"),
+                        task_call("Second."),
+                    ),
+                    reply("Done."),
+                ],
+                **{"First.": [slow], "Second.": [fast]},
+            )
+            self.run_parent(llm)
+            messages = llm.requests["parent"][1]["messages"]
+            tools = [msg for msg in messages if msg["role"] == "tool"]
+            self.assertEqual(
+                [msg["tool_call_id"] for msg in tools], ["call_1_0", "call_1_1", "call_1_2"]
+            )
+            self.assertTrue(tools[0]["content"].startswith("First report."))
+            self.assertIn("return a - b", tools[1]["content"])
+            self.assertTrue(tools[2]["content"].startswith("Second report."))
+
+    def test_a_question_from_a_task_is_answered_on_the_main_thread(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(pretty=False, yes=None)
+            asked = []
+
+            def permission_ask(question, **kwargs):
+                asked.append((question, threading.current_thread() is threading.main_thread()))
+                return "yes"
+
+            io.permission_ask = permission_ask
+            barrier = threading.Barrier(2, timeout=10)
+            llm = PromptsLLM(
+                parent=[
+                    reply(
+                        None,
+                        task_call("Run the tests.", "Test", agent="general"),
+                        task_call("Read calc.", "Read"),
+                    ),
+                    reply("Done."),
+                ],
+                **{
+                    "Run the tests.": [
+                        waits_for(barrier, reply(None, call("bash", command="echo tested"))),
+                        reply("The tests ran."),
+                    ],
+                    "Read calc.": [
+                        waits_for(barrier, reply(None, call("read_file", path="calc.py"))),
+                        reply("Read it."),
+                    ],
+                },
+            )
+            coder = self.run_parent(llm, io=io)
+            self.assertEqual(llm.left(), {})
+            self.assertEqual(asked, [("[general: Test] Run this command?", True)])
+            result = results_of(llm.requests["Run the tests."][1]["messages"])[0]
+            self.assertIn("tested", result)
+            self.assertEqual([t.status for t in coder.session.tasks], ["done", "done"])
+
+    def test_esc_stops_every_task(self):
+        import time
+
+        from loom.workers import Asks
+
+        with GitTemporaryDirectory():
+            make_repo()
+            sleep = f'"{sys.executable}" -c "import time; time.sleep(30)"'
+            llm = PromptsLLM(
+                parent=[
+                    reply(
+                        None,
+                        task_call("Sleep one.", agent="general"),
+                        task_call("Sleep two.", agent="general"),
+                        call("read_file", path="calc.py"),
+                    )
+                ],
+                **{
+                    "Sleep one.": [reply(None, call("bash", command=sleep))],
+                    "Sleep two.": [reply(None, call("bash", command=sleep))],
+                },
+            )
+            original = Asks.serve
+
+            def serve(self, io, timeout=0.1):
+                # Esc, once both commands are running
+                with tools.RUNNING_LOCK:
+                    running = len(tools.RUNNING)
+                if running == 2:
+                    raise KeyboardInterrupt()
+                return original(self, io, timeout)
+
+            io = InputOutput(pretty=False, yes=True)
+            coder = make_coder(io)
+            coder.permissions.mode = "bypass"
+            started = time.monotonic()
+            with patch.object(litellm, "completion", llm), patch.object(Asks, "serve", serve):
+                coder.run(with_message="go")
+            self.assertLess(time.monotonic() - started, 20)
+            self.assertEqual(tools.RUNNING, {})
+            self.assertTrue(coder.stop_requested)
+            one, two, read = results_of(coder.done_messages)
+            self.assertIn("Interrupted by the user", one)
+            self.assertIn("Interrupted by the user", two)
+            self.assertIn("Not run", read)
+            self.assertEqual(
+                [t.status for t in coder.session.tasks], ["interrupted", "interrupted"]
+            )
+
+    def test_costs_are_summed_exactly(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            barrier = threading.Barrier(2, timeout=10)
+            llm = PromptsLLM(
+                parent=[reply(None, task_call("A."), task_call("B.")), reply("Done.")],
+                **{
+                    "A.": [waits_for(barrier, reply(None, call("glob", pattern="*"))), reply("a")],
+                    "B.": [waits_for(barrier, reply(None, call("glob", pattern="*"))), reply("b")],
+                },
+            )
+
+            def priced(self, messages, completion=None):
+                # Each request costs 1/8 dollar, 1000 tokens sent and 10 received
+                self.total_cost += 0.125
+                self.message_cost += 0.125
+                self.message_tokens_sent += 1000
+                self.message_tokens_received += 10
+                self.usage_report = "Tokens"
+
+            io = InputOutput(pretty=False, yes=True)
+            io.usage_output = MagicMock()
+            with patch.object(Coder, "calculate_and_show_tokens_and_cost", priced):
+                coder = self.run_parent(llm, io=io)
+            tasks = coder.session.tasks
+            self.assertEqual([t.cost for t in tasks], [0.25, 0.25])
+            self.assertEqual([t.tokens for t in tasks], [2020, 2020])
+            # Two requests of the parent's and two of each sub-agent's
+            self.assertEqual(coder.total_cost, 0.75)
+            self.assertEqual(coder.total_tokens_sent, 6000)
+            self.assertEqual(coder.total_tokens_received, 60)
+            io.usage_output.assert_called_once()
+            self.assertEqual(io.usage_output.call_args[1]["sent"], 6000)
+            self.assertEqual(io.usage_output.call_args[1]["cost"], 0.75)
+            self.assertIn(
+                "Including 2 tasks: 4.0k sent, 40 received.", io.usage_output.call_args[0][0]
+            )
+
+    def test_max_parallel_tasks(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            llm = PromptsLLM(
+                parent=[
+                    reply(None, task_call("A."), task_call("B."), task_call("C.")),
+                    reply("Done."),
+                ],
+                **{"A.": [reply("a")], "B.": [reply("b")], "C.": [reply("c")]},
+            )
+            coder = self.run_parent(llm, subagent_settings=dict(max_parallel=1))
+            self.assertEqual(llm.left(), {})
+            # One at a time, on the main thread
+            for name in ("A.", "B.", "C."):
+                self.assertEqual(llm.threads[name], {"MainThread"})
+            self.assertEqual([t.status for t in coder.session.tasks], ["done"] * 3)
+
+    def test_parallel_display(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(pretty=False, yes=True)
+            out = capture(io)
+            llm = PromptsLLM(
+                parent=[reply(None, task_call("Find A."), task_call("Find B.")), reply("Done.")],
+                **{
+                    "Find A.": [reply(None, call("glob", pattern="*.py")), reply("a")],
+                    "Find B.": [reply(None, call("grep", pattern="add")), reply("b")],
+                },
+            )
+            self.run_parent(llm, io=io)
+            lines = out.getvalue().splitlines()
+            # Labelled lines as they come, then each task's outcome in order
+            self.assertIn("     [explore: Find A] Glob(*.py)", lines)
+            self.assertIn('     [explore: Find B] Grep("add")', lines)
+            start = lines.index("● Task(Find A)")
+            self.assertEqual(lines[start + 2], "● Task(Find B)")
+            self.assertRegex(lines[start + 1], r"^  ⎿  Done \(1 tool use · ")
+            self.assertRegex(lines[start + 3], r"^  ⎿  Done \(1 tool use · ")
+
+    def test_parallel_board_in_a_terminal(self):
+        from loom.subagent_io import TaskBoard
+
+        io = InputOutput(pretty=True, yes=True)
+        capture(io, terminal=True)
+        board = TaskBoard(io, headers=True)
+
+        class Task(FakeTask):
+            def __init__(self, label, status):
+                self.label = label
+                self.description = label.split(": ")[1]
+                self.status = status
+
+        first = board.view(Task("explore: Find A", "running"))
+        board.view(Task("explore: Find B", "pending"))
+        for num in range(3):
+            first.tool_call("Read", f"a{num}.py")
+        self.assertEqual(
+            [t.plain for t in board.render().renderables],
+            [
+                "● Task(Find A)",
+                "  ⎿  Read(a2.py)",
+                "     … +2 more tool uses",
+                "● Task(Find B)",
+                "  ⎿  Waiting to start…",
+            ],
+        )
+        first.task.status = "done"
+        self.assertEqual(
+            [t.plain for t in board.render().renderables][:2],
+            ["● Task(Find A)", "  ⎿  Done (5 tool uses · 2k tokens · 3s)"],
+        )
+        printed = []
+        board.print = lambda text: printed.append(text.plain)
+        board.close()
+        self.assertEqual(printed[0], "● Task(Find A)")

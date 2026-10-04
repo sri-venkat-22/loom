@@ -638,6 +638,13 @@ def get_parser(default_config_files, git_root):
         help="Stop a sub-agent and have it report once it has spent this much (default: none)",
     )
     group.add_argument(
+        "--max-parallel-tasks",
+        type=int,
+        metavar="N",
+        default=4,
+        help="How many of the tasks the agent starts in one reply run at once (default: 4)",
+    )
+    group.add_argument(
         "--subagent-model",
         action="append",
         metavar="MODEL",

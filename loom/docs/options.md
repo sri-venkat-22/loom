@@ -54,7 +54,8 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--checkpoint-steps | --no-checkpoint-steps]
             [--web-tools | --no-web-tools] [--web-search]
             [--subagents | --no-subagents] [--subagent-max-steps]
-            [--subagent-budget] [--subagent-model]
+            [--subagent-budget] [--max-parallel-tasks]
+            [--subagent-model]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
@@ -578,6 +579,11 @@ Environment variable: `LOOM_SUBAGENT_MAX_STEPS`
 ### `--subagent-budget DOLLARS`
 Stop a sub-agent and have it report once it has spent this much (default: none)  
 Environment variable: `LOOM_SUBAGENT_BUDGET`  
+
+### `--max-parallel-tasks N`
+How many of the tasks the agent starts in one reply run at once (default: 4)  
+Default: 4  
+Environment variable: `LOOM_MAX_PARALLEL_TASKS`  
 
 ### `--subagent-model MODEL`
 A model the agent may run a task on, besides the main and weak models (can be used multiple times)  
