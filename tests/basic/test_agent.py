@@ -1115,6 +1115,25 @@ class TestPermissions(unittest.TestCase):
         self.assertEqual(canonical_path("A\\.GIT.\\Hooks"), "a/.git/hooks")
         self.assertEqual(canonical_path("dir\u0065\u0301/.Env"), "dir\u00e9/.env")
 
+    def test_protected_real_paths_count_from_the_project_root(self):
+        with IgnorantTemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / ".loom" / "worktrees" / "core"
+            perms = Permissions(InputOutput(yes=None), mode="accept-edits", root=root)
+            # A parallel builder's worktree is in .loom/worktrees/, which doesn't make its
+            # files protected
+            edit = action("edit", "src/core.py")
+            edit.path = root / "src" / "core.py"
+            self.assertEqual(perms.decide(edit), "allow")
+            # Its own .git and .loom files still are
+            edit = action("edit", "docs/x")
+            edit.path = root / ".loom" / "hooks.json"
+            self.assertEqual(perms.decide(edit), "ask")
+            # And so are ones outside it, like the project's own
+            edit = action("edit", "docs/x")
+            edit.path = base / ".loom" / "hooks.json"
+            self.assertEqual(perms.decide(edit), "ask")
+
     def test_write_file_to_a_case_variant_of_git_asks(self):
         with GitTemporaryDirectory():
             make_repo()

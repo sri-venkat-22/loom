@@ -981,7 +981,13 @@ class Orchestrator:
                 f"{len(failed)} of the {template.name} template's {plural(len(results), 'check')}"
                 " failed. They don't stop the project; the agents of the next phases see them."
             )
-        self.decide(phase, "check", describe_checks(phase, results), source=TEMPLATE_SOURCE)
+        # The phase's own title, not a step's, like Building's Integration
+        self.decide(
+            phase,
+            "check",
+            describe_checks(PHASES_BY_KEY[phase.key], results),
+            source=TEMPLATE_SOURCE,
+        )
         return results
 
     def checks_allowed(self, template):
