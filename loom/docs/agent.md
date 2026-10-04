@@ -333,12 +333,20 @@ The agent can look things up: `web_search` finds pages, and `web_fetch` reads on
 
 ```
 agent> what's the latest version of FastAPI and what changed?
-● WebSearch("FastAPI latest version release notes")
+● WebSearch("latest FastAPI version release 2026")
   ⎿  5 results
-● WebFetch(fastapi.tiangolo.com)
-Fetch https://fastapi.tiangolo.com/release-notes/? (Y)es/(N)o/(A)lways: always allow fastapi.tiangolo.com (saved to .loom.permissions.json)/(B)ypass permissions: stop asking for the rest of this session [Yes]: a
-  ⎿  Fetched 412 KB, condensed
-The latest release is 0.118.0 (from fastapi.tiangolo.com/release-notes): ...
+● WebFetch(github.com)
+Fetch https://github.com/fastapi/fastapi/releases? (Y)es/(N)o/(A)lways: always allow github.com (saved to .loom.permissions.json)/(B)ypass permissions: stop asking for the rest of this session [Yes]: a
+  ⎿  Fetched 492 KB, condensed
+● WebFetch(pypi.org)
+Fetch https://pypi.org/project/fastapi/? (Y)es/(N)o/(A)lways: always allow pypi.org (saved to .loom.permissions.json)/(B)ypass permissions: stop asking for the rest of this session [Yes]: a
+  ⎿  Fetched 473 KB, condensed
+The latest version is FastAPI 0.142.2, released September 30, 2026.
+What changed recently:
+ • 0.142.2 (Sep 30): Bug fix — startup now succeeds even if automatic OpenTelemetry configuration fails.
+ • 0.142.1 (Sep 29): Bug fix — fixed repeated endpoint wrapping in included routers.
+ • 0.142.0 (Sep 29): native OpenTelemetry support, plus docs and internal updates.
+Sources: GitHub releases and PyPI.
 ```
 
 ### Search backends
