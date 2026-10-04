@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { type PhaseDiff, type ReportFormat, api } from "../lib/api";
-import type { Decision, Metrics, PhaseTimeline, Timeline } from "../lib/protocol";
+import type { Decision, Deployment, Metrics, PhaseTimeline, Timeline } from "../lib/protocol";
 import { send } from "../lib/socket";
 import { useSession } from "../store/session";
 import { useUi } from "../store/ui";
@@ -204,6 +204,55 @@ function Bars({ phases, byCost }: { phases: PhaseTimeline[]; byCost: boolean }) 
   );
 }
 
+// Only web links, from what a deploy tool printed
+const safeUrl = (url: string | null) => (url && /^https?:\/\//.test(url) ? url : null);
+
+function Link({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="truncate font-mono text-[12px]">
+      {children}
+    </a>
+  );
+}
+
+// What /project ship did last
+function Shipped({ deployment }: { deployment: Deployment }) {
+  const url = safeUrl(deployment.url);
+  const pr = safeUrl(deployment.pr);
+  const release = safeUrl(deployment.release);
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-selected bg-card px-3 py-2 text-[12px]">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.07em] text-primary">
+          Shipped
+        </span>
+        {deployment.title && (
+          <span className="text-muted-foreground">
+            {deployment.title} · {deployment.app}
+            {deployment.region ? ` · ${deployment.region}` : ""}
+          </span>
+        )}
+        {deployment.healthy !== null && deployment.url && (
+          <span
+            title={deployment.smoke ?? undefined}
+            className={`ml-auto shrink-0 rounded px-1.5 py-px text-[11px] ${
+              deployment.healthy ? "bg-success/12 text-add" : "bg-destructive/12 text-del"
+            }`}
+          >
+            {deployment.healthy ? "healthy" : "smoke test failed"}
+          </span>
+        )}
+      </div>
+      {url && <Link href={url}>{url}</Link>}
+      {pr && <Link href={pr}>{pr}</Link>}
+      {release && <Link href={release}>{release}</Link>}
+      {deployment.rolled_back_to && (
+        <div className="text-warning">Rolled back to {deployment.rolled_back_to}</div>
+      )}
+    </div>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex min-w-0 flex-col rounded-lg bg-card px-2.5 py-1.5">
@@ -248,6 +297,7 @@ function Summary({ timeline }: { timeline: Timeline }) {
           <Stat label={totals.commits === 1 ? "commit" : "commits"} value={`${totals.commits}`} />
         </div>
       )}
+      {timeline.deployment && <Shipped deployment={timeline.deployment} />}
       <Bars phases={timeline.phases} byCost={byCost} />
       <Decisions decisions={timeline.decisions} label="project" />
     </div>

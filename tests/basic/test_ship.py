@@ -244,6 +244,14 @@ class TestShip(ShipTestCase):
             self.assertIn(f"deployed to Fly.io as `adder-app`, region iad, at {self.url}", doc)
             self.assertFalse(git.Repo(".").is_dirty())
 
+            from loom.project_report import ProjectReport
+
+            # /project ship ran on an orchestrator of its own
+            report = ProjectReport.from_orchestrator(Orchestrator(coder)).markdown()
+            self.assertIn(
+                f"- **Deployed:** {self.url} (Fly.io, adder-app; smoke test passed)", report
+            )
+
             decision = orchestrator.memory.decisions()[-1]
             self.assertEqual(decision["phase"], "launch")
             self.assertEqual(decision["source"], "founder")
