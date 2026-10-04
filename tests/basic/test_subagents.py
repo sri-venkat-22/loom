@@ -596,6 +596,71 @@ class TestTaskDisplay(HomeDirMixin, unittest.TestCase):
         board.close()
         self.assertEqual(printed[-1], "     Bash(pytest)")
 
+    def test_rendering_never_waits_for_the_board(self):
+        # rich's refresh thread calls render() holding Live's own lock, so render() taking
+        # the board's lock would deadlock with a thread holding it while refreshing
+        board, view, out = self.board(terminal=True)
+        view.tool_call("Read", "calc.py")
+        holding, release = threading.Event(), threading.Event()
+
+        def hold():
+            with board.lock:
+                holding.set()
+                release.wait(5)
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        holding.wait(5)
+        rendered = []
+        renderer = threading.Thread(target=lambda: rendered.append(board.render()), daemon=True)
+        renderer.start()
+        renderer.join(2)
+        release.set()
+        self.assertTrue(rendered, "render() waited for the board's lock")
+        board.close()
+
+    def test_live_board_survives_threads_and_questions(self):
+        from loom.subagent_io import TaskBoard
+
+        io = InputOutput(pretty=True, yes=True)
+        capture(io, terminal=True)
+
+        class Task(FakeTask):
+            def __init__(self, label):
+                self.label = label
+                self.description = label.split(": ")[1]
+
+        with patch.object(TaskBoard, "REFRESH_PER_SECOND", 200):
+            board = TaskBoard(io, headers=True)
+            views = [board.view(Task(f"explore: Find {name}")) for name in "AB"]
+            stop = threading.Event()
+
+            def work(view):
+                num = 0
+                while not stop.is_set():
+                    view.tool_call("Read", f"file{num}.py")
+                    view.note("The API provider has rate limited you.", level="warning")
+                    num += 1
+
+            threads = [threading.Thread(target=work, args=(v,), daemon=True) for v in views]
+            for thread in threads:
+                thread.start()
+
+            def questions():
+                for _ in range(30):
+                    with board.asking(views[0]):
+                        pass
+                board.close()
+
+            main = threading.Thread(target=questions, daemon=True)
+            main.start()
+            main.join(20)
+            stop.set()
+            for thread in threads:
+                thread.join(5)
+            self.assertFalse(main.is_alive(), "the board deadlocked")
+            self.assertIsNone(board.live)
+
     def test_verbose_prints_every_line_in_a_terminal(self):
         board, view, out = self.board(terminal=True, verbose=True)
         self.assertFalse(board.rolling)

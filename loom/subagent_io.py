@@ -74,15 +74,25 @@ class TaskBoard:
     --verbose, or when the output isn't a terminal, every line is printed as it comes,
     labelled with its task when several run."""
 
+    # How often rich redraws the rolling lines
+    REFRESH_PER_SECOND = 8
+
     def __init__(self, io, verbose=False, headers=False):
         self.io = io
         self.headers = headers
         self.rolling = not verbose and live_ok(io)
         self.views = []
         self.live = None
+        # Guards the board's state. Never held while calling into rich's Live, whose
+        # refresh thread calls render() holding Live's own lock: holding both the other
+        # way round would deadlock
         self.lock = threading.RLock()
+        # Starts, refreshes and stops the Live one at a time
+        self.live_lock = threading.Lock()
         # While a question is on the screen, lines wait here
         self.held = None
+        # The tasks are done: nothing more is redrawn
+        self.closed = False
 
     def view(self, task):
         """The part of the board for task."""
@@ -98,59 +108,73 @@ class TaskBoard:
         """Show what changed: redraw the rolling lines."""
         if not self.rolling:
             return
-        with self.lock:
-            if self.held is not None:
-                return
-            if self.live is None:
-                self.live = Live(
-                    console=self.io.console,
-                    get_renderable=self.render,
-                    refresh_per_second=8,
-                    transient=True,
-                )
-                self.live.start()
+        with self.live_lock:
+            with self.lock:
+                if self.held is not None or self.closed:
+                    return
+                live = self.live
+                if live is None:
+                    live = self.live = Live(
+                        console=self.io.console,
+                        get_renderable=self.render,
+                        refresh_per_second=self.REFRESH_PER_SECOND,
+                        transient=True,
+                    )
+                    started = False
+                else:
+                    started = True
+            if started:
+                live.refresh()
             else:
-                self.live.refresh()
+                live.start()
 
     def render(self):
-        with self.lock:
-            return Group(*[line for view in self.views for line in view.block()])
+        # Called on rich's refresh thread: no locks, just what the lists hold now
+        return Group(*[line for view in list(self.views) for line in view.block()])
+
+    def stop_live(self):
+        """Stop redrawing. Returns whether it was."""
+        with self.live_lock:
+            with self.lock:
+                live, self.live = self.live, None
+            if live is None:
+                return False
+            live.stop()
+            return True
 
     def pause(self):
         """Before a question about one task: stop redrawing, and leave its lines on the
         screen."""
+        if not self.stop_live():
+            return
         with self.lock:
-            if self.live is None:
-                return
-            self.live.stop()
-            self.live = None
+            lines = []
             for view in self.views:
-                for line in view.block():
-                    self.print(line)
+                lines += view.block()
                 view.printed = len(view.lines)
+        for line in lines:
+            self.print(line)
 
     def hold(self, view=None):
         """Before a question while several tasks run: clear the board, show the Task line
         and latest line of view, the task asking, and keep new lines off the screen until
         release."""
         with self.lock:
-            if self.live is not None:
-                self.live.stop()
-                self.live = None
-            if view is not None:
-                self.print(view.header())
-                if view.lines:
-                    self.print(view.prefixed(view.lines[-1][0], True))
             if self.held is None:
                 self.held = []
+        self.stop_live()
+        if view is not None:
+            self.show(view.header())
+            if view.lines:
+                self.show(view.prefixed(view.lines[-1][0], True))
 
     def release(self):
         """After the question: show what came meanwhile."""
         with self.lock:
             held, self.held = self.held or [], None
-            for text in held:
-                self.print(text)
-            self.update()
+        for text in held:
+            self.print(text)
+        self.update()
 
     @contextlib.contextmanager
     def asking(self, view):
@@ -169,23 +193,27 @@ class TaskBoard:
         """The tasks are done: leave their final lines on the screen."""
         with self.lock:
             self.held = None
-            if self.headers:
-                if self.live is not None:
-                    self.live.stop()
-                    self.live = None
-                for view in self.views:
-                    for line in view.final_block():
-                        self.print(line)
-            else:
-                self.pause()
+            self.closed = True
+        if not self.headers:
+            self.pause()
+            return
+        self.stop_live()
+        with self.lock:
+            lines = [line for view in self.views for line in view.final_block()]
+        for line in lines:
+            self.print(line)
 
     def print(self, text):
+        """Print a line for good, or keep it for later while a question is on the screen."""
         with self.lock:
             if self.held is not None:
                 self.held.append(text)
                 return
-            self.io.append_chat_history(text.plain, linebreak=True, blockquote=True)
-            self.io._print_text(text, no_wrap=True, overflow="ellipsis")
+        self.show(text)
+
+    def show(self, text):
+        self.io.append_chat_history(text.plain, linebreak=True, blockquote=True)
+        self.io._print_text(text, no_wrap=True, overflow="ellipsis")
 
 
 class TaskView:
@@ -232,15 +260,16 @@ class TaskView:
         board = self.board
         with board.lock:
             self.lines.append((text, call))
-            if board.rolling:
-                board.update()
-            elif board.headers:
-                label = Text(f"{PREFIX}[{self.task.label}] ", style=board.style("dim"))
-                board.print(label + text)
-            else:
-                board.print(self.prefixed(text, len(self.lines) == 1))
+            first = len(self.lines) == 1
             if not board.rolling:
                 self.printed = len(self.lines)
+        if board.rolling:
+            board.update()
+        elif board.headers:
+            label = Text(f"{PREFIX}[{self.task.label}] ", style=board.style("dim"))
+            board.print(label + text)
+        else:
+            board.print(self.prefixed(text, first))
 
     def changed(self):
         """The task started or finished."""
@@ -248,20 +277,22 @@ class TaskView:
 
     def block(self):
         """The lines to show while it runs: its Task line when several tasks run, its
-        latest few lines, how many tool calls are hidden, and its outcome once done."""
+        latest few lines, how many tool calls are hidden, and its outcome once done.
+        rich's refresh thread calls it too, so it reads the lines once."""
         res = [self.header()] if self.board.headers else []
         status = self.task.status
         if self.board.headers and status not in ("pending", "running"):
             return res + [self.outcome()]
-        start = max(self.printed, len(self.lines) - self.window)
-        hidden = sum(1 for _, call in self.lines[self.printed : start] if call)
+        lines, printed = list(self.lines), self.printed
+        start = max(printed, len(lines) - self.window)
+        hidden = sum(1 for _, call in lines[printed:start] if call)
         res += [
-            self.prefixed(text, index == start and self.printed == 0)
-            for index, (text, _) in enumerate(self.lines[start:], start)
+            self.prefixed(text, index == start and printed == 0)
+            for index, (text, _) in enumerate(lines[start:], start)
         ]
         if hidden:
             res.append(more_line(hidden, self.board.style("dim")))
-        if self.board.headers and not self.lines:
+        if self.board.headers and not lines:
             waiting = "Waiting to start…" if status == "pending" else "Starting…"
             res.append(self.prefixed(Text(waiting, style=self.board.style("dim")), True))
         return res
