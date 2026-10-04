@@ -33,6 +33,7 @@ from rich.color import ColorParseError
 from rich.columns import Columns
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.style import Style as RichStyle
 from rich.text import Text
 
@@ -1152,7 +1153,14 @@ class InputOutput:
     @pause_esc
     @restore_multiline
     def choice_ask(
-        self, question, choices, default=None, yes_choice=None, no_choice=None, checkpoint=None
+        self,
+        question,
+        choices,
+        default=None,
+        yes_choice=None,
+        no_choice=None,
+        checkpoint=None,
+        plan=None,
     ):
         """Ask the user to pick one of choices, like ["approve", "edit", "reject"], whose
         first letters must differ. Any prefix of a choice picks it, and Enter picks default
@@ -1160,9 +1168,12 @@ class InputOutput:
         None), and with --no it's no_choice (the last choice if None).
 
         checkpoint describes the project phase being reviewed, when the question is a
-        /project checkpoint, for UIs that show those differently."""
+        /project checkpoint, for UIs that show those differently. plan is {text, path} when
+        the question is whether to approve the agent's plan, which is shown first."""
         default = default or choices[0]
         self.num_user_asks += 1
+        if plan:
+            self.print_plan(plan["text"], plan.get("path"))
         self.ring_bell()
         question = sanitize_for_display(question, show_escapes=True)
         options = "/".join(f"({choice[0].upper()}){choice[1:]}" for choice in choices)
@@ -1197,6 +1208,38 @@ class InputOutput:
         if self.yes in (True, False):
             self.tool_output(hist)
         return res
+
+    def print_plan(self, text, path=None):
+        """Show a plan the agent presents, as rendered markdown in a box."""
+        text = sanitize_for_display(text)
+        for line in text.splitlines():
+            self.append_chat_history(line, linebreak=True, blockquote=True, strip=False)
+        title = f"Plan · {path}" if path else "Plan"
+        body = Markdown(text, code_theme=self.code_theme) if self.pretty else Text(text)
+        panel = Panel(
+            body,
+            title=title,
+            title_align="left",
+            border_style="cyan" if self.pretty else "none",
+            padding=(0, 1),
+        )
+        try:
+            self.console.print(panel)
+        except UnicodeEncodeError:
+            self.console.print(text.encode("ascii", errors="replace").decode("ascii"))
+
+    def plan_output(self, text, path=None):
+        """Show a plan the agent presents without asking about it, like when it's approved
+        automatically or can't be approved here."""
+        self.print_plan(text, path)
+
+    def plan_feedback_ask(self):
+        """After "keep planning": what the user wants changed in the plan, or ""."""
+        return self.prompt_ask("What should change in the plan? (Enter to stop and say it later):")
+
+    def permission_mode_changed(self, mode):
+        """The agent's permission mode changed, like when a plan is approved. The terminal
+        shows the mode at the next prompt."""
 
     def diff_output(self, diff, indent=""):
         """Show a unified diff with line numbers, removed lines in red and added lines in

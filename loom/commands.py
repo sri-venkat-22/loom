@@ -1405,6 +1405,47 @@ class Commands:
 
         self.io.tool_error(f"Use /permissions {'|'.join(MODES)} or /permissions allow RULE")
 
+    def completions_plan(self):
+        return ["show"]
+
+    def cmd_plan(self, args):
+        "Switch to plan mode, where the agent investigates and presents a plan for you to approve, and send REQUEST if given: /plan [REQUEST], /plan show"  # noqa
+        if args.strip() == "show":
+            self.show_plan()
+            return
+
+        permissions = self.coder.permissions
+        if permissions.mode != "plan":
+            permissions.mode = "plan"
+        self.io.tool_output(f"Permission mode: {permissions.describe()}")
+        if permissions.approves_plans():
+            self.io.tool_output(
+                "You were in bypass mode, so the plan is approved without asking and loom goes"
+                " back to bypass."
+            )
+
+        request = args.strip()
+        if self.coder.edit_format != "agent":
+            # Only the agent plans; the other chat modes don't ask Permissions
+            return self._generic_chat_command(request, "agent")
+        return request or None
+
+    def show_plan(self):
+        from loom.plans import read_plan
+
+        rel_path = self.coder.session.plan
+        if not rel_path:
+            self.io.tool_output(
+                "No plan has been approved in this conversation. Use /plan REQUEST to make one."
+            )
+            return
+        try:
+            text = read_plan(Path(self.coder.root) / rel_path)
+        except OSError as err:
+            self.io.tool_error(f"Unable to read the plan {rel_path}: {err}")
+            return
+        self.io.plan_output(text, rel_path)
+
     def completions_mcp(self):
         names = list(self.coder.mcp.servers) if self.coder.mcp else []
         return ["tools", "connect"] + names

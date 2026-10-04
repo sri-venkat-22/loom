@@ -65,7 +65,7 @@ class ToolError(Exception):
 class Action:
     """Something a tool is about to do, for Permissions to decide on."""
 
-    kind: str  # "read", "edit", "bash", "todo", "mcp" or "memory"
+    kind: str  # "read", "edit", "bash", "todo", "mcp", "memory" or "plan"
     target: str  # what allow rules match: a path (relative if inside the project) or a command
     inside: bool  # the target is inside the project
     title: str  # a short description, like "Edit loom/io.py"
@@ -864,6 +864,25 @@ def record_decision(coder, decision, reason=""):
     return action
 
 
+# Presenting a plan, in plan mode (loom/plans.py)
+
+
+def exit_plan_mode(coder, plan):
+    from loom.plans import plan_title
+
+    if not plan.strip():
+        raise ToolError("plan is empty: write the whole plan, in markdown")
+
+    def run():
+        return coder.present_plan(plan, action)
+
+    title = " ".join(plan_title(plan).split())
+    if len(title) > 60:
+        title = title[:59] + "…"
+    action = Action("plan", "plan", True, "Present the plan", run, name="Plan", detail=title)
+    return action
+
+
 def tool(name, prepare, description, properties, required):
     return dict(
         name=name,
@@ -1066,7 +1085,34 @@ PROJECT_TOOLS = {
     ]
 }
 
-ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS}
+# Only offered in plan mode
+PLAN_TOOLS = {
+    t["name"]: t
+    for t in [
+        tool(
+            "exit_plan_mode",
+            exit_plan_mode,
+            (
+                "Present your plan to the user for approval and leave plan mode. Call it once"
+                " you have investigated and know exactly what to change. The user approves the"
+                " plan (then you carry it out), edits it, or asks you to keep planning. Never"
+                " call it for a question that needs no changes: just answer."
+            ),
+            dict(
+                plan=dict(
+                    type="string",
+                    description=(
+                        "The plan, in markdown: the files to change and what to change in each,"
+                        " the steps in order, risks or open questions, and how to verify it."
+                    ),
+                )
+            ),
+            ["plan"],
+        ),
+    ]
+}
+
+ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS, **PLAN_TOOLS}
 
 
 def schemas():
@@ -1075,6 +1121,10 @@ def schemas():
 
 def project_schemas():
     return [t["schema"] for t in PROJECT_TOOLS.values()]
+
+
+def plan_schemas():
+    return [t["schema"] for t in PLAN_TOOLS.values()]
 
 
 DISPLAY_NAMES = dict(
@@ -1088,7 +1138,16 @@ DISPLAY_NAMES = dict(
     todo_write="Update Todos",
     recall="Recall",
     record_decision="Record Decision",
+    exit_plan_mode="Plan",
 )
+
+# What hooks call the tools whose names differ in Claude Code, so hooks written for it work
+HOOK_NAMES = dict(exit_plan_mode="ExitPlanMode")
+
+
+def hook_name(name):
+    """The tool name a hook sees, like ExitPlanMode for exit_plan_mode."""
+    return HOOK_NAMES.get(name, name)
 
 
 def display_name(name):
@@ -1177,6 +1236,13 @@ def prepare(coder, name, args):
     if not isinstance(args, dict):
         raise ToolError("arguments must be a JSON object")
     if name in TOOLS or (name in PROJECT_TOOLS and getattr(coder, "shared_memory", None)):
+        return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
+    if name in PLAN_TOOLS:
+        permissions = getattr(coder, "permissions", None)
+        if not permissions or permissions.mode != "plan":
+            raise ToolError(
+                "loom isn't in plan mode, so there's no plan to approve: carry on with the request."
+            )
         return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
 
     mcp = getattr(coder, "mcp", None)

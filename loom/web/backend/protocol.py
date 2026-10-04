@@ -37,14 +37,16 @@ Server to browser:
                  A unified diff, on tool_id's card if it has one. kind is add, del, ctx,
                  gap (between hunks) or note; old and new are line numbers or null.
   ask            {ask_id, kind, question, choices: [{value, label}], default, subject,
-                  tool_id, checkpoint}
-                 loom waits for an answer. kind is confirm, permission, choice, checkpoint
-                 or prompt; a prompt's answer is free text and default prefills it.
-                 subject is what it's about, like a command, and tool_id the card it
-                 belongs on. A checkpoint reviews a /project phase, and checkpoint is
-                 {phase, title, document, document_title, verdict, next, next_title}.
-                 An edit asks for the new text of the document at subject, whose text is
-                 default.
+                  tool_id, checkpoint, plan}
+                 loom waits for an answer. kind is confirm, permission, choice, checkpoint,
+                 plan, prompt or edit; a prompt's answer is free text and default
+                 prefills it. subject is what it's about, like a command, and tool_id the
+                 card it belongs on. A checkpoint reviews a /project phase, and checkpoint
+                 is {phase, title, document, document_title, verdict, next, next_title}.
+                 A plan approves the plan the agent made in plan mode, plan is {text,
+                 path} (the markdown and where it's saved), and a "keep planning" answer
+                 may carry the user's feedback on the lines after it. An edit asks for
+                 the new text of the document at subject, whose text is default.
   ask_resolved   {ask_id, value}            The question was answered.
   terminal       {text, start}              Output of a command like /run, for the side
                                             pane's terminal; start begins a new command.
@@ -121,7 +123,7 @@ CLIENT_EVENTS = (
 )
 
 LEVELS = ("info", "warning", "error")
-ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "prompt", "edit")
+ASK_KINDS = ("confirm", "permission", "choice", "checkpoint", "plan", "prompt", "edit")
 PHASE_STATUSES = ("pending", "running", "review", "approved")
 TURN_STATUSES = ("done", "cancelled")
 TOOL_STATUSES = ("done", "failed")

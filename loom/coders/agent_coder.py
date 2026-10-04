@@ -2,8 +2,9 @@ import json
 import re
 import time
 
-from loom import prompts
+from loom import plans, prompts
 from loom import tools as agent_tools
+from loom.editor import pipe_editor
 from loom.tools import ToolError
 from loom.utils import format_tokens
 from loom.waiting import WaitingSpinner
@@ -92,11 +93,20 @@ class AgentCoder(Coder):
     # The error, when the provider rejected the tools
     tools_error = None
     nudged_text_tool_call = False
+    # The plan the user approved for the current request, which the system prompt carries
+    # until the request is done, and its file
+    active_plan = None
+    active_plan_path = None
+    # Set for loom --message: nothing can approve a plan, so it's shown and the agent stops
+    one_shot = False
 
     @property
     def tools(self):
-        """The built-in tools, then those of the connected MCP servers."""
+        """The built-in tools, exit_plan_mode in plan mode, then those of the connected MCP
+        servers."""
         res = agent_tools.schemas()
+        if self.permissions.mode == "plan":
+            res += agent_tools.plan_schemas()
         if self.mcp:
             res += self.mcp.tool_schemas()
         return res
@@ -146,6 +156,10 @@ class AgentCoder(Coder):
             extra.append(self.mcp.instructions())
         if self.permissions.mode == "plan":
             extra.append(self.gpt_prompts.plan_mode_prompt)
+        elif self.active_plan:
+            # Here, compacting the conversation can't lose it
+            plan = plans.brief(self.active_plan, self.active_plan_path)
+            extra.append(self.gpt_prompts.approved_plan_prompt.format(plan=plan))
         return extra
 
     def format_chat_chunks(self):
@@ -357,7 +371,7 @@ class AgentCoder(Coder):
 
         hook_allowed = self.preapproved(action)
         if self.hooks:
-            hook = self.hooks.run("PreToolUse", self, name, args, action)
+            hook = self.hooks.run("PreToolUse", self, agent_tools.hook_name(name), args, action)
             if hook.decision == "block":
                 reason = hook.message.strip().split("\n", 1)[0]
                 self.io.tool_result(f"Blocked by a hook: {reason}", error=True)
@@ -403,7 +417,9 @@ class AgentCoder(Coder):
         self.show_tool_result(action, result, diff_shown=asked)
 
         if self.hooks:
-            hook = self.hooks.run("PostToolUse", self, name, args, action, result)
+            hook = self.hooks.run(
+                "PostToolUse", self, agent_tools.hook_name(name), args, action, result
+            )
             if hook.message:
                 self.show_hook_feedback(hook.message)
                 result += f"\n\nThe user's PostToolUse hook says:\n{hook.message}"
@@ -438,6 +454,8 @@ class AgentCoder(Coder):
             self.show_command_output(result)
         elif action.kind == "todo":
             self.io.todo_output(self.todos)
+        elif action.kind == "plan":
+            self.io.tool_result(action.summary, error=action.extra.get("error", False))
         elif action.kind == "mcp":
             lines = result.splitlines() or ["(no output)"]
             if len(lines) > MCP_PREVIEW_LINES:
@@ -496,8 +514,115 @@ class AgentCoder(Coder):
             styles.append(self.io.tool_error_color or "red")
         self.io.tool_result(lines or ["(no output)"], styles=styles)
 
+    # Plan mode: presenting the plan (loom/plans.py)
+
+    def present_plan(self, text, action):
+        """The exit_plan_mode tool: save the plan, show it and ask the user to approve it,
+        edit it or keep planning. Returns the tool's result for the model."""
+        try:
+            path = plans.save_plan(self.root, text)
+        except OSError as err:
+            path = None
+            self.io.tool_warning(f"Unable to save the plan: {err}")
+        shown = plans.rel_path(self.root, path) if path else None
+
+        if self.permissions.approves_plans():
+            # The session was in bypass mode before plan mode
+            self.io.plan_output(text, shown)
+            return self.approve_plan(text, path, "bypass", action, how="automatically (bypass)")
+
+        if self.one_shot or self.io.yes is not None:
+            self.io.plan_output(text, shown)
+            return self.leave_plan_unapproved(shown, action)
+
+        edited = False
+        while True:
+            answer = self.io.choice_ask(
+                "Approve this plan?",
+                plans.CHOICES,
+                default=plans.APPROVE_ASK,
+                plan=dict(text=text, path=shown),
+            )
+            if answer in plans.APPROVED_MODES:
+                mode = plans.APPROVED_MODES[answer]
+                return self.approve_plan(text, path, mode, action, edited=edited)
+            if answer == plans.KEEP_PLANNING:
+                return self.keep_planning(self.io.plan_feedback_ask().strip(), action)
+
+            new_text = self.edit_plan(text, shown)
+            if new_text.strip() and new_text.strip() != text.strip():
+                text = new_text
+                edited = True
+                if path:
+                    plans.save_plan(self.root, text, path)
+                self.io.tool_output("Saved your edit of the plan.")
+            else:
+                self.io.tool_output("The plan is unchanged.")
+
+    def edit_plan(self, text, shown):
+        """Let the user edit the plan, in the web UI's editor or the terminal's."""
+        if self.io.edit_document:
+            return self.io.edit_document(text, shown or "plan.md")
+        commands = getattr(self, "commands", None)
+        return pipe_editor(text, suffix=".md", editor=getattr(commands, "editor", None))
+
+    def approve_plan(self, text, path, mode, action, edited=False, how=""):
+        self.permissions.mode = mode
+        self.active_plan = text
+        self.active_plan_path = plans.rel_path(self.root, path) if path else None
+        if self.active_plan_path:
+            self.session.plan = self.active_plan_path
+        described = {
+            "accept-edits": "edits are applied without asking",
+            "ask": "each edit and command asks the user first",
+            "bypass": "everything runs without asking",
+        }[mode]
+        action.summary = "Approved" + (f" {how}" if how else "") + f" · {mode} mode"
+        result = (
+            f"The user approved your plan{' after editing it' if edited else ''}. loom left"
+            f" plan mode and is now in {mode} mode: {described}. Carry out the plan now. Start"
+            " by writing a to-do list with todo_write from its steps, then work through it,"
+            " and verify the result as the plan says."
+        )
+        if edited:
+            result += f"\n\nThe approved plan, as the user edited it:\n\n{text.strip()}"
+        return result
+
+    def keep_planning(self, feedback, action):
+        if feedback:
+            action.summary = "Keep planning: " + " ".join(feedback.split())
+            return (
+                "The user didn't approve the plan yet; loom is still in plan mode. Their"
+                f" feedback:\n\n{feedback}\n\nRevise the plan to address it, investigating"
+                " more if you need to, then call exit_plan_mode again with the whole new plan."
+            )
+        action.summary = "Keep planning"
+        self.stop_requested = True
+        return (
+            "The user didn't approve the plan and wants to keep planning; loom is still in plan"
+            " mode. Stop here and wait for them to say what to change."
+        )
+
+    def leave_plan_unapproved(self, shown, action):
+        """Nobody can approve the plan here, like with --yes-always or --message: stop."""
+        action.summary = "Not approved: --yes-always and --message don't approve plans"
+        action.extra["error"] = True
+        self.stop_requested = True
+        where = f" It's saved in {shown}." if shown else ""
+        self.io.tool_output(
+            f"The plan needs your approval.{where} To carry it out, switch modes with"
+            " /permissions accept-edits (or start loom with --permission-mode accept-edits) and"
+            " ask the agent to go ahead."
+        )
+        return (
+            "The plan was shown to the user, but loom is running non-interactively, so nobody"
+            " can approve it and loom stays in plan mode. Stop here: don't make changes."
+        )
+
     def finish_request(self, inp):
         """Commit the request's edits and move its messages into the chat history."""
+        self.active_plan = None
+        self.active_plan_path = None
         edited = sorted(self.agent_edited)
         if edited:
             self.loom_edited_files.update(edited)

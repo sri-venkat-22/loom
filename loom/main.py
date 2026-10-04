@@ -1388,6 +1388,10 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.load:
         commands.cmd_load(args.load)
 
+    if args.message or args.message_file:
+        # Nothing can approve a plan made in plan mode: it's shown, and loom exits
+        coder.one_shot = True
+
     if args.message:
         io.add_to_input_history(args.message)
         io.tool_output()

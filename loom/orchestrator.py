@@ -524,8 +524,13 @@ class Orchestrator:
             return False
         if self.coder.permissions.mode == "plan":
             self.io.tool_error(
-                "Phase agents write documents and code, which plan mode refuses. Switch with"
-                " /permissions ask (or accept-edits) first."
+                "/project can't run in plan mode: its phase agents write documents and code,"
+                " which plan mode refuses."
+            )
+            self.io.tool_output(
+                "Leave plan mode with /permissions ask (or /permissions accept-edits, or"
+                " Shift-Tab at the prompt), then run the project again. /permissions shows the"
+                " current mode."
             )
             return False
         if not self.coder.main_model.info.get("supports_function_calling"):

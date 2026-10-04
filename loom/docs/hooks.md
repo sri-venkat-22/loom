@@ -52,8 +52,10 @@ optional, and an entry can give a `command` directly instead of a list of `hooks
   feedback about the result.
 - **`matcher`** is a regular expression that must match the whole tool name, ignoring
   case: `bash`, `edit_file`, `write_file`, `read_file`, `list_dir`, `glob`, `grep`,
-  `todo_write` or `mcp__<server>__<tool>` for [MCP tools](mcp.md). Leave it out, or use
-  `""` or `"*"`, to match every tool.
+  `todo_write`, `ExitPlanMode` or `mcp__<server>__<tool>` for [MCP tools](mcp.md). Leave
+  it out, or use `""` or `"*"`, to match every tool. Tools Claude Code has under another
+  name get its name, so hooks written for it work: `exit_plan_mode` is `ExitPlanMode` in
+  `tool_name` (a matcher with either name matches it).
 - **`timeout`** is in seconds, 60 by default. A hook that takes longer is stopped, and
   loom warns and carries on.
 
