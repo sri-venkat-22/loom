@@ -7,6 +7,7 @@ import { ActionButton } from "./Buttons";
 import { CheckpointCard } from "./CheckpointCard";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
+import { PlanCard } from "./PlanCard";
 import { ToolCard } from "./ToolCard";
 
 type Of<K extends Entry["kind"]> = Extract<Entry, { kind: K }>;
@@ -189,6 +190,7 @@ export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
       );
     case "ask":
       if (entry.ask.kind === "checkpoint") return <CheckpointCard entry={entry} />;
+      if (entry.ask.kind === "plan") return <PlanCard entry={entry} />;
       if (entry.ask.kind === "edit") return <EditMessage entry={entry} />;
       return <AskMessage entry={entry} />;
   }

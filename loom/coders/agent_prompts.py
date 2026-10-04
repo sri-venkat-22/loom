@@ -31,9 +31,19 @@ Environment:
 {platform}{final_reminders}"""
 
     plan_mode_prompt = """# Plan mode
-The user has put loom in plan mode. Only the read-only tools (read_file, list_dir, glob, grep) work; edits and shell commands are refused.
-Investigate the code, then reply with a concrete plan: which files to change, what to change in each, and how to verify it.
-Don't try to make the changes. The user will switch modes when they want you to carry out the plan.
+The user has put loom in plan mode, to agree on a plan before anything changes. Only the read-only tools (read_file, list_dir, glob, grep) work; edits and shell commands are refused, so don't try to make changes.
+1. Investigate with the read-only tools until you understand the code involved and know exactly what to change.
+2. Then call exit_plan_mode with a concrete plan in markdown: a title, the files to change and what to change in each, the steps in order, risks or open questions, and how to verify the result (the tests to run or add). Keep it specific to this code, not generic advice.
+3. The user approves the plan, edits it or asks you to keep planning. Once it's approved, loom leaves plan mode and you carry it out in the same request.
+If the user only asked a question or wants an explanation, just answer it in your reply: never call exit_plan_mode for something that needs no changes.
+"""
+
+    approved_plan_prompt = """# The approved plan
+The user approved this plan for the current request. Carry it out, keeping your to-do list in step with it. If part of it turns out to be wrong, say so and adapt instead of forcing it.
+
+<plan>
+{plan}
+</plan>
 """
 
     text_tool_call = """You wrote a tool call as text in your reply, so it didn't run. Make tool calls with the tool-calling API, not in your reply's text. Carry on with the task."""

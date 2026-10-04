@@ -43,6 +43,12 @@ line you can open.
   edits like it, and `b` stops loom asking for the rest of the session. A command waiting
   for approval shows on its card the same way, with **Allow** and **Deny**.
 - **Questions** loom asks show inline, with a key for each answer.
+- **Plans** the agent presents in [plan mode](agent.md#plan-mode) show as a card with the
+  plan rendered: **Approve** (`y`) carries it out asking before each edit, **Approve and
+  auto-accept edits** (`a`) without asking, **Edit** (`e`) opens it in the side pane's
+  editor, and **Keep planning** (`k`) sends what you typed in the box next to it to the
+  agent, which plans again. The permission mode under the input switches as soon as you
+  approve.
 - **Esc**, or the stop button, stops loom's current work, like in the terminal.
 
 Under the input:

@@ -5,6 +5,9 @@ Modes:
 - ask: reads inside the project run freely; edits and shell commands ask first.
 - accept-edits: edits inside the project also run freely; shell commands still ask.
 - plan: read-only. Edits and shell commands are refused, so the agent can only plan.
+  It presents its plan with the exit_plan_mode tool, and approving the plan switches to
+  accept-edits or ask (see loom/plans.py). If the session was in bypass mode before plan
+  mode, the plan is approved without asking and the session goes back to bypass.
 - bypass: everything runs without asking, protected files and loom's other questions
   included. Answering (B)ypass to any approval question turns it on for the session.
 
@@ -51,7 +54,7 @@ MCP_READONLY_FILE = "mcp-readonly.json"
 MODES = {
     "ask": "edits and shell commands need approval",
     "accept-edits": "edits are applied without asking, shell commands need approval",
-    "plan": "read-only, edits and shell commands are refused",
+    "plan": "read-only: the agent investigates and presents a plan for you to approve",
     "bypass": "everything runs without asking",
 }
 
@@ -296,6 +299,9 @@ def exact_rule(kind, target):
 
 
 class Permissions:
+    # The mode before plan mode was turned on
+    mode_before_plan = None
+
     def __init__(
         self, io, mode="ask", allow=None, settings_file=None, project_allow=None, root=None
     ):
@@ -327,9 +333,17 @@ class Permissions:
 
     @mode.setter
     def mode(self, mode):
+        old = getattr(self, "_mode", None)
+        if mode == "plan" and old != "plan":
+            # Where approving a plan goes back to, when that was bypass
+            self.mode_before_plan = old
         self._mode = mode
         # In bypass mode loom's other yes/no questions don't ask either
         self.io.bypass_permissions = mode == "bypass"
+        if old is not None and old != mode:
+            changed = getattr(self.io, "permission_mode_changed", None)
+            if changed:
+                changed(mode)
 
     def copy_for(self, io, root=None):
         """The same permissions for another io, like a parallel builder's working in root:
@@ -466,8 +480,9 @@ class Permissions:
     def decide(self, action, hook_allowed=False):
         """Returns "allow", "ask" or "deny" for an action, without asking anyone.
         hook_allowed means a PreToolUse hook approved it, which works like an allow rule."""
-        if action.kind in ("todo", "memory") or self.mode == "bypass":
-            # Only loom's own to-do list or project memory, or the user said to stop asking
+        if action.kind in ("todo", "memory", "plan") or self.mode == "bypass":
+            # Only loom's own to-do list, project memory or a plan the user is asked to
+            # approve, or the user said to stop asking
             return "allow"
         if action.kind == "read":
             if action.inside or hook_allowed or self.is_allowed(action):
@@ -595,6 +610,10 @@ class Permissions:
             index = CYCLED_MODES.index(self.mode)
             self.mode = CYCLED_MODES[(index + 1) % len(CYCLED_MODES)]
         return self.mode
+
+    def approves_plans(self):
+        """Whether a plan is approved without asking: plan mode was entered from bypass."""
+        return self.mode == "plan" and self.mode_before_plan == "bypass"
 
     def describe(self):
         return f"{self.mode} ({MODES[self.mode]})"

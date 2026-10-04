@@ -91,7 +91,7 @@ class WebPrompt:
             default = default or ""
         else:
             default = ask.get("default", "")
-        return self.io.web.ask(
+        value = self.io.web.ask(
             ask["kind"],
             ask["question"],
             ask["choices"],
@@ -99,7 +99,13 @@ class WebPrompt:
             subject=ask.get("subject"),
             tool_id=self.io.tool_id,
             checkpoint=ask.get("checkpoint"),
+            plan=ask.get("plan"),
         )
+        if ask["kind"] == "plan" and value:
+            # "keep planning" can carry the user's feedback on the lines after it
+            value, _, feedback = value.partition("\n")
+            self.io.plan_feedback = feedback.strip()
+        return value
 
 
 def plain(message):
@@ -199,6 +205,8 @@ class WebIO(InputOutput):
         self.run_output = None
         # The current card already ended, like a finished /run's
         self.tool_closed = False
+        # What the user wrote on the plan card with "keep planning"
+        self.plan_feedback = ""
 
     def for_worker(self, worker):
         """A copy of this io for a parallel builder (loom/workers.py): its own tool cards,
@@ -343,6 +351,11 @@ class WebIO(InputOutput):
         self.web.update(permission_mode=mode)
         return True
 
+    def permission_mode_changed(self, mode):
+        # Like approving a plan: the mode pill shows it right away, not at the next prompt
+        if getattr(self, "web", None):
+            self.web.update(permission_mode=mode)
+
     def current_branch(self):
         if not self.git:
             return None
@@ -453,12 +466,23 @@ class WebIO(InputOutput):
             )
 
     def choice_ask(
-        self, question, choices, default=None, yes_choice=None, no_choice=None, checkpoint=None
+        self,
+        question,
+        choices,
+        default=None,
+        yes_choice=None,
+        no_choice=None,
+        checkpoint=None,
+        plan=None,
     ):
         labels = [(choice, choice.capitalize()) for choice in choices]
-        kind = "checkpoint" if checkpoint else "choice"
+        kind = "checkpoint" if checkpoint else "plan" if plan else "choice"
+        if plan:
+            plan = dict(plan, text=sanitize_for_display(plan["text"]))
+            self.plan_feedback = ""
         with self.asking(kind, question, labels, default or choices[0]):
             self.pending_ask["checkpoint"] = checkpoint
+            self.pending_ask["plan"] = plan
             if checkpoint and self.project_watcher:
                 # The phase is waiting for review now
                 self.project_watcher.refresh()
@@ -469,7 +493,22 @@ class WebIO(InputOutput):
                 yes_choice=yes_choice,
                 no_choice=no_choice,
                 checkpoint=checkpoint,
+                plan=plan,
             )
+
+    def plan_feedback_ask(self):
+        # The plan card sends the feedback with its answer
+        if not self.web.started:
+            return super().plan_feedback_ask()
+        feedback, self.plan_feedback = self.plan_feedback, ""
+        return feedback
+
+    def plan_output(self, text, path=None):
+        super().plan_output(text, path)
+        if self.web.started:
+            # Under the plan tool's card, which stays open for its result
+            title = f"**Plan** · `{path}`\n\n" if path else "**Plan**\n\n"
+            WebMarkdownStream(self.web).update(title + text, final=True)
 
     def prompt_ask(self, question, default="", subject=None):
         with self.asking("prompt", question, (), default, subject):

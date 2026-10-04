@@ -62,6 +62,7 @@ The model can call these tools, several at once when they don't depend on each o
 | `write_file` | Create a file, or replace one completely. |
 | `bash` | Run a shell command in the project root and read its output. |
 | `todo_write` | Keep a to-do list for the request, which you see as it changes. |
+| `exit_plan_mode` | Present a plan for you to approve. Only in [plan mode](#plan-mode). |
 
 Tools from [MCP servers](mcp.md) you connect are added to these.
 
@@ -172,8 +173,8 @@ Shift-Tab at the prompt to cycle through them. The prompt shows the mode, like
 - **ask** (default): edits and commands ask first.
 - **accept-edits**: edits inside the project are applied without asking. Commands still
   ask.
-- **plan**: read-only. Edits and commands are refused, and the agent is told to research
-  and reply with a plan instead. Switch to another mode to carry the plan out.
+- **plan**: read-only. Edits and commands are refused; the agent investigates and
+  presents a plan for you to approve, then carries it out. See [Plan mode](#plan-mode).
 - **bypass**: everything runs without asking: edits anywhere (protected files such as
   `.git/` and `.loom*` included), commands, MCP tools, and loom's other yes/no questions,
   which are answered yes. Shift-Tab doesn't cycle into it; answer (B)ypass to a question,
@@ -245,6 +246,77 @@ agent run the tests looks like:
 ```bash
 loom --message "fix the failing test" --yes-always --allow "bash(python -m pytest*)"
 ```
+
+## Plan mode
+
+In plan mode the agent looks before it touches anything. It can only read and search,
+and when it knows what to do it presents a plan, with the files to change, the steps, the
+risks and how it will check the result. You approve it, edit it or send it back, and once
+it's approved the agent carries it out in the same request:
+
+```
+agent plan> add a --verbose flag to the CLI
+● Grep("argparse")
+  ⎿  Found 3 matches in 1 file
+● Read(mathutils/cli.py)
+  ⎿  Read 31 lines
+● Plan(Add a --verbose flag)
+╭─ Plan · .loom/plans/20261004-101500-add-a-verbose-flag.md ───────────────────╮
+│ Add a --verbose flag                                                         │
+│                                                                              │
+│ Files                                                                        │
+│                                                                              │
+│  • mathutils/cli.py: add -v/--verbose to the parser and print each step      │
+│  • tests/test_cli.py: a test that --verbose prints the steps                 │
+│                                                                              │
+│ Steps                                                                        │
+│                                                                              │
+│  1 Add the argument next to --precision.                                     │
+│  2 Print the parsed numbers and the result when it's set.                    │
+│  3 Add the test, then run python -m pytest -q.                               │
+│                                                                              │
+│ Risks: none; the default output doesn't change.                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Approve this plan? (A)pprove and auto-accept edits/(Y)es, approve and ask for each edit/(K)eep planning/(E)dit plan [Yes, approve and ask for each edit]: a
+  ⎿  Approved · accept-edits mode
+● Update Todos
+  ⎿  ◼ Add the argument next to --precision
+     ☐ Print the parsed numbers and the result when it's set
+     ☐ Add the test and run the tests
+● Update(mathutils/cli.py)
+  ⎿  Updated mathutils/cli.py with 6 additions
+...
+```
+
+Start in plan mode with `--permission-mode plan`, switch with Shift-Tab or
+`/permissions plan`, or use `/plan`:
+
+- `/plan REQUEST` switches to plan mode and sends the request; `/plan` alone just
+  switches.
+- `/plan show` shows the plan you approved last in this conversation.
+
+The answers to "Approve this plan?":
+
+- **(A)pprove and auto-accept edits** switches to accept-edits mode and carries the plan
+  out: edits are applied without asking, commands still ask.
+- **(Y)es, approve and ask for each edit** (the default) switches to ask mode, so each
+  edit and command asks first.
+- **(K)eep planning** asks what should change. The agent gets your answer, stays in plan
+  mode and presents a new plan. With no answer it stops and waits for you.
+- **(E)dit plan** opens the plan in your editor (`--editor`, or `$EDITOR`); save it and
+  loom asks again about your version. An approved edit is sent to the agent as written.
+
+Every plan is saved in `.loom/plans/`, which has its own `.gitignore`, so plans stay in
+your checkout. The approved plan stays in the agent's system prompt until the request is
+done, so compacting a long conversation can't lose it, and the conversation remembers it
+for `/plan show` and `--resume`.
+
+For questions, the agent just answers, without a plan. Plans can't be approved
+non-interactively: with `--yes-always` or `--message`, loom shows the plan, saves it and
+stops, still in plan mode. If you switched to plan mode from bypass mode, the plan is
+approved without asking and loom goes back to bypass. `/project` doesn't run in plan
+mode, since its agents write documents and code. [Hooks](hooks.md) see the tool as
+`ExitPlanMode`, as in Claude Code.
 
 ## Project memory: LOOM.md
 

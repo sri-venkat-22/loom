@@ -22,8 +22,10 @@ project) and the project's .loom/hooks.json (shared with the repo):
     }
 
 matcher is a regular expression for the whole tool name (bash, edit_file, write_file,
-read_file, list_dir, glob, grep, todo_write or mcp__SERVER__TOOL), ignoring case. Leave it
-out, or use "" or "*", to match every tool.
+read_file, list_dir, glob, grep, todo_write, ExitPlanMode or mcp__SERVER__TOOL), ignoring
+case. Leave it out, or use "" or "*", to match every tool. Tools Claude Code has under
+another name get its name in the payload (ExitPlanMode for exit_plan_mode); a matcher with
+loom's name matches them too.
 
 A hook gets the tool call as JSON on stdin: hook_event_name, tool_name, tool_input, cwd,
 session_id, permission_mode and, after the tool ran, tool_response. It runs in the project
@@ -51,7 +53,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loom.display import sanitize_for_display
-from loom.tools import finish_killed, kill_process_tree
+from loom.tools import HOOK_NAMES, finish_killed, kill_process_tree
 
 EVENTS = ("PreToolUse", "PostToolUse")
 PROJECT_CONFIG = ".loom/hooks.json"
@@ -116,7 +118,10 @@ class Hook:
             raise HookError(f"{self.source}: invalid matcher {self.matcher!r}: {err}")
 
     def matches(self, tool_name):
-        return self.regex is None or self.regex.fullmatch(tool_name) is not None
+        if self.regex is None:
+            return True
+        names = [tool_name] + [name for name, hook in HOOK_NAMES.items() if hook == tool_name]
+        return any(self.regex.fullmatch(name) is not None for name in names)
 
     def describe(self):
         """A one-liner for the approval prompt. Sanitized so a hook command with escape

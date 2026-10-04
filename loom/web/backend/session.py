@@ -243,11 +243,13 @@ class WebSession:
         subject=None,
         tool_id=None,
         checkpoint=None,
+        plan=None,
     ):
         """Ask the browser a question and wait for its answer: one of the choices' values,
         or free text for a prompt. subject is what it's about, like a command to run,
-        tool_id the card of the tool call that needs the answer, and checkpoint the
-        project phase a checkpoint reviews."""
+        tool_id the card of the tool call that needs the answer, checkpoint the project
+        phase a checkpoint reviews, and plan the {text, path} of the plan a plan ask
+        approves."""
         ask_id = self.next_id("a")
         answers = queue.Queue(maxsize=1)
         with self.lock:
@@ -262,6 +264,7 @@ class WebSession:
             subject=subject,
             tool_id=tool_id,
             checkpoint=checkpoint,
+            plan=plan,
         )
         value = None
         try:

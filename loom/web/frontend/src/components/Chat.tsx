@@ -196,21 +196,23 @@ export function Chat() {
     return () => observer.disconnect();
   }, []);
 
-  // Questions about a tool call show on its card
+  // Questions about a tool call show on its card, except a plan, which has a card of its own
   const { onCards, items } = useMemo(() => {
     const cards = new Set<string>();
     const onCards = new Map<string, AskEntry[]>();
+    const onCard = (entry: Entry) =>
+      entry.kind === "ask" &&
+      entry.ask.kind !== "plan" &&
+      !!entry.ask.tool_id &&
+      cards.has(`tool-${entry.ask.tool_id}`);
     for (const entry of entries) {
       if (entry.kind === "tool") cards.add(entry.id);
-      if (entry.kind === "ask" && entry.ask.tool_id && cards.has(`tool-${entry.ask.tool_id}`)) {
+      if (entry.kind === "ask" && onCard(entry)) {
         const card = `tool-${entry.ask.tool_id}`;
         onCards.set(card, [...(onCards.get(card) ?? []), entry]);
       }
     }
-    const shown = entries.filter(
-      (entry) =>
-        entry.kind !== "ask" || !entry.ask.tool_id || !cards.has(`tool-${entry.ask.tool_id}`),
-    );
+    const shown = entries.filter((entry) => !onCard(entry));
     return { onCards, items: laneItems(shown, onCards) };
   }, [entries]);
 

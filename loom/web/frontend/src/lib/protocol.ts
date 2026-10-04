@@ -4,7 +4,8 @@
 export const PROTOCOL_VERSION = 1;
 
 export type Level = "info" | "warning" | "error";
-export type AskKind = "confirm" | "permission" | "choice" | "checkpoint" | "prompt" | "edit";
+export type AskKind =
+  "confirm" | "permission" | "choice" | "checkpoint" | "plan" | "prompt" | "edit";
 export type PhaseStatus = "pending" | "running" | "review" | "approved";
 export type PermissionMode = "ask" | "accept-edits" | "plan" | "bypass";
 
@@ -25,6 +26,14 @@ export interface Checkpoint {
   next_title: string | null;
 }
 export type TurnStatus = "done" | "cancelled";
+
+// The plan the agent made in plan mode, which a plan ask approves
+export interface PlanInfo {
+  // Markdown
+  text: string;
+  // Where it's saved, like .loom/plans/20261004-101500-add-a-flag.md, or null
+  path: string | null;
+}
 
 // The /project dashboard's timeline
 
@@ -314,6 +323,7 @@ export interface AskEvent {
   // The card of the tool call that needs the answer
   tool_id: string | null;
   checkpoint: Checkpoint | null;
+  plan: PlanInfo | null;
 }
 
 export interface AskResolvedEvent {
