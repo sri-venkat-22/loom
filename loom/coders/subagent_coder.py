@@ -36,8 +36,9 @@ class SubAgentCoder(AgentCoder):
     denied = False
     incomplete = False
     tool_uses = 0
-    # Esc stopped it while tasks ran at once
+    # Esc stopped it while tasks ran at once, or (stopped) its stop button did
     cancelled = False
+    stopped = False
     # Its reply is streaming in
     in_stream = False
 
@@ -101,7 +102,7 @@ class SubAgentCoder(AgentCoder):
         self.init_before_message()
         report = self.work(prompt)
         for num in range(subagents.MAX_STOP_BLOCKS):
-            if self.interrupted or self.failed or self.denied:
+            if self.interrupted or self.failed or self.denied or self.cancelled:
                 break
             outcome = self.stop_hooks(report, active=num > 0)
             if outcome.decision != "block":
@@ -131,7 +132,7 @@ class SubAgentCoder(AgentCoder):
         for one, and if it still writes none its last tool results stand in for it."""
         self.incomplete = False
         self.send_request(message)
-        if self.interrupted or self.failed or self.denied:
+        if self.interrupted or self.failed or self.denied or self.cancelled:
             return self.final_text()
 
         limit = self.limit
@@ -186,6 +187,12 @@ class SubAgentCoder(AgentCoder):
         self.cancelled = True
         self.stop_requested = True
         self.interrupted = True
+
+    def stop(self):
+        """Stop as soon as it can, for its stop button, without stopping the parent."""
+        self.stopped = True
+        self.cancelled = True
+        self.stop_requested = True
 
     def show_pretty(self):
         # Its streamed reply goes to the io's hidden Markdown stream rather than straight to
@@ -242,8 +249,9 @@ class SubAgentCoder(AgentCoder):
             self.parent.before_edit(action)
 
     def keyboard_interrupt(self):
-        # The parent says it was interrupted, once
-        self.interrupted = True
+        # The parent says it was interrupted, once; a stopped one wasn't
+        if not self.stopped:
+            self.interrupted = True
 
     def tools_rejected(self):
         err = str(self.tools_error).strip().split("\n", 1)[0]

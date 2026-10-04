@@ -66,6 +66,9 @@ class WebSession:
         # Switches the permission mode for the browser's mode message; WebIO sets it once
         # loom has a coder. Returns whether it did.
         self.set_mode = None
+        # Stops one sub-agent's task for the browser's stop_task message, while tasks run
+        # (loom/web/backend/tasks.py). Returns whether it did.
+        self.task_stopper = None
 
     @property
     def busy(self):
@@ -154,6 +157,12 @@ class WebSession:
             if not isinstance(mode, str) or not self.set_mode:
                 return False
             return self.set_mode(mode)
+        if kind == "stop_task":
+            agent_id = message.get("agent_id")
+            stopper = self.task_stopper
+            if not isinstance(agent_id, str) or not stopper:
+                return False
+            return bool(stopper(agent_id))
         return False
 
     def answer(self, ask_id, value):

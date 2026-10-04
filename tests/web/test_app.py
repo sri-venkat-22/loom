@@ -20,6 +20,7 @@ from loom.web.backend.protocol import (
     PHASE_STATUSES,
     RUN_OUTCOMES,
     SERVER_EVENTS,
+    TASK_STATUSES,
 )
 from loom.web.backend.session import WebSession
 from loom.web.backend.webio import WebIO
@@ -159,5 +160,5 @@ class TestProtocol(unittest.TestCase):
         quoted = set(re.findall(r'"([a-z_]+)"', source))
         for type in SERVER_EVENTS + CLIENT_EVENTS:
             self.assertIn(type, quoted, f"protocol.ts doesn't mention {type}")
-        for value in ASK_KINDS + PHASE_STATUSES + RUN_OUTCOMES:
+        for value in ASK_KINDS + PHASE_STATUSES + RUN_OUTCOMES + TASK_STATUSES:
             self.assertIn(value, quoted, f"protocol.ts doesn't mention {value}")

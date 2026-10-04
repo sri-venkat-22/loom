@@ -484,6 +484,19 @@ class WebIO(InputOutput):
     def consume_esc(self):
         return self.web.consume_cancel()
 
+    def poll_cancel(self):
+        if self.web.started:
+            self.web.check_cancel()
+
+    # Sub-agents' tasks, as Task cards with their tool calls nested in them
+
+    def task_board(self, verbose=False, headers=False):
+        if not self.web.started:
+            return super().task_board(verbose=verbose, headers=headers)
+        from .tasks import WebTaskBoard
+
+        return WebTaskBoard(self, headers=headers)
+
     # Questions
 
     @contextmanager

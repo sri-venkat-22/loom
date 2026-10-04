@@ -152,6 +152,19 @@ class TaskBoard:
                 self.print(text)
             self.update()
 
+    @contextlib.contextmanager
+    def asking(self, view):
+        """While the task of view asks the user something: out of the question's way."""
+        if self.headers:
+            self.hold(view)
+            try:
+                yield
+            finally:
+                self.release()
+        else:
+            self.pause()
+            yield
+
     def close(self):
         """The tasks are done: leave their final lines on the screen."""
         with self.lock:
@@ -176,7 +189,8 @@ class TaskBoard:
 
 
 class TaskView:
-    """One task's lines on a TaskBoard: its tool calls and its warnings."""
+    """One task's lines on a TaskBoard: its tool calls and its warnings. A web UI's view
+    (loom/web/backend/tasks.py) has the same methods, and shows the rest too."""
 
     def __init__(self, board, task, window=ROLLING_LINES):
         self.board = board
@@ -187,7 +201,7 @@ class TaskView:
         self.lines = []
         self.printed = 0
 
-    def tool_call(self, name, detail=""):
+    def tool_call(self, name, detail="", args=None):
         name, detail = tool_call_parts(name, detail, self.board.io.console.width - 9)
         text = Text()
         text.append(name, style=self.board.style("bold"))
@@ -195,7 +209,22 @@ class TaskView:
             text.append(f"({detail})")
         self.add(text, call=True)
 
-    def note(self, text, style=None):
+    # The terminal shows only the calls: their results, diffs and to-do lists are in the
+    # transcript (/tasks N)
+
+    def tool_result(self, lines, error=False, styles=None):
+        pass
+
+    def tool_done(self, result, error=False):
+        pass
+
+    def diff(self, diff):
+        pass
+
+    def todos(self, todos):
+        pass
+
+    def note(self, text, style=None, level="info"):
         for line in text.strip().splitlines():
             self.add(Text(line, style=self.board.style(style or "dim")), call=False)
 
@@ -283,11 +312,8 @@ class BoardAsker:
                 ),
                 None,
             )
-            self.board.hold(asking)
-            try:
+            with self.board.asking(asking):
                 return getattr(self.io, name)(*args, **kwargs)
-            finally:
-                self.board.release()
 
         return ask
 
@@ -337,8 +363,8 @@ class SubAgentIO:
         if self.asks is not None:
             answer = self.asks.ask(None, name, args, kwargs)
         else:
-            self.view.board.pause()
-            answer = getattr(self.main, name)(*args, **kwargs)
+            with self.view.board.asking(self.view):
+                answer = getattr(self.main, name)(*args, **kwargs)
         question = args[0] if args else kwargs.get("question")
         self.record("ask", question=question, answer=answer)
         return answer
@@ -347,14 +373,16 @@ class SubAgentIO:
 
     def tool_call(self, name, detail="", args=None):
         self.record("tool_call", name=name, detail=detail, args=args)
-        self.view.tool_call(name, detail)
+        self.view.tool_call(name, detail, args=args)
 
     def tool_result(self, lines, error=False, styles=None):
         if isinstance(lines, str):
             lines = lines.splitlines() or [""]
         self.record("tool_result", lines=[str(line) for line in lines], error=error)
+        self.view.tool_result(lines, error=error, styles=styles)
 
     def tool_done(self, result, error=False):
+        self.view.tool_done(result, error=error)
         result = str(result)
         if len(result) > MAX_TRANSCRIPT_RESULT:
             result = result[:MAX_TRANSCRIPT_RESULT] + "…"
@@ -362,9 +390,11 @@ class SubAgentIO:
 
     def todo_output(self, todos):
         self.record("todos", todos=[dict(todo) for todo in todos])
+        self.view.todos(todos)
 
     def diff_output(self, diff, indent=""):
         self.record("diff", diff=diff)
+        self.view.diff(diff)
 
     def tool_output(self, *messages, log_only=False, bold=False):
         text = " ".join(str(message) for message in messages)
@@ -377,12 +407,12 @@ class SubAgentIO:
     def tool_warning(self, message="", strip=True):
         self.record("warning", text=str(message))
         if str(message).strip():
-            self.view.note(str(message), self.main.tool_warning_color)
+            self.view.note(str(message), self.main.tool_warning_color, level="warning")
 
     def tool_error(self, message="", strip=True):
         self.record("error", text=str(message))
         if str(message).strip():
-            self.view.note(str(message), self.main.tool_error_color)
+            self.view.note(str(message), self.main.tool_error_color, level="error")
 
     def assistant_output(self, message, pretty=None):
         self.record("assistant", text=message)

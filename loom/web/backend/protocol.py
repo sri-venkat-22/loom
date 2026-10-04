@@ -87,6 +87,14 @@ Server to browser:
                  attempts, error}], status pending, running, built, merged, failed or
                  stopped; and workers, how many build at once.
 
+  task           {agent_id, parent_id, batch, number, description, agent, model, prompt,
+                  status, summary, tool_uses, tokens, cost, seconds}
+                 A sub-agent's task (the agent's task tool) started or finished. Its Task
+                 card is the tool card parent_id. status is pending, running, done,
+                 incomplete, denied, interrupted, stopped or failed, and summary says how it
+                 ended, like "Done (12 tool uses · 31k tokens · 40s)". Tasks the agent
+                 started in one reply run at once and share a batch.
+
 Browser to server:
 
   input          {text}                     The user's next message or /command.
@@ -94,11 +102,17 @@ Browser to server:
   cancel         {}                         Stop the current work, like Esc in the terminal.
   mode           {mode}                     Switch the permission mode, like Shift-Tab in
                                             the terminal.
+  stop_task      {agent_id}                 Stop one running task; the agent carries on
+                                            with what it reported.
 
 Messages from a parallel builder (loom/parallel.py) also carry worker, the id of the work
 package it builds: assistant_delta, assistant_end, system, tool_start, tool_output,
 tool_end and diff. The chat shows each builder's in a lane of its own. Its questions come
 from the main thread, as asks without worker.
+
+Messages from a sub-agent (loom/subagents.py) carry agent_id, its task's number, and
+parent_id, its Task card: system, tool_start, tool_output, tool_end and diff. The chat nests
+them in the Task card. Its questions are asks whose tool_id is its card.
 
 On connecting, the browser gets the session, the latest timeline and checkpoints, followed
 by every other message so far, so a reloaded page shows the whole conversation.
@@ -127,6 +141,7 @@ SERVER_EVENTS = (
     "terminal",
     "timeline",
     "checkpoints",
+    "task",
 )
 
 CLIENT_EVENTS = (
@@ -134,6 +149,7 @@ CLIENT_EVENTS = (
     "answer",
     "cancel",
     "mode",
+    "stop_task",
 )
 
 LEVELS = ("info", "warning", "error")
@@ -146,6 +162,16 @@ MAX_TOOL_OUTPUT = 20_000
 DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")
 RUN_OUTCOMES = ("done", "stopped", "failed")
 CHECKPOINT_KINDS = ("request", "phase", "step", "rewind")
+TASK_STATUSES = (
+    "pending",
+    "running",
+    "done",
+    "incomplete",
+    "denied",
+    "interrupted",
+    "stopped",
+    "failed",
+)
 
 
 def event(type, **payload):

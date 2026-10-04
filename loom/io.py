@@ -1366,6 +1366,10 @@ class InputOutput:
         """The agent's tool call finished, and result is what the model gets back. The
         terminal has already shown it compactly, with tool_result."""
 
+    def poll_cancel(self):
+        """While waiting on threads: raise KeyboardInterrupt for a stop the UI asked for
+        but couldn't signal. The terminal's Esc always signals."""
+
     def task_board(self, verbose=False, headers=False):
         """What shows running sub-agents' tool calls (loom/subagent_io.py). headers when
         several run at once."""

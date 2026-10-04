@@ -516,8 +516,11 @@ class Task:
         self.agent_type = agent_type
         self.model = model
         self.child = None
-        # running, done, incomplete, denied, interrupted or failed
+        # pending, running, done, incomplete, denied, interrupted (Esc), stopped (by its
+        # own stop button, in the web UI) or failed
         self.status = "pending"
+        # The thread it runs on, whose commands stopping it kills
+        self.thread = None
         self.started = None
         self.seconds = 0.0
         self.report = ""
@@ -587,6 +590,7 @@ class Task:
         once the sub-agent has stopped."""
         self.status = "running"
         self.started = time.time()
+        self.thread = threading.get_ident()
         self.io = io
         self.changed()
         interrupted = False
@@ -594,7 +598,9 @@ class Task:
             self.child = self.child or self.make_child(io)
             self.report = self.child.do_task(self.prompt)
             child = self.child
-            if child.interrupted:
+            if child.stopped:
+                self.status = "stopped"
+            elif child.interrupted:
                 self.status = "interrupted"
                 interrupted = True
             elif child.failed:
@@ -607,12 +613,16 @@ class Task:
             else:
                 self.status = "done"
         except KeyboardInterrupt:
-            self.status = "interrupted"
-            interrupted = True
+            if self.child and self.child.stopped:
+                self.status = "stopped"
+            else:
+                self.status = "interrupted"
+                interrupted = True
         except Exception as err:
             self.status = "failed"
             self.error = f"{err.__class__.__name__}: {err}"
         finally:
+            self.thread = None
             self.seconds = time.time() - self.started
             self.merge()
             self.changed()
@@ -634,6 +644,22 @@ class Task:
             self.child.cancel()
         if self.status == "pending":
             self.status = "interrupted"
+
+    def stop(self):
+        """Stop just this task, for its stop button: the sub-agent stops as soon as it can,
+        its command is killed, and the parent carries on with what it reported. Returns
+        whether it was running."""
+        if self.status not in ("pending", "running"):
+            return False
+        if self.child:
+            self.child.stop()
+        if self.status == "pending":
+            self.status = "stopped"
+            self.changed()
+        thread = self.thread
+        if thread is not None:
+            agent_tools.kill_running([thread])
+        return True
 
     def merge(self):
         """Give the parent what the sub-agent spent and the files it edited."""
@@ -659,6 +685,7 @@ class Task:
             "done": f"Done ({stats})",
             "incomplete": f"Stopped before finishing ({stats})",
             "denied": f"Stopped: you denied an action ({stats})",
+            "stopped": f"Stopped by you ({stats})",
             "interrupted": "Interrupted",
         }.get(self.status, f"Failed: {self.error}")
 
@@ -694,6 +721,13 @@ class Task:
         """What the parent's model gets back: the report and one footer line."""
         if self.status == "failed":
             body = f"The sub-agent failed: {self.error}"
+            if self.report:
+                body += f"\n\nWhat it reported before that:\n{self.report}"
+        elif self.status == "stopped":
+            body = (
+                "The user stopped this sub-agent before it finished. Carry on without it, and"
+                " don't start it again unless they ask."
+            )
             if self.report:
                 body += f"\n\nWhat it reported before that:\n{self.report}"
         elif self.status == "denied":
@@ -734,7 +768,7 @@ def run_parallel(parent, tasks, workers=MAX_PARALLEL):
     def work(task):
         if task.status != "pending":
             # Stopped before it started
-            return None
+            return task.result() if task.status == "stopped" else None
         threads[task.number] = threading.get_ident()
         try:
             return task.run(ios[task.number])
@@ -750,6 +784,8 @@ def run_parallel(parent, tasks, workers=MAX_PARALLEL):
             try:
                 while not all(future.done() for future in futures):
                     asks.serve(asker)
+                    # Esc in the web UI, when it couldn't interrupt this thread
+                    parent.io.poll_cancel()
             except KeyboardInterrupt:
                 for task in tasks:
                     task.cancel()

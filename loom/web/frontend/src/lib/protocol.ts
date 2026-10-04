@@ -221,9 +221,12 @@ export interface SessionEvent {
 }
 
 // Messages from a parallel builder say which work package it builds; the chat shows each
-// builder's in its own lane
+// builder's in its own lane. A sub-agent's say which task it is (agent_id, the task's
+// number) and the Task card they belong in (parent_id); the chat nests them there.
 export interface FromWorker {
   worker?: string | null;
+  agent_id?: string | null;
+  parent_id?: string | null;
 }
 
 export interface UserEvent {
@@ -380,6 +383,31 @@ export interface CheckpointsEvent {
   items: CheckpointItem[];
 }
 
+export type TaskStatus =
+  "pending" | "running" | "done" | "incomplete" | "denied" | "interrupted" | "stopped" | "failed";
+
+// A sub-agent's task (the agent's task tool) started or finished. Its Task card is the
+// tool card parent_id. Tasks started in one reply run at once and share a batch.
+export interface TaskEvent {
+  type: "task";
+  agent_id: string;
+  parent_id: string;
+  batch: string;
+  number: number;
+  description: string;
+  // The agent type, like explore
+  agent: string;
+  model: string;
+  prompt: string;
+  status: TaskStatus;
+  // How it ended, like "Done (12 tool uses · 31k tokens · 40s)", once it has
+  summary: string;
+  tool_uses: number;
+  tokens: number;
+  cost: number;
+  seconds: number;
+}
+
 export type ServerEvent =
   | SessionEvent
   | TimelineEvent
@@ -397,11 +425,14 @@ export type ServerEvent =
   | AskResolvedEvent
   | TerminalEvent
   | ConversationEvent
-  | CheckpointsEvent;
+  | CheckpointsEvent
+  | TaskEvent;
 
 export type ClientEvent =
   | { type: "input"; text: string }
   | { type: "answer"; ask_id: string; value: string }
   | { type: "cancel" }
   // Switch the permission mode, like Shift-Tab in the terminal
-  | { type: "mode"; mode: PermissionMode };
+  | { type: "mode"; mode: PermissionMode }
+  // Stop one running task; the agent carries on with what it reported
+  | { type: "stop_task"; agent_id: string };

@@ -9,6 +9,7 @@ import { CheckpointCard } from "./CheckpointCard";
 import { DiffView } from "./DiffView";
 import { Markdown } from "./Markdown";
 import { PlanCard } from "./PlanCard";
+import { TaskCard } from "./TaskCard";
 import { ToolCard } from "./ToolCard";
 
 type Of<K extends Entry["kind"]> = Extract<Entry, { kind: K }>;
@@ -187,6 +188,12 @@ function EditMessage({ entry }: { entry: Of<"ask"> }) {
   );
 }
 
+// A tool call's card, or a sub-agent's Task card
+function ToolMessage({ entry, asks }: { entry: Of<"tool">; asks: AskEntry[] }) {
+  const isTask = useSession((state) => entry.name === "Task" && entry.id in state.tasks);
+  return isTask ? <TaskCard entry={entry} asks={asks} /> : <ToolCard entry={entry} asks={asks} />;
+}
+
 export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
   switch (entry.kind) {
     case "user":
@@ -196,7 +203,7 @@ export function Message({ entry, asks }: { entry: Entry; asks: AskEntry[] }) {
     case "system":
       return <SystemMessage entry={entry} />;
     case "tool":
-      return <ToolCard entry={entry} asks={asks} />;
+      return <ToolMessage entry={entry} asks={asks} />;
     case "diff":
       return (
         <div>

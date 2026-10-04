@@ -7,7 +7,9 @@ import {
   pendingAsk,
   useSession,
 } from "../store/session";
+import type { TaskEvent } from "../lib/protocol";
 import { Message } from "./Messages";
+import { TaskBatch, TaskEntries } from "./TaskCard";
 import { ToolGroup } from "./ToolCard";
 
 // Within this many pixels of the bottom, new output keeps the chat scrolled to the end
@@ -23,7 +25,31 @@ type Item =
   | { kind: "entry"; entry: Entry }
   | { kind: "group"; id: string; tools: ToolEntry[] }
   // Parallel builders' work: each builder's entries, side by side
-  | { kind: "lanes"; id: string; lanes: [string, Item[]][] };
+  | { kind: "lanes"; id: string; lanes: [string, Item[]][] }
+  // Tasks the agent started in one reply, side by side
+  | { kind: "tasks"; id: string; tasks: ToolEntry[] };
+
+// The Task cards of one reply's tasks, which ran at once, as one item
+function batchItems(items: Item[], tasks: Record<string, TaskEvent>): Item[] {
+  const res: Item[] = [];
+  const batchOf = (item: Item) =>
+    item.kind === "entry" && item.entry.kind === "tool" && item.entry.name === "Task"
+      ? tasks[item.entry.id]?.batch
+      : undefined;
+  for (let i = 0; i < items.length;) {
+    const batch = batchOf(items[i]);
+    let end = i + 1;
+    while (batch && end < items.length && batchOf(items[end]) === batch) end++;
+    if (end - i > 1) {
+      const cards = items.slice(i, end).map((item) => (item as { entry: ToolEntry }).entry);
+      res.push({ kind: "tasks", id: `tasks-${cards[0].id}`, tasks: cards });
+    } else {
+      res.push(items[i]);
+    }
+    i = end;
+  }
+  return res;
+}
 
 // Consecutive entries from parallel builders show as one lane per builder
 function laneItems(entries: Entry[], cards: Map<string, AskEntry[]>): Item[] {
@@ -117,6 +143,7 @@ const itemKey = (item: Item) => (item.kind === "entry" ? item.entry.id : item.id
 function ChatItem({ item, onCards }: { item: Item; onCards: Map<string, AskEntry[]> }) {
   if (item.kind === "group") return <ToolGroup tools={item.tools} />;
   if (item.kind === "lanes") return <WorkerLanes lanes={item.lanes} onCards={onCards} />;
+  if (item.kind === "tasks") return <TaskBatch entries={item.tasks} asks={onCards} />;
   return <Message entry={item.entry} asks={onCards.get(item.entry.id) ?? NO_ASKS} />;
 }
 
@@ -168,6 +195,7 @@ function WorkerLanes({
 
 export function Chat() {
   const entries = useSession((state) => state.entries);
+  const tasks = useSession((state) => state.tasks);
   const busy = useSession((state) => state.session?.busy ?? false);
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -196,25 +224,36 @@ export function Chat() {
     return () => observer.disconnect();
   }, []);
 
-  // Questions about a tool call show on its card, except a plan, which has a card of its own
-  const { onCards, items } = useMemo(() => {
+  // Questions about a tool call show on its card, except a plan, which has a card of its own.
+  // A sub-agent's cards and messages show in its Task card.
+  const { onCards, children, items } = useMemo(() => {
     const cards = new Set<string>();
     const onCards = new Map<string, AskEntry[]>();
+    const children = new Map<string, Entry[]>();
     const onCard = (entry: Entry) =>
       entry.kind === "ask" &&
       entry.ask.kind !== "plan" &&
       !!entry.ask.tool_id &&
       cards.has(`tool-${entry.ask.tool_id}`);
+    const nested = (entry: Entry) =>
+      (entry.kind === "tool" || entry.kind === "system" || entry.kind === "diff") &&
+      !!entry.parent &&
+      cards.has(entry.parent);
+    const shown: Entry[] = [];
     for (const entry of entries) {
       if (entry.kind === "tool") cards.add(entry.id);
       if (entry.kind === "ask" && onCard(entry)) {
         const card = `tool-${entry.ask.tool_id}`;
         onCards.set(card, [...(onCards.get(card) ?? []), entry]);
+      } else if (nested(entry)) {
+        const parent = (entry as { parent: string }).parent;
+        children.set(parent, [...(children.get(parent) ?? []), entry]);
+      } else {
+        shown.push(entry);
       }
     }
-    const shown = entries.filter((entry) => !onCard(entry));
-    return { onCards, items: laneItems(shown, onCards) };
-  }, [entries]);
+    return { onCards, children, items: batchItems(laneItems(shown, onCards), tasks) };
+  }, [entries, tasks]);
 
   const last = entries[entries.length - 1];
   const active =
@@ -234,9 +273,11 @@ export function Chat() {
       className="scroll-thin min-h-0 flex-1 overflow-y-auto"
     >
       <div ref={content} className="mx-auto flex max-w-[760px] flex-col gap-[22px] px-6 pb-7 pt-9">
-        {items.map((item) => (
-          <ChatItem key={itemKey(item)} item={item} onCards={onCards} />
-        ))}
+        <TaskEntries.Provider value={{ children, onCards }}>
+          {items.map((item) => (
+            <ChatItem key={itemKey(item)} item={item} onCards={onCards} />
+          ))}
+        </TaskEntries.Provider>
         {working && (
           <div className="flex items-center gap-2 text-[13.5px] text-muted-foreground">
             <span className="blink text-primary">●</span>

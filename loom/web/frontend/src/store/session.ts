@@ -9,6 +9,7 @@ import type {
   LineStyle,
   ServerEvent,
   SessionEvent,
+  TaskEvent,
   Timeline,
 } from "../lib/protocol";
 
@@ -18,7 +19,8 @@ export interface ToolLine {
   style: LineStyle;
 }
 
-// worker is the work package of the parallel builder an entry is from, if any
+// worker is the work package of the parallel builder an entry is from, if any, and parent
+// the Task card (its entry id) of the sub-agent it's from
 export type Entry =
   // turn is the turn the message started, which its checkpoint names
   | { kind: "user"; id: string; text: string; worker?: string; turn?: string }
@@ -30,10 +32,11 @@ export type Entry =
       streaming: boolean;
       worker?: string;
     }
-  | { kind: "system"; id: string; level: Level; text: string; worker?: string }
+  | { kind: "system"; id: string; level: Level; text: string; worker?: string; parent?: string }
   | {
       kind: "tool";
       worker?: string;
+      parent?: string;
       id: string;
       name: string;
       detail: string;
@@ -44,7 +47,7 @@ export type Entry =
       diffs: DiffEvent[];
     }
   // A diff that isn't on a tool's card
-  | { kind: "diff"; id: string; diff: DiffEvent; worker?: string }
+  | { kind: "diff"; id: string; diff: DiffEvent; worker?: string; parent?: string }
   // answer is undefined while loom waits, and null if the question was dropped
   | { kind: "ask"; id: string; ask: AskEvent; answer?: string | null; worker?: string };
 
@@ -64,6 +67,8 @@ interface SessionState {
   // Where /rewind can go back to, or null until loom sends them
   checkpoints: CheckpointsEvent | null;
   entries: Entry[];
+  // The sub-agents' tasks, by their Task card's entry id
+  tasks: Record<string, TaskEvent>;
   // The output of commands like /run, for the side pane's terminal
   terminal: string;
   setConnection: (connection: Connection) => void;
@@ -73,6 +78,10 @@ interface SessionState {
 
 let nextId = 0;
 const newId = (prefix: string) => `${prefix}${++nextId}`;
+
+// The entry id of the Task card a sub-agent's message belongs in
+const parentOf = (event: { parent_id?: string | null }) =>
+  event.parent_id ? `tool-${event.parent_id}` : undefined;
 
 function update(entries: Entry[], id: string, change: (entry: Entry) => Entry): Entry[] {
   const index = entries.findIndex((entry) => entry.id === id);
@@ -126,12 +135,18 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
       // Consecutive lines of the same kind read as one block
       const last = entries[entries.length - 1];
       const worker = event.worker ?? undefined;
-      if (last?.kind === "system" && last.level === event.level && last.worker === worker) {
+      const parent = parentOf(event);
+      if (
+        last?.kind === "system" &&
+        last.level === event.level &&
+        last.worker === worker &&
+        last.parent === parent
+      ) {
         return [...entries.slice(0, -1), { ...last, text: `${last.text}\n${event.text}` }];
       }
       return [
         ...entries,
-        { kind: "system", id: newId("s"), level: event.level, text: event.text, worker },
+        { kind: "system", id: newId("s"), level: event.level, text: event.text, worker, parent },
       ];
     }
 
@@ -142,6 +157,7 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
           kind: "tool",
           id: `tool-${event.id}`,
           worker: event.worker ?? undefined,
+          parent: parentOf(event),
           name: event.name,
           detail: event.detail,
           args: event.args,
@@ -183,7 +199,13 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
       }
       return [
         ...entries,
-        { kind: "diff", id: `diff-${event.id}`, diff: event, worker: event.worker ?? undefined },
+        {
+          kind: "diff",
+          id: `diff-${event.id}`,
+          diff: event,
+          worker: event.worker ?? undefined,
+          parent: parentOf(event),
+        },
       ];
     }
 
@@ -216,16 +238,28 @@ export const useSession = create<SessionState>((set) => ({
   timeline: null,
   checkpoints: null,
   entries: [],
+  tasks: {},
   terminal: "",
   setConnection: (connection) => set({ connection }),
   // The server replays the whole conversation to every new connection
-  reset: () => set({ session: null, timeline: null, checkpoints: null, entries: [], terminal: "" }),
+  reset: () =>
+    set({
+      session: null,
+      timeline: null,
+      checkpoints: null,
+      entries: [],
+      tasks: {},
+      terminal: "",
+    }),
   apply: (event) =>
     set((state) => {
       if (event.type === "session") return { session: event };
       if (event.type === "timeline") return { timeline: event };
       if (event.type === "checkpoints") return { checkpoints: event };
-      if (event.type === "conversation") return { entries: [] };
+      if (event.type === "conversation") return { entries: [], tasks: {} };
+      if (event.type === "task") {
+        return { tasks: { ...state.tasks, [`tool-${event.parent_id}`]: event } };
+      }
       if (event.type === "terminal") {
         const gap = event.start && state.terminal ? "\n" : "";
         return { terminal: (state.terminal + gap + event.text).slice(-MAX_TERMINAL) };
