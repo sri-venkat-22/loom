@@ -206,6 +206,7 @@ class ProjectReport:
             fields.append(("Template", f"{template['name']} ({template.get('source')})"))
         if self.state.tdd:
             fields.append(("Building", "test-driven"))
+        fields += self.shipped()
         fields.append(("loom", __version__))
         if totals["runs"]:
             fields.append(("Effort", describe_metrics(totals)))
@@ -218,6 +219,28 @@ class ProjectReport:
             fields.append(("Commits", str(totals["commits"])))
         lines += [f"- **{name}:** {value}" for name, value in fields]
         return "\n".join(lines)
+
+    def shipped(self):
+        """The cover's fields for the latest /project ship."""
+        record = self.state.data.get("deployment")
+        if not record:
+            return []
+        fields = []
+        if record.get("url"):
+            smoke = "smoke test passed" if record.get("healthy") else "smoke test failed"
+            fields.append(
+                (
+                    "Deployed",
+                    f"{record['url']} ({record.get('title')}, {record.get('app')}; {smoke})",
+                )
+            )
+        if record.get("rolled_back_to"):
+            fields.append(("Rolled back to", record["rolled_back_to"]))
+        if record.get("pr"):
+            fields.append(("Pull request", record["pr"]))
+        if record.get("release"):
+            fields.append(("Release", f"{record.get('tag')}: {record['release']}"))
+        return fields
 
     # The timeline
 

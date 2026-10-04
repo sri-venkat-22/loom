@@ -140,6 +140,25 @@ export interface WorkPackage {
   error: string | null;
 }
 
+// What /project ship did last: a deploy, a pull request or a release
+export interface Deployment {
+  provider: string | null;
+  title: string | null;
+  app: string | null;
+  region: string | null;
+  url: string | null;
+  // Whether the smoke test passed, and what it got
+  healthy: boolean | null;
+  smoke: string | null;
+  time: string;
+  source: string;
+  pr: string | null;
+  release: string | null;
+  tag: string | null;
+  rolled_back: string | null;
+  rolled_back_to: string | null;
+}
+
 export interface Timeline {
   // False without a project
   available: boolean;
@@ -153,6 +172,8 @@ export interface Timeline {
   tdd: boolean;
   // How many builders build at once, when the founder set it with /project workers
   workers: number | null;
+  // The latest /project ship, or null
+  deployment: Deployment | null;
   totals: Metrics | null;
   phases: PhaseTimeline[];
   // The decisions of no phase

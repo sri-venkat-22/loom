@@ -126,7 +126,9 @@ as it runs:
 - At the top, the idea, the [template](project.md#project-templates) it started from,
   and the project's totals: time, cost, runs and commits, then a bar for each phase's
   cost (its time, when the models have no prices), and the decisions of no phase, like
-  the template's. **Download report** downloads the
+  the template's. Once the project is [shipped](project.md#shipping), it shows where:
+  the provider, the app and its URL, whether the smoke test passed, and the pull request
+  or release. **Download report** downloads the
   [project report](project.md#the-project-report) as Markdown, Word or PDF.
 - Then a timeline with a card for each phase: its status (approved, waiting for review,
   running, pending, or to redo after you went back), its verdict, how many times its

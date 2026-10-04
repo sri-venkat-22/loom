@@ -187,6 +187,7 @@ class TestDashboard(unittest.TestCase):
         with IgnorantTemporaryDirectory() as root:
             found = timeline(root)
             self.assertFalse(found["available"])
+            self.assertIsNone(found["deployment"])
             self.assertEqual(found["phases"], [])
             self.assertFalse(Path(root, MEMORY_DIR).exists())
 
@@ -358,3 +359,25 @@ class TestDashboard(unittest.TestCase):
             self.assertEqual(packages[1]["error"], "it didn't write its notes")
             self.assertEqual(packages[1]["cost"], 0)
             self.assertEqual(found["phases"][2]["packages"], [])
+
+    def test_timeline_shows_the_deployment(self):
+        with IgnorantTemporaryDirectory() as root:
+            state = ProjectState.new(root, "A CLI")
+            state.data["deployment"] = dict(
+                provider="fly",
+                title="Fly.io",
+                app="adder-app",
+                region="iad",
+                url="https://adder-app.fly.dev",
+                healthy=True,
+                smoke="GET /health answered 200",
+                time="2026-10-04T10:00:00",
+                source="founder",
+                status="2 machines: started, started",
+            )
+            state.save()
+            found = timeline(root)["deployment"]
+            self.assertEqual(found["url"], "https://adder-app.fly.dev")
+            self.assertTrue(found["healthy"])
+            self.assertIsNone(found["pr"])
+            self.assertNotIn("status", found)

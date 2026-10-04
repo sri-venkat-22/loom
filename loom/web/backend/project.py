@@ -103,6 +103,7 @@ NO_TIMELINE = dict(
     template=None,
     tdd=False,
     workers=None,
+    deployment=None,
     totals=None,
     phases=[],
     decisions=[],
@@ -137,6 +138,31 @@ def package_summaries(packages):
         )
         for pid, record in (packages or {}).items()
     ]
+
+
+DEPLOYMENT_FIELDS = (
+    "provider",
+    "title",
+    "app",
+    "region",
+    "url",
+    "healthy",
+    "smoke",
+    "time",
+    "source",
+    "pr",
+    "release",
+    "tag",
+    "rolled_back",
+    "rolled_back_to",
+)
+
+
+def deployment_summary(record):
+    """The latest /project ship, for the dashboard, or None."""
+    if not record:
+        return None
+    return {name: record.get(name) for name in DEPLOYMENT_FIELDS}
 
 
 def timeline(root):
@@ -186,6 +212,7 @@ def timeline(root):
         template=dict(name=template["name"], source=template.get("source")) if template else None,
         tdd=state.tdd,
         workers=state.data.get("workers"),
+        deployment=deployment_summary(state.data.get("deployment")),
         totals=state.totals(),
         phases=phases,
         # The decisions that aren't any phase's, like ones made once it was complete
