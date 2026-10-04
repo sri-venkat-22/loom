@@ -125,9 +125,8 @@ class TestApproval(unittest.TestCase):
             self.assertIsNone(coder.active_plan)
 
             # Saved, and remembered by the session
-            saved = Path(coder.session.plan)
-            self.assertTrue(str(saved).startswith(plans.PLANS_DIR))
-            self.assertEqual(saved.read_text(), PLAN)
+            self.assertTrue(coder.session.plan.startswith(plans.PLANS_DIR + "/"))
+            self.assertEqual(Path(coder.session.plan).read_text(), PLAN)
             ask = io.choice_ask.call_args
             self.assertEqual(ask.args[1], plans.CHOICES)
             self.assertEqual(ask.kwargs["plan"], dict(text=PLAN, path=coder.session.plan))
