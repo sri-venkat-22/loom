@@ -482,7 +482,7 @@ class TestGitHub(ShipTestCase):
             self.commands.cmd_project("ship --pr")
             create = next(c for c in self.calls() if c[1:3] == ["repo", "create"])
             self.assertIn("--private", create)
-            self.assertEqual(git.Repo(".").remotes.origin.url, remote)
+            self.assertEqual(git.Repo(".").git.remote("get-url", "origin"), remote)
             texts = [d["text"] for d in orchestrator.memory.decisions()]
             self.assertTrue(any(t.startswith("Made the private GitHub repository") for t in texts))
 
