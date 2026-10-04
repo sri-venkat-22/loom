@@ -7,6 +7,14 @@ class PhasePrompts(AgentPrompts):
     """The system prompt of the phase agents that write documents (every phase but Building,
     which is the coding agent with a brief). The phase's brief goes at the end."""
 
+    phase_task_prompt = """# Sub-agents
+The task tool starts a read-only sub-agent (explore, or plan) with a fresh context of its own: it researches with its own tools and returns only a short report, so its work doesn't fill your context.
+- Use explore for broad questions about the existing code or project files, like how something works or where something is used, instead of reading everything yourself.
+- Launch independent tasks in ONE reply, so they run in parallel.
+- Each task's prompt must be self-contained (it sees nothing of this conversation): the goal, what you know already, and exactly what to report.
+- Don't delegate a single file read, and check the report against the files before you rely on it in your document.
+"""
+
     stitch_phase_prompt = """# Stitch in this phase
 If the product has a user interface (a website, a web app or a mobile app), design its main screens with Stitch now, as above, so the Building agent builds them as designed. You can't save screens into the code: instead add a `## UI design` section to your document, after Components, that names the Stitch project, the design system, and for each screen its title, its resource name (projects/…/screens/…), its device type and the page or component it becomes. Record the Stitch project id as a decision. Building saves the screens with save_stitch_screen.
 """

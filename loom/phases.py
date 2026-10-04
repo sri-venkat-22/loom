@@ -25,6 +25,8 @@ WEB_TOOLS = ("web_search", "web_fetch")
 MEMORY_TOOLS = ("recall", "record_decision")
 # The tools of the Google Stitch MCP server, while one is connected (loom/stitch.py)
 STITCH_TOOLS = ("stitch",)
+# Starting read-only sub-agents, explore and plan (loom/subagents.py), unless --no-subagents
+TASK_TOOLS = ("task",)
 
 TEST_FILES = (
     "**/tests/**",
@@ -103,7 +105,7 @@ PHASES = [
         "idea report",
         "idea report",
         phase_prompts.IDEA,
-        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + TASK_TOOLS + ("todo_write",),
         verdict_label="Verdict",
         verdicts=("GO WITH CHANGES", "NO-GO", "GO"),
     ),
@@ -115,7 +117,7 @@ PHASES = [
         "PRD",
         "PRD",
         phase_prompts.PLANNING,
-        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + TASK_TOOLS + ("todo_write",),
         inputs=("idea",),
         recall="users problem scope MVP assumptions risks",
     ),
@@ -127,7 +129,13 @@ PHASES = [
         "architecture document",
         "architecture doc",
         phase_prompts.DESIGN,
-        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + STITCH_TOOLS + ("todo_write",),
+        tools=READ_TOOLS
+        + WEB_TOOLS
+        + WRITE_TOOLS
+        + MEMORY_TOOLS
+        + STITCH_TOOLS
+        + TASK_TOOLS
+        + ("todo_write",),
         inputs=("idea", "planning"),
         recall="constraints performance security scale platforms risks",
     ),
@@ -152,7 +160,7 @@ PHASES = [
         "test report",
         "test report",
         phase_prompts.TESTING,
-        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("bash", "todo_write"),
+        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + TASK_TOOLS + ("bash", "todo_write"),
         writable=TEST_FILES,
         inputs=("planning", "design", "building"),
         verdict_label="Result",

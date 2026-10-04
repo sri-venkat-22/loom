@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sys
 import threading
@@ -1606,3 +1607,136 @@ class TestParallelTasks(HomeDirMixin, unittest.TestCase):
         board.print = lambda text: printed.append(text.plain)
         board.close()
         self.assertEqual(printed[0], "● Task(Find A)")
+
+
+class TestPhaseTasks(HomeDirMixin, unittest.TestCase):
+    """The /project phase agents' sub-agents (loom/orchestrator.py)."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["LOOM_MEMORY_STORE"] = "keyword"
+
+    def orchestrator(self):
+        from loom.orchestrator import Orchestrator
+
+        from .test_orchestrator import IDEA
+
+        coder = make_coder()
+        orchestrator = Orchestrator(coder)
+        orchestrator.new_project(IDEA)
+        return orchestrator
+
+    def test_document_phases_start_read_only_agents(self):
+        from loom.phases import PHASES_BY_KEY
+
+        from .test_orchestrator import IDEA_REPORT, write_doc
+
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = self.orchestrator()
+            llm = AgentsLLM(
+                parent=[
+                    reply(
+                        None,
+                        explore_task("Find what the project already has."),
+                        call("task", description="Build", prompt="Build it.", agent="general"),
+                    ),
+                    reply(None, write_doc("idea", IDEA_REPORT)),
+                    reply("GO."),
+                ],
+                explore=[
+                    reply(None, call("recall", query="adder"), call("glob", pattern="*.py")),
+                    reply("There's calc.py with add()."),
+                ],
+            )
+            with patch.object(litellm, "completion", llm):
+                self.assertTrue(orchestrator.run_phase(PHASES_BY_KEY["idea"]))
+            self.assertEqual(llm.left(), {})
+
+            description = description_of(llm)
+            self.assertIn("- explore:", description)
+            self.assertIn("- plan:", description)
+            self.assertNotIn("- general:", description)
+            system = llm.requests["parent"][0]["messages"][0]["content"]
+            self.assertIn("The task tool starts a read-only sub-agent", system)
+
+            explored, refused = results_of(llm.requests["parent"][1]["messages"])
+            self.assertTrue(explored.startswith("There's calc.py with add()."))
+            self.assertIn("the Idea Check agent may only start read-only agents", refused)
+
+            # The explorer has the phase's read-only tools, the project memory among them,
+            # and none of the phase's brief
+            child = llm.requests["explore"][0]
+            self.assertEqual(
+                tool_names(child),
+                ["read_file", "list_dir", "glob", "grep", "web_search", "web_fetch", "recall"],
+            )
+            self.assertNotIn("# Your phase:", child["messages"][0]["content"])
+            recalled = results_of(llm.requests["explore"][1]["messages"])[0]
+            self.assertNotIn("Error", recalled)
+
+    def test_building_tasks_inherit_its_locked_tests(self):
+        from loom.phases import PHASES_BY_KEY
+
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = self.orchestrator()
+            agent = orchestrator.make_agent(PHASES_BY_KEY["building"], locked=["test_calc.py"])
+            llm = AgentsLLM(
+                parent=[
+                    reply(None, call("task", description="Fix it", prompt="Make the test pass.")),
+                    reply("Done."),
+                ],
+                general=[
+                    reply(
+                        None,
+                        call("edit_file", path="test_calc.py", old_string="5", new_string="-1"),
+                        call("edit_file", path="calc.py", old_string="a - b", new_string="a + b"),
+                    ),
+                    reply("Fixed calc.py; the test is locked."),
+                ],
+            )
+            with patch.object(litellm, "completion", llm):
+                agent.run(with_message="build it", preproc=False)
+            self.assertEqual(llm.left(), {})
+            self.assertIn("general", description_of(llm))
+            locked, fixed = results_of(llm.requests["general"][1]["messages"])
+            self.assertIn("test_calc.py is one of the approved acceptance tests", locked)
+            self.assertIn("Edited calc.py", fixed)
+            self.assertIn("assert add(2, 3) == 5", Path("test_calc.py").read_text())
+
+    def test_tasks_count_in_the_phase_metrics(self):
+        from loom.orchestrator import ProjectState
+        from loom.phases import PHASES_BY_KEY
+
+        from .test_orchestrator import IDEA_REPORT, write_doc
+
+        with GitTemporaryDirectory():
+            make_repo()
+            orchestrator = self.orchestrator()
+            llm = AgentsLLM(
+                parent=[
+                    reply(None, explore_task()),
+                    reply(None, write_doc("idea", IDEA_REPORT)),
+                    reply("GO."),
+                ],
+                explore=[reply(EXPLORE_REPORT)],
+            )
+
+            def priced(self, messages, completion=None):
+                self.total_cost += 0.125
+                self.message_cost += 0.125
+                self.message_tokens_sent += 1000
+                self.message_tokens_received += 10
+                self.usage_report = "Tokens"
+
+            with (
+                patch.object(litellm, "completion", llm),
+                patch.object(Coder, "calculate_and_show_tokens_and_cost", priced),
+            ):
+                self.assertTrue(orchestrator.run_phase(PHASES_BY_KEY["idea"]))
+            [entry] = ProjectState.load(".").run_log("idea")
+            # Three requests of the Idea Check agent's and one of its explorer's
+            self.assertEqual(entry["cost"], 0.5)
+            self.assertEqual(entry["tokens_sent"], 4000)
+            self.assertEqual(entry["tokens_received"], 40)

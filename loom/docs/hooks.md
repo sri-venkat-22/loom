@@ -50,13 +50,17 @@ optional, and an entry can give a `command` directly instead of a list of `hooks
   about it, so they can block the call, or approve it without asking you.
 - **`PostToolUse`** hooks run after a tool ran successfully, and can send the model
   feedback about the result.
+- **`SubagentStop`** hooks run when a [sub-agent](subagents.md) has written its report;
+  see [below](#subagentstop-when-a-sub-agent-finishes).
 - **`matcher`** is a regular expression that must match the whole tool name, ignoring
   case: `bash`, `edit_file`, `write_file`, `read_file`, `list_dir`, `glob`, `grep`,
-  `todo_write`, `ExitPlanMode`, `WebSearch`, `WebFetch` or `mcp__<server>__<tool>` for
-  [MCP tools](mcp.md). Leave it out, or use `""` or `"*"`, to match every tool. Tools
-  Claude Code has under another name get its name, so hooks written for it work:
-  `exit_plan_mode`, `web_search` and `web_fetch` are `ExitPlanMode`, `WebSearch` and
-  `WebFetch` in `tool_name` (a matcher with either name matches them).
+  `todo_write`, `ExitPlanMode`, `WebSearch`, `WebFetch`, `Task` or
+  `mcp__<server>__<tool>` for [MCP tools](mcp.md). Leave it out, or use `""` or `"*"`, to
+  match every tool. Tools Claude Code has under another name get its name, so hooks
+  written for it work: `exit_plan_mode`, `web_search`, `web_fetch` and `task` are
+  `ExitPlanMode`, `WebSearch`, `WebFetch` and `Task` in `tool_name` (a matcher with
+  either name matches them). For `SubagentStop`, the matcher is for the agent type, like
+  `explore`.
 - **`timeout`** is in seconds, 60 by default. A hook that takes longer is stopped, and
   loom warns and carries on.
 
@@ -80,12 +84,15 @@ A hook runs in the project root. It gets the tool call as JSON on stdin:
 ```
 
 `PostToolUse` hooks also get `tool_response`, the text the tool returned to the model.
-These environment variables are set too:
+`Task`'s `tool_input` has Claude Code's `subagent_type` as well as loom's `agent`, and a
+[sub-agent](subagents.md)'s own tool calls also carry `agent_id` (its task's number) and
+`agent_type`, with the main conversation's `session_id`. These environment variables are
+set too:
 
 | Variable | Value |
 |---|---|
 | `LOOM_PROJECT_DIR` | The project root. |
-| `LOOM_HOOK_EVENT` | `PreToolUse` or `PostToolUse`. |
+| `LOOM_HOOK_EVENT` | `PreToolUse`, `PostToolUse` or `SubagentStop`. |
 | `LOOM_TOOL_NAME` | The tool's name, like `edit_file`. |
 | `LOOM_FILE_PATH` | The absolute path of the file, for `read_file`, `edit_file` and `write_file`. |
 
@@ -111,6 +118,33 @@ Claude Code's `hookSpecificOutput` with `permissionDecision` (`allow` or `deny`)
 
 When several hooks match, they run in order. For `PreToolUse`, the first one that
 blocks wins and the rest don't run.
+
+## SubagentStop: when a sub-agent finishes
+
+`SubagentStop` hooks run when a [sub-agent](subagents.md) has written its report, before
+the main agent gets it, so you can log tasks or check their work. The payload, as in
+Claude Code:
+
+```json
+{
+  "hook_event_name": "SubagentStop",
+  "session_id": "20261004-151537-ace9",
+  "cwd": "/home/me/project",
+  "permission_mode": "ask",
+  "agent_id": "2",
+  "agent_type": "explore",
+  "description": "Explore hooks subsystem",
+  "report": "Hooks live in loom/hooks.py...",
+  "transcript_path": "/home/me/project/.loom.sessions/20261004-151537-ace9/tasks/2.json",
+  "stop_hook_active": false
+}
+```
+
+Blocking it (exit code 2, or `{"decision": "block", "reason": "..."}`) sends the
+sub-agent back to work, with the reason as its next message: "Also run the tests", say.
+`stop_hook_active` is true when a `SubagentStop` hook already sent it back, and loom does
+it at most three times. A sub-agent that was interrupted, stopped or failed doesn't run
+them.
 
 ## Examples
 

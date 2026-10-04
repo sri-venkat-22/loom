@@ -316,6 +316,7 @@ class TestPhaseCoder(unittest.TestCase):
                     "web_fetch",
                     "recall",
                     "record_decision",
+                    "task",
                 ],
             )
             system = agent.format_messages().all_messages()[0]["content"]

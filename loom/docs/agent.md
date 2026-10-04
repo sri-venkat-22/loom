@@ -65,6 +65,7 @@ The model can call these tools, several at once when they don't depend on each o
 | `exit_plan_mode` | Present a plan for you to approve. Only in [plan mode](#plan-mode). |
 | `web_search` | Search the web; returns titles, URLs and snippets. See [Web access](#web-access). |
 | `web_fetch` | Read a web page as markdown, condensed by the weak model if it's long and the agent says what it wants from it. |
+| `task` | Hand a focused job to a [sub-agent](subagents.md) with a fresh context, which returns only its report. Several in one reply run at once. |
 
 Tools from [MCP servers](mcp.md) you connect are added to these.
 
@@ -105,6 +106,25 @@ conversation or both back to before an earlier request, shell commands' changes
 included; see [sessions.md](sessions.md#rewind).
 
 The agent stops after 100 steps; say "continue" to let it go on.
+
+### Sub-agents
+
+For broad searches, or a self-contained piece of work, the agent can start a
+[sub-agent](subagents.md) with the `task` tool: a separate agent with a fresh context
+that returns only a short report, so the main conversation stays small. Each one shows as
+a Task line with its latest tool calls under it:
+
+```
+● Task(Find every caller of decide)
+  ⎿  Grep("decide\(")
+     Read(loom/coders/agent_coder.py)
+     … +4 more tool uses
+  ⎿  Done (6 tool uses · 41k tokens · 12s)
+```
+
+Sub-agents started in one reply run at once. `/tasks` lists them and shows their
+transcripts, `/agents` lists the agent types, and you can add your own in
+`.loom/agents/`. See [subagents.md](subagents.md).
 
 ### The to-do list
 

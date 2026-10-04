@@ -44,6 +44,13 @@ line you can open.
   for approval shows on its card the same way, with **Allow** and **Deny**.
 - **Web searches and fetches** show the pages they found or read as links, which open
   in a new tab.
+- **Sub-agents** show as Task cards: the task's description and agent type, a spinner
+  while it runs with its latest tool calls as live cards nested in it, and its outcome
+  (like `Done (12 tool uses · 31k tokens · 40s)`) once it's done. Click a Task card for
+  the whole transcript: the prompt, every tool call and the report. A sub-agent's
+  questions show on its own nested card. **Stop** stops just that task; the agent carries
+  on with what it reported. Tasks started in one reply, which run at once, show side by
+  side. See [subagents.md](subagents.md).
 - **Questions** loom asks show inline, with a key for each answer.
 - **Plans** the agent presents in [plan mode](agent.md#plan-mode) show as a card with the
   plan rendered: **Approve** (`y`) carries it out asking before each edit, **Approve and

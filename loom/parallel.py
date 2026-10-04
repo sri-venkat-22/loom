@@ -358,6 +358,8 @@ class ParallelBuilding:
             hooks=None,
             file_watcher=None,
             permissions=main.permissions.copy_for(io, root=path),
+            # Builders already run at once: they don't start sub-agents of their own
+            subagent_settings=dict(main.subagent_settings, enabled=False),
             phase=self.package_phase(package),
             shared_memory=orchestrator.memory,
             template=orchestrator.template,

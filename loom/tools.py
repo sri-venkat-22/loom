@@ -1072,13 +1072,9 @@ def task(coder, description, prompt, agent=None, model=None):
     agent_type = types.get(name) or types.get(name.lower())
     if not agent_type:
         raise ToolError(f"there is no agent type {name!r}; use one of: {', '.join(types)}")
-    if coder.permissions.mode == "plan" and not agent_type.read_only:
-        read_only = ", ".join(n for n, t in types.items() if t.read_only)
-        raise ToolError(
-            f"loom is in plan mode, where only read-only agent types run ({read_only}), and"
-            f" the {agent_type.name} agent can edit files and run commands. Investigate with"
-            " a read-only one, then present your plan."
-        )
+    refusal = coder.refuse_agent_type(agent_type, types)
+    if refusal:
+        raise ToolError(refusal)
     try:
         chosen = subagents.resolve_model(coder, model or agent_type.model)
     except ToolError as err:
@@ -1494,12 +1490,16 @@ def task_schemas(coder):
     """The task tool, its description listing the agent types the coder's tasks can use."""
     from loom import subagents
 
-    types = subagents.agent_types(coder)
+    every = subagents.agent_types(coder)
+    types = {
+        name: agent_type
+        for name, agent_type in every.items()
+        if not coder.refuse_agent_type(agent_type, every)
+    }
     lines = [TASK_DESCRIPTION]
     lines += [f"- {agent_type.name}: {agent_type.description}" for agent_type in types.values()]
     if coder.permissions.mode == "plan":
-        read_only = ", ".join(name for name, agent_type in types.items() if agent_type.read_only)
-        lines.append(f"loom is in plan mode, so only the read-only types run: {read_only}.")
+        lines.append(f"loom is in plan mode, so only the read-only types run: {', '.join(types)}.")
     schema = copy.deepcopy(TASK_TOOLS["task"]["schema"])
     schema["function"]["description"] = "\n".join(lines)
     schema["function"]["parameters"]["properties"]["agent"]["enum"] = list(types)

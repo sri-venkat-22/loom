@@ -41,15 +41,28 @@ class PhaseCoder(AgentCoder):
         if self.phase.tools is None:
             return super().tools + project
         web = agent_tools.web_schemas() if self.web_tools else []
+        task = agent_tools.task_schemas(self) if self.can_delegate() else []
         return [
             schema
-            for schema in agent_tools.schemas() + web + project
+            for schema in agent_tools.schemas() + web + project + task
             if schema["function"]["name"] in self.phase.tools
         ] + self.stitch_schemas()
 
     def can_delegate(self):
-        # Phase agents don't start sub-agents
-        return False
+        """Building starts any sub-agent, and the phases with task in their tools
+        read-only ones."""
+        tools = self.phase.tools
+        return super().can_delegate() and (tools is None or "task" in tools)
+
+    def refuse_agent_type(self, agent_type, types):
+        refusal = super().refuse_agent_type(agent_type, types)
+        if refusal or self.phase.tools is None or agent_type.read_only:
+            return refusal
+        read_only = ", ".join(name for name, t in types.items() if t.read_only)
+        return (
+            f"the {self.phase.agent} may only start read-only agents ({read_only}), and the"
+            f" {agent_type.name} agent can edit files or run commands."
+        )
 
     def stitch_server(self):
         """The connected Google Stitch server, when the phase may use it."""
@@ -76,6 +89,8 @@ class PhaseCoder(AgentCoder):
         extra = super().system_prompt_extras() if self.phase.tools is None else []
         if self.phase.tools is not None and self.web_tools and "web_fetch" in self.phase.tools:
             extra.append(self.gpt_prompts.web_tools_prompt)
+        if self.phase.tools is not None and self.can_delegate():
+            extra.append(self.gpt_prompts.phase_task_prompt)
         if self.stitch_server():
             extra.append(self.stitch_prompt())
             extra.append(self.gpt_prompts.stitch_phase_prompt)
@@ -92,7 +107,9 @@ class PhaseCoder(AgentCoder):
             tools = [
                 name
                 for name in phase.tools
-                if (self.web_tools or name not in agent_tools.WEB_TOOLS) and name != "stitch"
+                if (self.web_tools or name not in agent_tools.WEB_TOOLS)
+                and name != "stitch"
+                and (name != "task" or self.can_delegate())
             ]
             if self.stitch_server():
                 tools.append(f"Google Stitch's tools (mcp__{self.stitch_server().name}__*)")

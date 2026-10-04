@@ -136,6 +136,18 @@ class AgentCoder(Coder):
         """Whether the model gets the task tool, to start sub-agents."""
         return self.subagent_settings.get("enabled", True)
 
+    def refuse_agent_type(self, agent_type, types):
+        """Why the model may not start a sub-agent of agent_type now, or None. types are
+        all the agent types, to name the ones it may start."""
+        if self.permissions.mode == "plan" and not agent_type.read_only:
+            read_only = ", ".join(name for name, t in types.items() if t.read_only)
+            return (
+                f"loom is in plan mode, where only read-only agent types run ({read_only}), and"
+                f" the {agent_type.name} agent can edit files and run commands. Investigate"
+                " with a read-only one, then present your plan."
+            )
+        return None
+
     def get_announcements(self):
         lines = super().get_announcements()
         lines.append(f"Permissions: {self.permissions.describe()}")
