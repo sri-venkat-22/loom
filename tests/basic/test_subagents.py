@@ -271,6 +271,30 @@ class TestTaskTool(HomeDirMixin, unittest.TestCase):
             result = results_of(llm.requests["parent"][1]["messages"])[0]
             self.assertTrue(result.startswith(EXPLORE_REPORT))
 
+    def test_child_compacts_at_its_own_context_cap(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            Path("big.py").write_text("".join(f"value_{n} = {n}  # padding\n" for n in range(2000)))
+            llm = AgentsLLM(
+                parent=[reply(None, explore_task()), reply("Done.")],
+                explore=[
+                    reply(None, call("read_file", path="big.py")),
+                    reply(None, call("read_file", path="calc.py")),
+                    reply(EXPLORE_REPORT),
+                ],
+            )
+            with patch.object(subagents, "CONTEXT_TOKENS", 6000):
+                coder = self.run_parent(llm)
+            self.assertEqual(llm.left(), {})
+            # The model's window is far larger, but the sub-agent compacted at its own cap
+            self.assertGreater(coder.main_model.info["max_input_tokens"], 100_000)
+            big = results_of(llm.requests["explore"][2]["messages"])[0]
+            self.assertIn("characters dropped from the middle", big)
+            names = [
+                e["name"] for e in coder.session.tasks[0].io.transcript if e["kind"] == "tool_call"
+            ]
+            self.assertIn("Compacted the conversation", names)
+
     def test_long_report_keeps_its_start_and_end(self):
         with GitTemporaryDirectory():
             make_repo()

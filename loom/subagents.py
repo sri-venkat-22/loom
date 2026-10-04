@@ -72,6 +72,9 @@ DEFAULT_AGENT = "general"
 MAX_PARALLEL = 4
 # Steps a sub-agent may take, unless --subagent-max-steps says otherwise
 MAX_STEPS = 40
+# A sub-agent compacts its conversation as if the model's context window held at most this
+# many tokens, so each of its steps stays cheap however large the window is
+CONTEXT_TOKENS = 64_000
 # The longest report the parent gets; longer ones keep their start and end
 MAX_REPORT_CHARS = 10_000
 # How much of each of its last tool results an unfinished sub-agent returns

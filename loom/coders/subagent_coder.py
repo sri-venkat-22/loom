@@ -179,6 +179,11 @@ class SubAgentCoder(AgentCoder):
     def over_budget(self):
         return bool(self.budget) and self.total_cost >= self.budget
 
+    def context_window(self):
+        # Every step resends the whole conversation: keep it small, and compact early
+        window = super().context_window()
+        return min(window, subagents.CONTEXT_TOKENS) if window else subagents.CONTEXT_TOKENS
+
     def limit_reached(self, reason):
         self.limit = reason
 
