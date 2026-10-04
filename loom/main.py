@@ -1184,6 +1184,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             allow=allow,
             project_allow=project_allow,
             settings_file=Path(repo.root if repo else Path.cwd()) / SETTINGS_FILE,
+            root=Path(repo.root if repo else Path.cwd()),
         )
     except ValueError as err:
         io.tool_error(str(err))

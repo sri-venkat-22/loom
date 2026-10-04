@@ -115,11 +115,23 @@ def is_protected(path):
     return any(glob_match(pattern, path) for pattern in PROTECTED_PATHS)
 
 
-def protects(action):
-    """Whether an edit changes a protected file, by its project path or its real path."""
+def protects(action, root=None):
+    """Whether an edit changes a protected file, by its project path or its real path. A
+    real path inside root (the project's, or a parallel builder's worktree) counts from
+    root, so the folders the project itself is in, like .loom/worktrees/, don't."""
     if action.kind != "edit":
         return False
-    return is_protected(action.target) or (action.path is not None and is_protected(action.path))
+    if is_protected(action.target):
+        return True
+    if action.path is None:
+        return False
+    path = Path(action.path)
+    if root is not None:
+        try:
+            path = path.relative_to(Path(root).resolve())
+        except ValueError:
+            pass
+    return is_protected(path)
 
 
 def approvals_file():
@@ -284,14 +296,17 @@ def exact_rule(kind, target):
 
 
 class Permissions:
-    def __init__(self, io, mode="ask", allow=None, settings_file=None, project_allow=None):
+    def __init__(
+        self, io, mode="ask", allow=None, settings_file=None, project_allow=None, root=None
+    ):
         """allow holds the user's rules (--allow or their own config). project_allow holds
         rules from config files that came with the repo, which need approval like the ones in
-        settings_file."""
+        settings_file. root is the project's folder, which protected paths count from."""
         if mode not in MODES:
             raise ValueError(f"Unknown permission mode {mode!r}; use one of: {', '.join(MODES)}")
         self.io = io
         self.mode = mode
+        self.root = root
         self.settings_file = Path(settings_file) if settings_file else None
 
         # (rule, where it came from)
@@ -316,11 +331,11 @@ class Permissions:
         # In bypass mode loom's other yes/no questions don't ask either
         self.io.bypass_permissions = mode == "bypass"
 
-    def copy_for(self, io):
-        """The same permissions for another io, like a parallel builder's: the same mode
-        and the same rules (an "always" answer to one is an answer for all). It doesn't
-        ask about the project's rules again."""
-        copy = Permissions(io, mode=self.mode)
+    def copy_for(self, io, root=None):
+        """The same permissions for another io, like a parallel builder's working in root:
+        the same mode and the same rules (an "always" answer to one is an answer for all).
+        It doesn't ask about the project's rules again."""
+        copy = Permissions(io, mode=self.mode, root=root or self.root)
         copy.settings_file = self.settings_file
         copy.rules = self.rules
         copy.pending = []
@@ -469,7 +484,7 @@ class Permissions:
                         return "allow"
                 return "ask"
             return "deny"
-        if protects(action):
+        if protects(action, self.root):
             return "ask"
         if hook_allowed or self.is_allowed(action):
             return "allow"
@@ -503,7 +518,7 @@ class Permissions:
         elif action.kind == "edit":
             question = f"{'Create' if action.new_file else 'Edit'} {action.target}?"
             always = None
-            if protects(action):
+            if protects(action, self.root):
                 question += " (a protected file: it can change how git or loom runs)"
             elif not action.inside:
                 question += " (outside the project)"
@@ -527,7 +542,7 @@ class Permissions:
             subject = action.target
         else:
             subject = None
-        explicit = action.kind in ("bash", "mcp") or protects(action)
+        explicit = action.kind in ("bash", "mcp") or protects(action, self.root)
         answer = self.io.permission_ask(
             question,
             subject=subject,

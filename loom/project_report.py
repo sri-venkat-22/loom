@@ -338,7 +338,13 @@ class ProjectReport:
             table_md = table(
                 ["Attempt", "Tests", "Time", "Cost so far", "Locked tests put back"], rows
             )
-            parts.append(f"**Test-driven Building, run {run.get('run')}:**\n\n{table_md}")
+            if run.get("package"):
+                what = f", the {run['package']} package"
+            elif run.get("step") and run["step"] != "build":
+                what = f", {run['step']}"
+            else:
+                what = ""
+            parts.append(f"**Test-driven Building, run {run.get('run')}{what}:**\n\n{table_md}")
             if run.get("skips"):
                 skips = "\n".join(f"- `{skip}`" for skip in run["skips"])
                 parts.append(f"Test changes that skip tests or expect them to fail:\n\n{skips}")

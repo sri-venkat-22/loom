@@ -247,9 +247,10 @@ class TestParallelBuilding(unittest.TestCase):
             system = llm.requests["Building shout"][0]["messages"][0]["content"]
             self.assertIn("builder of one work package of the project: shout, Shouting", system)
 
-            # Its question went to the main thread, which asked the user
+            # Its question went to the main thread, which asked the user. It was the only
+            # one: the builders' files aren't protected though their worktrees are in .loom/
             asked = [c[0][0] for c in io.permission_ask.call_args_list]
-            self.assertIn("[shout] Run this command?", asked)
+            self.assertEqual(asked, ["[shout] Run this command?"])
 
             # What they spent is the project's
             total = sum(run["cost"] for run in state.run_log("building"))
@@ -269,6 +270,30 @@ class TestParallelBuilding(unittest.TestCase):
             shown = [c[0][0] for c in io.tool_output.call_args_list if c[0]]
             self.assertIn("  Building's work packages (2 builders at once):", shown)
             self.assertTrue(any(line.startswith("    shout  merged") for line in shown))
+
+    def test_builders_write_under_yes_always(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            coder, orchestrator = project(InputOutput(yes=True))
+            quiet_shout = [
+                reply(
+                    None,
+                    call("write_file", path="shout.py", content=SHOUT),
+                    call("write_file", path="tests/test_shout.py", content=SHOUT_TEST),
+                    notes("shout"),
+                ),
+                reply("shout is built."),
+            ]
+            llm = RoutedLLM(
+                Scaffold=SCAFFOLD,
+                Building_adder=BUILD_ADDER,
+                Building_shout=quiet_shout,
+                Building_app=BUILD_APP,
+                Integration=INTEGRATION,
+            )
+            self.assertTrue(build(orchestrator, llm))
+            self.assertEqual(llm.left(), {})
+            self.assertEqual(Path("shout.py").read_text(), SHOUT)
 
     def test_a_cancel_stops_every_builder_and_run_picks_up(self):
         with GitTemporaryDirectory():
@@ -527,6 +552,14 @@ class TestParallelBuilding(unittest.TestCase):
             self.assertEqual([a["passed"] for a in integration["attempts"]], [True])
             packages = orchestrator.state.phase_data("building")["packages"]
             self.assertEqual(packages["adder"]["attempts"], 2)
+
+            from loom.project_report import ProjectReport
+
+            report = ProjectReport.from_orchestrator(orchestrator).markdown()
+            self.assertIn("**Test-driven Building, run 1, the adder package:**", report)
+            self.assertIn("**Test-driven Building, run 1, integration:**", report)
+            # The template-free project's checks aren't there; Building's are Building's
+            self.assertNotIn("after Integration", report)
 
     def test_serial_fallback(self):
         for workers, architecture, why in [

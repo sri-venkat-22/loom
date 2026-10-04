@@ -357,7 +357,7 @@ class ParallelBuilding:
             mcp=None,
             hooks=None,
             file_watcher=None,
-            permissions=main.permissions.copy_for(io),
+            permissions=main.permissions.copy_for(io, root=path),
             phase=self.package_phase(package),
             shared_memory=orchestrator.memory,
             template=orchestrator.template,
