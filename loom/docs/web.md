@@ -42,6 +42,8 @@ line you can open.
   loom asks before an edit, **Accept** (`y`) or **Reject** (`n`) it; `a` always accepts
   edits like it, and `b` stops loom asking for the rest of the session. A command waiting
   for approval shows on its card the same way, with **Allow** and **Deny**.
+- **Web searches and fetches** show the pages they found or read as links, which open
+  in a new tab.
 - **Questions** loom asks show inline, with a key for each answer.
 - **Plans** the agent presents in [plan mode](agent.md#plan-mode) show as a card with the
   plan rendered: **Approve** (`y`) carries it out asking before each edit, **Approve and

@@ -108,9 +108,11 @@ class AgentCoder(Coder):
 
     @property
     def tools(self):
-        """The built-in tools, exit_plan_mode in plan mode, then those of the connected MCP
-        servers."""
+        """The built-in tools, the web tools unless they're off, exit_plan_mode in plan
+        mode, then those of the connected MCP servers."""
         res = agent_tools.schemas()
+        if self.web_tools:
+            res += agent_tools.web_schemas()
         if self.permissions.mode == "plan":
             res += agent_tools.plan_schemas()
         if self.mcp:
@@ -160,6 +162,8 @@ class AgentCoder(Coder):
         extra = []
         if self.mcp:
             extra.append(self.mcp.instructions())
+        if self.web_tools:
+            extra.append(self.gpt_prompts.web_tools_prompt)
         if self.permissions.mode == "plan":
             extra.append(self.gpt_prompts.plan_mode_prompt)
         elif self.active_plan:
@@ -424,7 +428,7 @@ class AgentCoder(Coder):
         if action.kind == "edit":
             self.before_edit(action)
         try:
-            if action.kind in ("bash", "mcp") and self.show_pretty():
+            if action.kind in ("bash", "mcp", "web_search", "web_fetch") and self.show_pretty():
                 # These can take a while
                 with WaitingSpinner(self.get_spinner_text()):
                     result = action.run()

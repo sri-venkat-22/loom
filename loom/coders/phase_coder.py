@@ -40,14 +40,17 @@ class PhaseCoder(AgentCoder):
         project = agent_tools.project_schemas() if self.shared_memory else []
         if self.phase.tools is None:
             return super().tools + project
+        web = agent_tools.web_schemas() if self.web_tools else []
         return [
             schema
-            for schema in agent_tools.schemas() + project
+            for schema in agent_tools.schemas() + web + project
             if schema["function"]["name"] in self.phase.tools
         ]
 
     def system_prompt_extras(self):
         extra = super().system_prompt_extras() if self.phase.tools is None else []
+        if self.phase.tools is not None and self.web_tools and "web_fetch" in self.phase.tools:
+            extra.append(self.gpt_prompts.web_tools_prompt)
         extra.append(self.phase_brief())
         return extra
 
@@ -58,7 +61,10 @@ class PhaseCoder(AgentCoder):
         if phase.tools is None:
             lines.append("All of the coding agent's tools, and recall and record_decision.")
         else:
-            lines.append(", ".join(phase.tools))
+            tools = [
+                name for name in phase.tools if self.web_tools or name not in agent_tools.WEB_TOOLS
+            ]
+            lines.append(", ".join(tools))
         lines += ["", "## What you may write"]
         lines.append(f"- {phase.document} (your {phase.document_title})")
         if phase.writable is None:

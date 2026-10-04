@@ -209,6 +209,8 @@ class TestAgentLoop(unittest.TestCase):
                     "write_file",
                     "bash",
                     "todo_write",
+                    "web_search",
+                    "web_fetch",
                 ],
             )
             results = tool_results(llm.requests[1]["messages"])

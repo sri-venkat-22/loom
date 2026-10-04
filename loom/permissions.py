@@ -18,9 +18,19 @@ Allow rules skip the question for matching actions in ask and accept-edits mode:
   read(/etc/hosts)      reads outside the project
   mcp(github)           every tool of an MCP server
   mcp(github__get_*)    MCP tools matching a pattern, as SERVER__TOOL
+  web_fetch(domain:docs.python.org)
+                        fetching pages from a host; *.github.com matches its subdomains
+  web_fetch             fetching from any host
+  web_search            searching the web (it never asks anyway)
 
 MCP tools ask in ask and accept-edits mode. In plan mode only the ones their server
 marks read-only run.
+
+web_search is read-only, so it runs without asking in every mode. web_fetch asks for
+each host in ask and accept-edits mode, offering to always allow the host (saved like a
+command), and in plan mode runs for allowed hosts and asks for others. A host that
+resolves to a private, loopback or link-local address is only fetched when a rule names
+it (web_fetch alone doesn't), like web_fetch(domain:localhost); see loom/webfetch.py.
 
 Rules come from --allow (or `allow:` in .loom.conf.yml) and from answering "always",
 which saves the rule to .loom.permissions.json in the project root.
@@ -61,7 +71,7 @@ MODES = {
 # The modes Shift-Tab cycles through; bypass is only chosen on purpose
 CYCLED_MODES = ("ask", "accept-edits", "plan")
 
-KINDS = ("read", "edit", "bash", "mcp")
+KINDS = ("read", "edit", "bash", "mcp", "web_search", "web_fetch")
 
 SETTINGS_FILE = ".loom.permissions.json"
 
@@ -200,8 +210,9 @@ class Rule:
         match = RULE_RE.match(text or "")
         if not match or match.group(1) not in KINDS:
             raise ValueError(
-                f"Invalid permission rule {text!r}; use bash(COMMAND), edit(PATH), read(PATH) or"
-                " mcp(SERVER or SERVER__TOOL), where * is a wildcard"
+                f"Invalid permission rule {text!r}; use bash(COMMAND), edit(PATH), read(PATH),"
+                " mcp(SERVER or SERVER__TOOL), web_fetch(domain:HOST) or web_search, where *"
+                " is a wildcard"
             )
         kind, pattern = match.groups()
         if pattern is not None:
@@ -228,6 +239,21 @@ class Rule:
 
     def matches_path(self, path):
         return self.pattern is None or glob_match(self.pattern, path)
+
+    @property
+    def domain(self):
+        """A web_fetch rule's host pattern, without its domain: prefix, or None for any."""
+        if self.pattern is None:
+            return None
+        domain = (
+            self.pattern[len("domain:") :] if self.pattern.startswith("domain:") else self.pattern
+        )
+        domain = domain.strip().lower().rstrip(".")
+        return None if domain in ("", "*") else domain
+
+    def matches_host(self, host):
+        """Whether a web_fetch rule covers host: *.github.com covers api.github.com."""
+        return self.domain is None or fnmatchcase(host.lower().rstrip("."), self.domain)
 
 
 def split_command(command, windows=None):
@@ -458,9 +484,21 @@ class Permissions:
     def rules_for(self, kind):
         return [rule for rule, _ in self.rules if rule.kind == kind]
 
+    def names_host(self, host):
+        """Whether a web_fetch rule names host itself, not just every host: what lets
+        web_fetch reach a private address."""
+        return any(
+            rule.domain is not None and rule.matches_host(host)
+            for rule in self.rules_for("web_fetch")
+        )
+
     def is_allowed(self, action):
         """Whether an allow rule covers this action."""
         rules = self.rules_for(action.kind)
+        if action.kind == "web_search":
+            return bool(rules)
+        if action.kind == "web_fetch":
+            return any(rule.matches_host(action.target) for rule in rules)
         if action.kind == "mcp":
             # mcp(github) covers every tool of the github server
             return any(mcp_action_matches_rule(action, rule) for rule in rules)
@@ -488,6 +526,12 @@ class Permissions:
             if action.inside or hook_allowed or self.is_allowed(action):
                 return "allow"
             return "ask"
+        if action.kind == "web_search":
+            # Read-only, in every mode
+            return "allow"
+        if action.kind == "web_fetch":
+            # Per host, in every mode; plan mode too, since reading a page changes nothing
+            return "allow" if hook_allowed or self.is_allowed(action) else "ask"
 
         if self.mode == "plan":
             # Only user-maintained ~/.loom/mcp-readonly.json rules let an MCP tool run
@@ -543,6 +587,9 @@ class Permissions:
             server, _, tool = action.target.partition("__")
             question = f"Use the {server} MCP tool {tool}?"
             always = f"always allow this tool (saved to {SETTINGS_FILE})"
+        elif action.kind == "web_fetch":
+            question = f"Fetch {action.extra.get('url') or action.target}?"
+            always = f"always allow {action.target} (saved to {SETTINGS_FILE})"
         else:
             question = "Run this command?"
             always = f"always allow this command (saved to {SETTINGS_FILE})"
@@ -552,12 +599,16 @@ class Permissions:
             subject = action.preview if self.io.agent_diffs else action.changes or action.preview
         elif action.kind == "mcp":
             subject = action.preview
+        elif action.kind == "web_fetch":
+            # The question has the URL
+            subject = None
         elif "\n" in action.target or len(action.target) > 60:
             # Too long for the one-line summary of the call shown before the question
             subject = action.target
         else:
             subject = None
-        explicit = action.kind in ("bash", "mcp") or protects(action, self.root)
+        # A fetch sends its URL out, so --yes-always doesn't approve it either
+        explicit = action.kind in ("bash", "mcp", "web_fetch") or protects(action, self.root)
         answer = self.io.permission_ask(
             question,
             subject=subject,
@@ -580,6 +631,8 @@ class Permissions:
                     "Edits in the project will be applied without asking for the rest of this"
                     " session. Use /permissions ask to go back."
                 )
+            elif action.kind == "web_fetch":
+                self.save_rule(Rule("web_fetch", f"domain:{action.target}"))
             else:
                 self.save_rule(exact_rule(action.kind, action.target))
             return "allow", ""
@@ -588,9 +641,10 @@ class Permissions:
 
         if explicit and self.io.yes is True:
             message = (
-                "Refused: shell commands, MCP tools and edits to protected files need explicit"
-                " approval, and --yes-always doesn't give it. Allow commands with --allow"
-                " 'bash(PATTERN)' and MCP tools with --allow 'mcp(SERVER)'."
+                "Refused: shell commands, MCP tools, web fetches and edits to protected files"
+                " need explicit approval, and --yes-always doesn't give it. Allow commands with"
+                " --allow 'bash(PATTERN)', MCP tools with --allow 'mcp(SERVER)' and web pages"
+                " with --allow 'web_fetch(domain:HOST)'."
             )
             self.io.tool_warning(message)
             return "user-deny", message

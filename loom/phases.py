@@ -5,7 +5,8 @@ of tools and one document it produces. The orchestrator (loom/orchestrator.py) r
 
 The Building agent is the coding agent itself (every tool, MCP included) with a brief;
 the others write a document, and Testing and Launch may also write test and deployment
-files. Every phase agent can search the project's shared memory and record decisions in it.
+files. Every phase agent can search the project's shared memory and record decisions in it,
+and Idea Check, Planning and Design can research on the web.
 """
 
 import re
@@ -17,6 +18,8 @@ DOCS_DIR = "loom-project"
 
 READ_TOOLS = ("read_file", "list_dir", "glob", "grep")
 WRITE_TOOLS = ("write_file", "edit_file")
+# Research on the web (loom/websearch.py, loom/webfetch.py), unless --no-web-tools
+WEB_TOOLS = ("web_search", "web_fetch")
 # The project's shared memory (loom/memory.py)
 MEMORY_TOOLS = ("recall", "record_decision")
 
@@ -97,7 +100,7 @@ PHASES = [
         "idea report",
         "idea report",
         phase_prompts.IDEA,
-        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         verdict_label="Verdict",
         verdicts=("GO WITH CHANGES", "NO-GO", "GO"),
     ),
@@ -109,7 +112,7 @@ PHASES = [
         "PRD",
         "PRD",
         phase_prompts.PLANNING,
-        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         inputs=("idea",),
         recall="users problem scope MVP assumptions risks",
     ),
@@ -121,7 +124,7 @@ PHASES = [
         "architecture document",
         "architecture doc",
         phase_prompts.DESIGN,
-        tools=READ_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
         inputs=("idea", "planning"),
         recall="constraints performance security scale platforms risks",
     ),

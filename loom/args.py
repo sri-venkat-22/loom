@@ -595,6 +595,26 @@ def get_parser(default_config_files, git_root):
         ),
     )
     group.add_argument(
+        "--web-tools",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable the agent's web_search and web_fetch tools, which the Idea Check,"
+            " Planning and Design agents of a /project use too (default: True)"
+        ),
+    )
+    group.add_argument(
+        "--web-search",
+        choices=["brave", "tavily", "searxng", "duckduckgo"],
+        metavar="BACKEND",
+        default=None,
+        help=(
+            "How web_search searches: brave (BRAVE_API_KEY), tavily (TAVILY_API_KEY), searxng"
+            " (SEARXNG_URL) or duckduckgo (no key, best-effort). Without it loom uses the first"
+            " one set up, and duckduckgo otherwise"
+        ),
+    )
+    group.add_argument(
         "--project-memory",
         action=argparse.BooleanOptionalAction,
         default=True,

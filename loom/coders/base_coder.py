@@ -385,6 +385,8 @@ class Coder:
         auto_compact=True,
         project_settings=None,
         checkpoint_steps=False,
+        web_tools=True,
+        web_search=None,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -469,6 +471,10 @@ class Coder:
         self.project_settings = dict(project_settings or {})
         # Also checkpoint before each agent step that edits files or runs commands
         self.checkpoint_steps = checkpoint_steps
+        # The agent's web_search and web_fetch tools, and the search backend (None picks
+        # one; see loom/websearch.py)
+        self.web_tools = web_tools
+        self.web_search = web_search
 
         self.shell_commands = []
 

@@ -312,6 +312,8 @@ class TestPhaseCoder(unittest.TestCase):
                     "edit_file",
                     "write_file",
                     "todo_write",
+                    "web_search",
+                    "web_fetch",
                     "recall",
                     "record_decision",
                 ],

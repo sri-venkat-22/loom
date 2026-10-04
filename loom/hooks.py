@@ -22,9 +22,10 @@ project) and the project's .loom/hooks.json (shared with the repo):
     }
 
 matcher is a regular expression for the whole tool name (bash, edit_file, write_file,
-read_file, list_dir, glob, grep, todo_write, ExitPlanMode or mcp__SERVER__TOOL), ignoring
-case. Leave it out, or use "" or "*", to match every tool. Tools Claude Code has under
-another name get its name in the payload (ExitPlanMode for exit_plan_mode); a matcher with
+read_file, list_dir, glob, grep, todo_write, ExitPlanMode, WebSearch, WebFetch or
+mcp__SERVER__TOOL), ignoring case. Leave it out, or use "" or "*", to match every tool.
+Tools Claude Code has under another name get its name in the payload (ExitPlanMode,
+WebSearch and WebFetch for exit_plan_mode, web_search and web_fetch); a matcher with
 loom's name matches them too.
 
 A hook gets the tool call as JSON on stdin: hook_event_name, tool_name, tool_input, cwd,

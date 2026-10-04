@@ -52,6 +52,7 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--agent | --no-agent] [--permission-mode]
             [--agent-diffs | --no-agent-diffs] [--allow]
             [--checkpoint-steps | --no-checkpoint-steps]
+            [--web-tools | --no-web-tools] [--web-search]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
@@ -546,6 +547,18 @@ Environment variable: `LOOM_CHECKPOINT_STEPS`
 Aliases:
   - `--checkpoint-steps`
   - `--no-checkpoint-steps`
+
+### `--web-tools`
+Enable/disable the agent's web_search and web_fetch tools, which the Idea Check, Planning and Design agents of a /project use too (default: True)  
+Default: True  
+Environment variable: `LOOM_WEB_TOOLS`  
+Aliases:
+  - `--web-tools`
+  - `--no-web-tools`
+
+### `--web-search BACKEND`
+How web_search searches: brave (BRAVE_API_KEY), tavily (TAVILY_API_KEY), searxng (SEARXNG_URL) or duckduckgo (no key, best-effort). Without it loom uses the first one set up, and duckduckgo otherwise  
+Environment variable: `LOOM_WEB_SEARCH`  
 
 ### `--project-memory`
 Enable/disable adding LOOM.md files to the system prompt (default: True)  

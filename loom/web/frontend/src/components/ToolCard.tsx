@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { answer, answerSummary } from "../lib/asks";
 import type { AskEvent, Choice, LineStyle } from "../lib/protocol";
+import { type WebLink, fetchedPage, hostOf, searchResults } from "../lib/web";
 import type { AskEntry, ToolEntry, ToolLine } from "../store/session";
 import { ActionButton } from "./Buttons";
 import { DiffView, diffCounts } from "./DiffView";
@@ -81,6 +82,37 @@ function outcome(ask: AskEvent, value: string | null | undefined, onDiff: boolea
   return { text: capital, ok };
 }
 
+// The pages a web search found, or the page a fetch read, as links
+function WebLinks({ entry }: { entry: ToolEntry }) {
+  let links: WebLink[] = [];
+  if (entry.name === "WebSearch") links = searchResults(entry.output);
+  if (entry.name === "WebFetch") {
+    const page = fetchedPage(entry.args, entry.output);
+    links = page ? [page] : [];
+  }
+  if (!links.length) return null;
+  return (
+    <div className="flex flex-col gap-1.5 px-3.5 pb-3 pl-[38px]" aria-label="Links">
+      {links.map((link) => (
+        <div key={link.url} className="min-w-0">
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="block truncate text-[13.5px] text-primary hover:underline"
+          >
+            {link.title}
+          </a>
+          <div className="truncate font-mono text-[11.5px] text-dim">{hostOf(link.url)}</div>
+          {link.snippet && (
+            <div className="line-clamp-2 text-[12.5px] text-muted-foreground">{link.snippet}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // A question on the card, like whether to make the edit above it or run the command.
 export function CardAsk({ entry, onDiff }: { entry: AskEntry; onDiff: boolean }) {
   const { ask } = entry;
@@ -152,6 +184,8 @@ export function ToolCard({ entry, asks }: { entry: ToolEntry; asks: AskEntry[] }
           <Lines lines={entry.lines} />
         </div>
       )}
+
+      {entry.status === "done" && <WebLinks entry={entry} />}
 
       {open &&
         (onDiff ? (

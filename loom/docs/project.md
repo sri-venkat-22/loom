@@ -4,9 +4,9 @@
 
 | # | Phase | The agent's tools | It produces |
 |---|-------|-------------------|-------------|
-| 1 | Idea Check | read, search, write its document | `loom-project/1-idea-report.md`, with a verdict: GO, GO WITH CHANGES or NO-GO |
-| 2 | Planning | read, search, write its document | `loom-project/2-prd.md`, the product requirements (PRD) |
-| 3 | Design | read, search, write its document | `loom-project/3-architecture.md`, the architecture document |
+| 1 | Idea Check | read, search, the web, write its document | `loom-project/1-idea-report.md`, with a verdict: GO, GO WITH CHANGES or NO-GO |
+| 2 | Planning | read, search, the web, write its document | `loom-project/2-prd.md`, the product requirements (PRD) |
+| 3 | Design | read, search, the web, write its document | `loom-project/3-architecture.md`, the architecture document |
 | 4 | Building | every tool of the [agent](agent.md), MCP servers' included | the code, and `loom-project/4-build-summary.md` |
 | 5 | Testing | read, search, run commands, write test files | `loom-project/5-test-report.md`, with a result: PASS or FAIL |
 | 6 | Launch | read, search, run commands, write deployment files | deployment files (Dockerfile, CI workflow, ...) and `loom-project/6-deployment.md`; then [`/project ship`](#shipping) |
@@ -19,6 +19,13 @@ refused. Testing may only write test files (`tests/`, `test_*`, `*_test.*`,
 `*.test.*`, `*.spec.*`, ...), so it reports bugs instead of fixing them, and Launch may
 only write deployment files (`Dockerfile`, `docker-compose.yml`, `.github/workflows/`,
 `Procfile`, `README.md`, ...).
+
+Idea Check, Planning and Design can research on the web with `web_search` and
+`web_fetch` (see [agent.md](agent.md#web-access)): Idea Check looks up competitors and
+similar products, Planning what users expect and the standards that apply, and Design the
+current versions and docs of the libraries it picks. They cite the URLs they relied on in
+a Sources section of their document. Building has the web tools too, with every other
+tool; Testing and Launch don't. `--no-web-tools` turns them off for every agent.
 
 Each agent starts a fresh conversation with the idea and the documents of the earlier
 phases it needs. loom only reads documents that are files in the project, up to 1 MB: one
