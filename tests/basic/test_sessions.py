@@ -114,10 +114,13 @@ class TestSessions(unittest.TestCase):
             sessions = list_sessions(SESSIONS_DIR)
             self.assertEqual({s[0] for s in sessions}, {first, coder.session.id})
 
+            # The start of the id is enough, unless both started in the same second with
+            # random parts that start the same
+            prefix = first if coder.session.id.startswith(first[:18]) else first[:18]
             out = stdio.StringIO()
             with contextlib.redirect_stdout(out):
                 coder.run(with_message="/sessions")
-                coder.run(with_message="/resume " + first[:18])
+                coder.run(with_message="/resume " + prefix)
             self.assertIn(f"{coder.session.id}", out.getvalue())
             self.assertEqual(coder.session.id, first)
             self.assertEqual(coder.done_messages[0]["content"], "fix calc.add")
