@@ -27,6 +27,7 @@ export function ActionButton({
   hint,
   title,
   onClick,
+  disabled = false,
   className = "",
   children,
 }: {
@@ -34,6 +35,7 @@ export function ActionButton({
   hint?: string;
   title?: string;
   onClick: () => void;
+  disabled?: boolean;
   className?: string;
   children: ReactNode;
 }) {
@@ -41,7 +43,8 @@ export function ActionButton({
     <button
       onClick={onClick}
       title={title}
-      className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] ${VARIANT[variant]} ${className}`}
+      disabled={disabled}
+      className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] disabled:pointer-events-none disabled:opacity-50 ${VARIANT[variant]} ${className}`}
     >
       {children}
       {hint && <KeyHint k={hint} onPrimary={variant === "primary"} />}

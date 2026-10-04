@@ -2,6 +2,8 @@ import { create } from "zustand";
 
 import type {
   AskEvent,
+  CheckpointItem,
+  CheckpointsEvent,
   DiffEvent,
   Level,
   LineStyle,
@@ -18,7 +20,8 @@ export interface ToolLine {
 
 // worker is the work package of the parallel builder an entry is from, if any
 export type Entry =
-  | { kind: "user"; id: string; text: string; worker?: string }
+  // turn is the turn the message started, which its checkpoint names
+  | { kind: "user"; id: string; text: string; worker?: string; turn?: string }
   | {
       kind: "loom";
       id: string;
@@ -58,6 +61,8 @@ interface SessionState {
   session: SessionEvent | null;
   // The /project dashboard's timeline, or null until loom sends one
   timeline: Timeline | null;
+  // Where /rewind can go back to, or null until loom sends them
+  checkpoints: CheckpointsEvent | null;
   entries: Entry[];
   // The output of commands like /run, for the side pane's terminal
   terminal: string;
@@ -81,6 +86,16 @@ function reduce(entries: Entry[], event: ServerEvent): Entry[] {
   switch (event.type) {
     case "user":
       return [...entries, { kind: "user", id: newId("u"), text: event.text }];
+
+    case "turn_start": {
+      // The turn the latest message started, so its checkpoint can find it
+      let index = entries.length - 1;
+      while (index >= 0 && entries[index].kind !== "user") index--;
+      if (index < 0) return entries;
+      return update(entries, entries[index].id, (entry) =>
+        entry.kind === "user" && !entry.turn ? { ...entry, turn: event.turn_id } : entry,
+      );
+    }
 
     case "assistant_delta": {
       const id = `loom-${event.id}`;
@@ -199,15 +214,17 @@ export const useSession = create<SessionState>((set) => ({
   connection: "connecting",
   session: null,
   timeline: null,
+  checkpoints: null,
   entries: [],
   terminal: "",
   setConnection: (connection) => set({ connection }),
   // The server replays the whole conversation to every new connection
-  reset: () => set({ session: null, timeline: null, entries: [], terminal: "" }),
+  reset: () => set({ session: null, timeline: null, checkpoints: null, entries: [], terminal: "" }),
   apply: (event) =>
     set((state) => {
       if (event.type === "session") return { session: event };
       if (event.type === "timeline") return { timeline: event };
+      if (event.type === "checkpoints") return { checkpoints: event };
       if (event.type === "conversation") return { entries: [] };
       if (event.type === "terminal") {
         const gap = event.start && state.terminal ? "\n" : "";
@@ -224,6 +241,19 @@ export const pendingAsk = (entries: Entry[]): AskEntry | undefined => {
   }
   return undefined;
 };
+
+// The checkpoint taken before a user message: the one its turn took, or else the newest
+// with its text, like for a resumed conversation
+export function checkpointFor(
+  entry: Extract<Entry, { kind: "user" }>,
+  items: CheckpointItem[],
+): CheckpointItem | undefined {
+  const byTurn = entry.turn && items.find((item) => item.turn_id === entry.turn);
+  if (byTurn) return byTurn;
+  return items.find(
+    (item) => !item.turn_id && item.kind === "request" && item.prompt === entry.text,
+  );
+}
 
 // Whether nothing has happened in the conversation yet but loom's own messages, like the
 // banner it prints at startup

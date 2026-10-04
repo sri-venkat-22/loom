@@ -41,6 +41,9 @@ interface UiState {
   // Show the project dashboard, at a phase's card if given
   openProject: (key?: string) => void;
   setMemoryQuery: (query: string) => void;
+  // The checkpoint the rewind dialog is open for, or null
+  rewind: string | null;
+  openRewind: (id: string | null) => void;
 }
 
 export const useUi = create<UiState>((set, get) => ({
@@ -79,4 +82,6 @@ export const useUi = create<UiState>((set, get) => ({
     set((state) => ({ projectFocus: { key: key ?? null, n: state.projectFocus.n + 1 } }));
   },
   setMemoryQuery: (memoryQuery) => set({ memoryQuery }),
+  rewind: null,
+  openRewind: (rewind) => set({ rewind }),
 }));

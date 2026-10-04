@@ -14,7 +14,7 @@ from rich.text import Text
 
 from loom import __version__
 from loom.display import sanitize_for_display
-from loom.io import HUNK_RE, InputOutput
+from loom.io import HUNK_RE, InputOutput, choice_keys
 from loom.permissions import MODES
 from loom.phases import PHASES, get_phase
 from loom.reasoning_tags import REASONING_END, REASONING_START
@@ -207,6 +207,10 @@ class WebIO(InputOutput):
         self.tool_closed = False
         # What the user wrote on the plan card with "keep planning"
         self.plan_feedback = ""
+        # The coder whose checkpoints the rewind buttons show, and the turn each
+        # checkpoint was taken in
+        self.rewind_coder = None
+        self.checkpoint_turns = {}
 
     def for_worker(self, worker):
         """A copy of this io for a parallel builder (loom/workers.py): its own tool cards,
@@ -272,6 +276,8 @@ class WebIO(InputOutput):
         coder = getattr(commands, "coder", None)
         self.remember_files(coder, root, rel_fnames, addable_rel_fnames)
         self.follow_conversation(coder)
+        if getattr(coder, "session", None):
+            self.checkpoints_changed(coder)
         self.remember_repo(coder)
         self.web.set_mode = lambda mode: self.set_mode(coder, mode)
         self.web.update(**self.session_state(coder, root, rel_fnames, commands))
@@ -319,6 +325,84 @@ class WebIO(InputOutput):
         self.web.start_conversation(
             session.id, title, list(transcript(coder.done_messages, self.web.next_id))
         )
+
+    # Checkpoints, for the rewind buttons (loom/checkpoints.py)
+
+    def checkpoints_changed(self, coder):
+        if not getattr(self, "web", None):
+            return
+        from loom.checkpoints import rewinds_conversation
+
+        self.rewind_coder = coder
+        session = coder.session
+        items = []
+        for num, checkpoint in enumerate(reversed(list(session.checkpoints)), 1):
+            if checkpoint["id"] not in self.checkpoint_turns:
+                # Seen first now: taken in this turn, or loaded with a resumed session
+                self.checkpoint_turns[checkpoint["id"]] = self.web.turn_id
+            items.append(
+                dict(
+                    id=checkpoint["id"],
+                    number=num,
+                    time=checkpoint.get("time"),
+                    prompt=sanitize_for_display(checkpoint.get("prompt") or ""),
+                    kind=checkpoint.get("kind", "request"),
+                    conversation=rewinds_conversation(checkpoint),
+                    turn_id=self.checkpoint_turns[checkpoint["id"]],
+                )
+            )
+        self.web.emit(
+            "checkpoints",
+            conversation=session.id,
+            git=coder.checkpoints.uses_git,
+            items=items,
+        )
+
+    def conversation_rewound(self, coder):
+        # The chat shows the conversation as it is now
+        session = coder.session
+        title = session.title or get_title(coder.done_messages)
+        self.web.start_conversation(
+            session.id, title, list(transcript(coder.done_messages, self.web.next_id))
+        )
+
+    def checkpoint_changes(self, checkpoint_id):
+        """What the rewind dialog shows about a checkpoint: what changed in the files since,
+        and whether a rewind can restore them now. None if there's no such checkpoint. Runs
+        on the server's thread, with its own index file."""
+        from loom.checkpoints import INDEX_FILE, CheckpointError, rewinds_conversation
+
+        coder = self.rewind_coder
+        if not coder:
+            return None
+        session = coder.session
+        checkpoint = next(
+            (cp for cp in list(session.checkpoints) if cp["id"] == checkpoint_id), None
+        )
+        if not checkpoint:
+            return None
+        checkpoints = coder.checkpoints
+        res = dict(
+            id=checkpoint["id"],
+            time=checkpoint.get("time"),
+            prompt=sanitize_for_display(checkpoint.get("prompt") or ""),
+            kind=checkpoint.get("kind", "request"),
+            conversation=rewinds_conversation(checkpoint),
+            git=checkpoints.uses_git,
+            busy=None,
+            error=None,
+            changes=None,
+        )
+        try:
+            checkpoints.check_can_restore()
+        except CheckpointError as err:
+            res["busy"] = str(err)
+        try:
+            changes = checkpoints.changes(session, checkpoint, index_name=INDEX_FILE + "-web")
+            res["changes"] = changes.to_dict()
+        except Exception as err:
+            res["error"] = str(err)
+        return res
 
     def remember_repo(self, coder):
         repo = getattr(coder, "repo", None)
@@ -475,12 +559,13 @@ class WebIO(InputOutput):
         checkpoint=None,
         plan=None,
     ):
-        labels = [(choice, choice.capitalize()) for choice in choices]
+        # The answer is the choice without the parentheses that mark its key
+        labels = [(choice, choice.capitalize()) for choice in choice_keys(choices)]
         kind = "checkpoint" if checkpoint else "plan" if plan else "choice"
         if plan:
             plan = dict(plan, text=sanitize_for_display(plan["text"]))
             self.plan_feedback = ""
-        with self.asking(kind, question, labels, default or choices[0]):
+        with self.asking(kind, question, labels, default or labels[0][0]):
             self.pending_ask["checkpoint"] = checkpoint
             self.pending_ask["plan"] = plan
             if checkpoint and self.project_watcher:

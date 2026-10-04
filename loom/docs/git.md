@@ -21,6 +21,10 @@ to run them.
 - `/diff` shows the changes made since your last message.
 - `/undo` reverts loom's last commit. It only undoes commits loom made in the current
   chat session, and only if they have not been pushed.
+- `/rewind` puts the files (and the conversation, if you like) back to before an
+  earlier request, from a snapshot loom takes before each one, shell commands' changes
+  included. It commits the result as a new commit, so history is never rewritten. See
+  [sessions.md](sessions.md#rewind).
 - `/commit [message]` commits changes you made yourself outside the chat.
 - `/git <args>` runs any git command, e.g. `/git log --oneline -5`.
 

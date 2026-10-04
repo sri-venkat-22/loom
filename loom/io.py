@@ -15,6 +15,7 @@ from datetime import datetime
 from io import StringIO
 from pathlib import Path
 
+from prompt_toolkit.application.current import get_app
 from prompt_toolkit.completion import Completer, Completion, ThreadedCompleter
 from prompt_toolkit.cursor_shapes import ModalCursorShapeConfig
 from prompt_toolkit.enums import EditingMode
@@ -764,6 +765,17 @@ class InputOutput:
                 show = ("" if multiline_input else files_show) + self.prompt_prefix
                 event.app.invalidate()
 
+        empty_emacs_prompt = Condition(
+            lambda: self.editingmode == EditingMode.EMACS
+            and not get_app().current_buffer.text.strip()
+        )
+
+        @kb.add("escape", "escape", filter=empty_emacs_prompt & ~has_completions & ~is_searching)
+        def _(event):
+            "Esc Esc at an empty prompt opens /rewind, like Claude Code"
+            event.current_buffer.text = "/rewind"
+            event.current_buffer.validate_and_handle()
+
         @kb.add("escape", "enter", eager=True, filter=~is_searching)  # This is Alt+Enter
         def _(event):
             "Handle Alt+Enter key press"
@@ -1167,16 +1179,21 @@ class InputOutput:
         (the first choice if None). With --yes-always the answer is yes_choice (default if
         None), and with --no it's no_choice (the last choice if None).
 
+        A choice can mark another letter as its key, like "c(o)de only", for choices that
+        start the same; the answer is the choice without the parentheses.
+
         checkpoint describes the project phase being reviewed, when the question is a
         /project checkpoint, for UIs that show those differently. plan is {text, path} when
         the question is whether to approve the agent's plan, which is shown first."""
+        keys = choice_keys(choices)
+        choices = list(keys)
         default = default or choices[0]
         self.num_user_asks += 1
         if plan:
             self.print_plan(plan["text"], plan.get("path"))
         self.ring_bell()
         question = sanitize_for_display(question, show_escapes=True)
-        options = "/".join(f"({choice[0].upper()}){choice[1:]}" for choice in choices)
+        options = "/".join(shown for _key, shown in keys.values())
         question += f" {options} [{default.capitalize()}]: "
 
         if self.yes is True:
@@ -1197,7 +1214,8 @@ class InputOutput:
                     res = no_choice or choices[-1]
                     break
                 res = res.strip().lower() or default
-                matches = [choice for choice in choices if choice.startswith(res)]
+                matches = [choice for choice, (key, _) in keys.items() if res == key]
+                matches = matches or [choice for choice in choices if choice.startswith(res)]
                 if matches:
                     res = matches[0]
                     break
@@ -1240,6 +1258,12 @@ class InputOutput:
     def permission_mode_changed(self, mode):
         """The agent's permission mode changed, like when a plan is approved. The terminal
         shows the mode at the next prompt."""
+
+    def checkpoints_changed(self, coder):
+        """coder's session has new or fewer checkpoints, for UIs that list them."""
+
+    def conversation_rewound(self, coder):
+        """/rewind cut coder's conversation back, for UIs that show the conversation."""
 
     def diff_output(self, diff, indent=""):
         """Show a unified diff with line numbers, removed lines in red and added lines in
@@ -1641,6 +1665,23 @@ class InputOutput:
             console.print(Columns(files_with_label))
 
         return output.getvalue()
+
+
+def choice_keys(choices):
+    """{choice: (key, how it's shown)} for choice_ask's choices, in order: a choice's key
+    is its first letter, or the letter it puts in parentheses, like c(o)de only, which
+    shows as c(O)de only. The choices lose their parentheses."""
+    res = {}
+    for choice in choices:
+        match = re.search(r"\((\w)\)", choice)
+        if match:
+            letter = match.group(1)
+            plain = choice[: match.start()] + letter + choice[match.end() :]
+            shown = choice[: match.start()] + f"({letter.upper()})" + choice[match.end() :]
+            res[plain] = (letter.lower(), shown)
+        else:
+            res[choice] = (choice[:1].lower(), f"({choice[:1].upper()}){choice[1:]}")
+    return res
 
 
 def get_rel_fname(fname, root):

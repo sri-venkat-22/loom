@@ -98,6 +98,10 @@ loom returns to the prompt so you can say what to do instead. The edits made so 
 kept and committed. ^C does the same; pressed twice it exits loom. Anything you type
 while the agent works is kept and waits for you at the next prompt.
 
+Press **Esc** twice at an empty prompt to open `/rewind`, which puts the code, the
+conversation or both back to before an earlier request, shell commands' changes
+included; see [sessions.md](sessions.md#rewind).
+
 The agent stops after 100 steps; say "continue" to let it go on.
 
 ### The to-do list

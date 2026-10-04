@@ -50,6 +50,16 @@ Server to browser:
   ask_resolved   {ask_id, value}            The question was answered.
   terminal       {text, start}              Output of a command like /run, for the side
                                             pane's terminal; start begins a new command.
+  checkpoints    {conversation, git, items: [{id, number, time, prompt, kind, conversation,
+                  turn_id}]}
+                 Where /rewind can go back to in the conversation, newest first, sent when
+                 it changes. number is what /rewind N takes (1 is the newest), prompt the
+                 request it was taken before, kind request, phase (a /project phase),
+                 step (--checkpoint-steps) or rewind (before a rewind), conversation
+                 whether it can rewind the conversation too (only before a request), and
+                 turn_id the turn it was taken in, or null when that wasn't in this
+                 browser session. git is false without a git repo, when a rewind only
+                 covers the files the agent edited.
   timeline       {available, idea, created, current, complete, template, tdd, workers,
                   deployment, totals, phases, decisions}
                  The /project dashboard's view of the project, sent when it changes.
@@ -90,8 +100,11 @@ package it builds: assistant_delta, assistant_end, system, tool_start, tool_outp
 tool_end and diff. The chat shows each builder's in a lane of its own. Its questions come
 from the main thread, as asks without worker.
 
-On connecting, the browser gets the session and the latest timeline, followed by every
-other message so far, so a reloaded page shows the whole conversation.
+On connecting, the browser gets the session, the latest timeline and checkpoints, followed
+by every other message so far, so a reloaded page shows the whole conversation.
+
+The rewind dialog reads what changed since a checkpoint from GET /api/checkpoints/ID, and
+rewinds by sending the input /rewind ID code|conversation|both --yes.
 """
 
 PROTOCOL_VERSION = 1
@@ -113,6 +126,7 @@ SERVER_EVENTS = (
     "ask_resolved",
     "terminal",
     "timeline",
+    "checkpoints",
 )
 
 CLIENT_EVENTS = (
@@ -131,6 +145,7 @@ TOOL_STATUSES = ("done", "failed")
 MAX_TOOL_OUTPUT = 20_000
 DIFF_LINE_KINDS = ("add", "del", "ctx", "gap", "note")
 RUN_OUTCOMES = ("done", "stopped", "failed")
+CHECKPOINT_KINDS = ("request", "phase", "step", "rewind")
 
 
 def event(type, **payload):

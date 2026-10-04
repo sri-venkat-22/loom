@@ -51,6 +51,7 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--watch-files | --no-watch-files]
             [--agent | --no-agent] [--permission-mode]
             [--agent-diffs | --no-agent-diffs] [--allow]
+            [--checkpoint-steps | --no-checkpoint-steps]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
@@ -537,6 +538,14 @@ Aliases:
 Let the agent do something without asking, eg: 'bash(pytest*)', 'edit(src/**)' (can be used multiple times)  
 Default: []  
 Environment variable: `LOOM_ALLOW`  
+
+### `--checkpoint-steps`
+Checkpoint the files before each agent step that edits files or runs a command, as well as before each request, so /rewind can undo a single step (default: False)  
+Default: False  
+Environment variable: `LOOM_CHECKPOINT_STEPS`  
+Aliases:
+  - `--checkpoint-steps`
+  - `--no-checkpoint-steps`
 
 ### `--project-memory`
 Enable/disable adding LOOM.md files to the system prompt (default: True)  

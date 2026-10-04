@@ -67,10 +67,16 @@ since loom started; click **Changes** to see them.
 ## Sessions
 
 The sidebar on the left lists this project's saved conversations, newest first, with
-the current one marked. Click one to continue it (loom's `/resume`): the chat shows that
+the current one marked, and the current one's checkpoints under it. Click one to continue it (loom's `/resume`): the chat shows that
 conversation, and the agent picks it up where it left off. **New session** starts a new
 one (`/clear`); the old one stays saved. ⌘\, or the panel button at the left of the
-header, shows and hides the sidebar. Its foot shows the project folder and whether the
+header, shows and hides the sidebar.
+
+To [rewind](sessions.md#rewind), hover over one of your messages and click **↺**, or
+click a checkpoint in the sidebar. The dialog shows what would change in the files (the
+files changed, created and deleted since), and rewinds the **code and conversation**,
+the **code only** or the **conversation only**. Rewinding the conversation puts the
+message back in the input, to change and send again. Its foot shows the project folder and whether the
 page is connected to loom.
 
 ## Commands

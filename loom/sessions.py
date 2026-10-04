@@ -4,8 +4,8 @@ Saved conversations. After every request loom saves the conversation to
 one and `loom --resume ID` an older one.
 
 A Session also holds the conversation state that outlives a single coder, like the
-agent's to-do list and the plan approved in plan mode, so it survives switching chat
-modes.
+agent's to-do list, the plan approved in plan mode and the checkpoints /rewind goes back
+to, so it survives switching chat modes.
 """
 
 import json
@@ -69,6 +69,8 @@ class Session:
         self.title = self.data.get("title") or ""
         # The approved plan's file (loom/plans.py), relative to the project root
         self.plan = self.data.get("plan")
+        # Where /rewind can go back to, oldest first (loom/checkpoints.py)
+        self.checkpoints = list(self.data.get("checkpoints") or [])
 
     @property
     def path(self):
@@ -123,6 +125,7 @@ class Session:
         self.created = now()
         self.title = ""
         self.plan = None
+        self.checkpoints = []
 
     def to_dict(self, coder):
         messages = jsonable(coder.done_messages + coder.cur_messages)
@@ -140,6 +143,7 @@ class Session:
             read_only_files=sorted(str(fname) for fname in coder.abs_read_only_fnames),
             todos=jsonable(self.todos),
             plan=self.plan,
+            checkpoints=jsonable(self.checkpoints),
             messages=messages,
         )
 

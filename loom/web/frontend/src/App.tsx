@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { Chat, Welcome } from "./components/Chat";
 import { Composer, Suggestions } from "./components/Composer";
 import { PhaseBreadcrumb } from "./components/PhaseBreadcrumb";
+import { RewindDialog } from "./components/RewindDialog";
 import { SidePane } from "./components/SidePane";
 import { Sidebar } from "./components/Sidebar";
 import { answerWithKey } from "./lib/asks";
@@ -143,6 +144,7 @@ export function App() {
         </main>
         <SidePane />
       </div>
+      <RewindDialog />
     </div>
   );
 }

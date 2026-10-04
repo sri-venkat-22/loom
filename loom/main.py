@@ -1270,6 +1270,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             ),
             mcp=mcp,
             hooks=hooks,
+            checkpoint_steps=args.checkpoint_steps,
         )
     except UnknownEditFormat as err:
         io.tool_error(str(err))

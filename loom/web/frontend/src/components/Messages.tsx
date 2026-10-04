@@ -2,7 +2,8 @@ import { useState } from "react";
 
 import { answer, answerSummary } from "../lib/asks";
 import { send } from "../lib/socket";
-import type { AskEntry, Entry } from "../store/session";
+import { type AskEntry, type Entry, checkpointFor, useSession } from "../store/session";
+import { useUi } from "../store/ui";
 import { ActionButton } from "./Buttons";
 import { CheckpointCard } from "./CheckpointCard";
 import { DiffView } from "./DiffView";
@@ -19,8 +20,23 @@ const LEVEL_CLASS = {
 };
 
 function UserMessage({ entry }: { entry: Of<"user"> }) {
+  const checkpoint = useSession((state) =>
+    state.checkpoints ? checkpointFor(entry, state.checkpoints.items) : undefined,
+  );
+  const busy = useSession((state) => state.session?.busy ?? false);
   return (
-    <div className="flex justify-end">
+    <div className="group flex items-center justify-end gap-2">
+      {checkpoint && (
+        <button
+          onClick={() => useUi.getState().openRewind(checkpoint.id)}
+          disabled={busy}
+          title="Rewind to before this message"
+          aria-label="Rewind to before this message"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full text-[15px] text-dim opacity-0 transition-opacity hover:bg-card hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:hidden"
+        >
+          ↺
+        </button>
+      )}
       <div className="max-w-[80%] whitespace-pre-wrap break-words rounded-[18px_18px_4px_18px] bg-bubble px-4 py-2.5 text-[15px] leading-[1.55]">
         {entry.text}
       </div>

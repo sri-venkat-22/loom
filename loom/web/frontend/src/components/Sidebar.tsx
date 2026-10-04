@@ -60,8 +60,46 @@ function SessionItem({
   );
 }
 
+// Checkpoints the sidebar lists under the current conversation
+const SHOWN_CHECKPOINTS = 8;
+
+// The current conversation's checkpoints, newest first: choosing one opens the rewind
+// dialog
+function Checkpoints({ idle }: { idle: boolean }) {
+  const items = useSession((state) => state.checkpoints?.items);
+  const openRewind = useUi((state) => state.openRewind);
+  if (!items?.length) return null;
+  return (
+    <div className="mb-1 ml-3 flex flex-col border-l border-line pl-2" aria-label="Checkpoints">
+      {items.slice(0, SHOWN_CHECKPOINTS).map((item) => (
+        <button
+          key={item.id}
+          disabled={!idle}
+          onClick={() => openRewind(item.id)}
+          title={`Rewind to before this (/rewind ${item.number})`}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[12px] text-muted-foreground enabled:hover:bg-card enabled:hover:text-foreground"
+        >
+          <span className="shrink-0 text-dim">↺</span>
+          <span className="min-w-0 flex-1 truncate">
+            {item.prompt.trim().split("\n", 1)[0] || "(empty request)"}
+          </span>
+          <span className="shrink-0 font-mono text-[11px] text-dim">
+            {item.time?.slice(11, 16)}
+          </span>
+        </button>
+      ))}
+      {items.length > SHOWN_CHECKPOINTS && (
+        <div className="px-2 py-1 text-[11.5px] text-dim">
+          {items.length - SHOWN_CHECKPOINTS} older · /rewind lists them
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The project's saved conversations, on the left like Claude Code's sessions. Choosing
-// one continues it, with loom's own /resume; "New session" starts one, with /clear.
+// one continues it, with loom's own /resume; "New session" starts one, with /clear. The
+// current one lists its checkpoints, to rewind to.
 export function Sidebar() {
   const open = useUi((state) => state.sidebar);
   const conversation = useSession((state) => state.session?.conversation ?? null);
@@ -124,7 +162,10 @@ export function Sidebar() {
           </div>
         )}
         {sessions.map((session) => (
-          <SessionItem key={session.id} session={session} busy={busy} idle={idle} />
+          <div key={session.id}>
+            <SessionItem session={session} busy={busy} idle={idle} />
+            {session.current && <Checkpoints idle={idle} />}
+          </div>
         ))}
       </div>
       <div className="m-2.5 flex flex-col gap-1 rounded-xl border border-line p-3">

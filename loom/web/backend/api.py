@@ -115,6 +115,15 @@ def make_router(io):
             found.insert(0, dict(id=current, updated=None, title="", messages=0, current=True))
         return dict(saved=bool(io.sessions_dir), sessions=found)
 
+    @router.get("/checkpoints/{checkpoint_id}")
+    def checkpoint(checkpoint_id: str):
+        """What changed in the files since a checkpoint, for the rewind dialog."""
+        root()
+        found = io.checkpoint_changes(checkpoint_id)
+        if found is None:
+            raise HTTPException(404, f"There's no checkpoint {checkpoint_id}")
+        return found
+
     @router.get("/changes")
     def changes_(base: str = "session"):
         """The files that differ from the commit loom started at (base=session), or from

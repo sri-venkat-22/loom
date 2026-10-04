@@ -543,6 +543,8 @@ class Orchestrator:
     def run_phase(self, phase):
         """Run phase's agent until it has written its document. Returns whether it did."""
         state = self.state
+        # So /rewind can put the files back to before the phase's agents changed them
+        self.coder.take_checkpoint(f"/project: the {phase.title} phase", kind="phase")
         state.start(phase.key)
         state.save()
 

@@ -20,6 +20,8 @@ class PhaseCoder(AgentCoder):
 
     # Paths of acceptance tests it may not change (test-driven Building)
     locked = frozenset()
+    # The orchestrator checkpoints the project before each phase's run, for /rewind
+    checkpoint_requests = False
 
     def __init__(
         self, main_model, io, phase=None, shared_memory=None, template=None, locked=None, **kwargs

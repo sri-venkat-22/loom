@@ -23,6 +23,9 @@ MCP_PREVIEW_LINES = 6
 # Lines of a PostToolUse hook's feedback shown to the user
 HOOK_PREVIEW_LINES = 4
 
+# With --checkpoint-steps, a step that uses one of these is checkpointed first
+STEP_CHECKPOINT_TOOLS = ("edit_file", "write_file", "bash")
+
 # Compacting: when the conversation passes COMPACT_AT of the model's context window, loom
 # shrinks it to about COMPACT_TARGET, keeping the last KEEP_RECENT_STEPS steps as they are
 COMPACT_AT = 0.8
@@ -99,6 +102,9 @@ class AgentCoder(Coder):
     active_plan_path = None
     # Set for loom --message: nothing can approve a plan, so it's shown and the agent stops
     one_shot = False
+    # Checkpoint before each request, for /rewind (phase agents' runs are checkpointed by
+    # the orchestrator instead)
+    checkpoint_requests = True
 
     @property
     def tools(self):
@@ -185,6 +191,8 @@ class AgentCoder(Coder):
     def send_message(self, inp):
         """Send inp, then keep sending tool results back until the model stops calling
         tools, the user denies an action or max_steps is reached. Esc or ^C stops it."""
+        if self.checkpoint_requests and not self.num_reflections:
+            self.take_checkpoint(inp)
         self.agent_edited = set()
         self.agent_touched = set()
         self.stop_requested = False
@@ -323,6 +331,8 @@ class AgentCoder(Coder):
         self.continue_loop = True
 
     def run_tool_calls(self, calls):
+        if self.checkpoint_steps:
+            self.checkpoint_step(calls)
         # Every call needs a result message, even ones that don't run
         for call in calls:
             if self.stop_requested:
@@ -339,6 +349,25 @@ class AgentCoder(Coder):
             self.cur_messages.append(dict(role="tool", tool_call_id=call["id"], content=result))
 
         self.continue_loop = not self.stop_requested
+
+    def checkpoint_step(self, calls):
+        """With --checkpoint-steps: checkpoint before a step that edits files or runs
+        commands, so /rewind can undo just that step."""
+        shown = []
+        for call in calls:
+            name = call["function"]["name"]
+            if name not in STEP_CHECKPOINT_TOOLS:
+                continue
+            try:
+                args = json.loads(call["function"]["arguments"] or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            detail = " ".join(str(args.get("path") or describe_args(args)).split())[:60]
+            shown.append(f"{agent_tools.display_name(name)}({detail})")
+        if shown:
+            self.take_checkpoint(", ".join(shown), kind="step")
 
     def run_tool_call(self, call):
         name = call["function"]["name"]
@@ -467,7 +496,9 @@ class AgentCoder(Coder):
 
     def before_edit(self, action):
         """Commit the user's own uncommitted changes to a file before the agent first edits
-        it, so /undo only reverts the agent's changes."""
+        it, so /undo only reverts the agent's changes. Without git, copy it for /rewind."""
+        if not self.repo and action.inside and not self.dry_run:
+            self.checkpoints.backup(self.session, action.path)
         if action.path in self.agent_touched:
             return
         self.agent_touched.add(action.path)

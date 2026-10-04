@@ -1,4 +1,4 @@
-import type { Decision, DiffLine, RunOutcome, Timeline } from "./protocol";
+import type { CheckpointKind, Decision, DiffLine, RunOutcome, Timeline } from "./protocol";
 
 export type { Decision };
 
@@ -72,6 +72,21 @@ export interface PhaseDiff {
   files: FileChange[];
 }
 
+// What changed in the files since a checkpoint, for the rewind dialog
+export interface CheckpointDetail {
+  id: string;
+  time: string | null;
+  prompt: string;
+  kind: CheckpointKind;
+  conversation: boolean;
+  git: boolean;
+  // Why the code can't be rewound now, like a merge in progress
+  busy: string | null;
+  error: string | null;
+  // changed in both, created since (a rewind deletes them), deleted since (it restores them)
+  changes: { changed: string[]; created: string[]; deleted: string[] } | null;
+}
+
 export type ReportFormat = "md" | "html" | "docx" | "pdf";
 
 export interface Alias {
@@ -129,5 +144,6 @@ export const api = {
   timeline: () => get<Timeline>("project/timeline"),
   phaseDiff: (key: string, run?: number) =>
     get<PhaseDiff>(`project/phase/${encodeURIComponent(key)}/diff`, run ? { run: `${run}` } : {}),
+  checkpoint: (id: string) => get<CheckpointDetail>(`checkpoints/${encodeURIComponent(id)}`),
   downloadReport,
 };

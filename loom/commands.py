@@ -587,6 +587,128 @@ class Commands:
         self.io.tool_output(f"Continuing conversation {session.id}: {session.title}")
         coder.show_session_recap()
 
+    def completions_rewind(self):
+        return ["--gc", "code", "conversation", "both"]
+
+    def cmd_rewind(self, args):
+        "Put the code and/or the conversation back to before an earlier request: /rewind [N] [code|conversation|both], /rewind --gc"  # noqa
+        from loom import checkpoints as cp
+
+        words = args.split()
+        if words == ["--gc"]:
+            return self.gc_checkpoints()
+        confirm = "--yes" not in words
+        words = [word for word in words if word != "--yes"]
+        what = None
+        if words and words[-1] in ("code", "conversation", "both"):
+            what = words.pop()
+        if len(words) > 1:
+            self.io.tool_error("Use /rewind [N] [code|conversation|both], or /rewind --gc")
+            return
+
+        session = self.coder.session
+        listed = list(reversed(session.checkpoints))
+        if not listed:
+            self.io.tool_output(
+                "There are no checkpoints yet: loom takes one before each request the agent"
+                " handles."
+            )
+            return
+
+        if words:
+            checkpoint = self.find_checkpoint(listed, words[0])
+        else:
+            self.show_checkpoints(listed)
+            answer = self.io.prompt_ask(
+                "Rewind to before which one? (its number, or Enter to cancel):"
+            ).strip()
+            if not answer or self.io.yes is not None:
+                return
+            checkpoint = self.find_checkpoint(listed, answer)
+        if not checkpoint:
+            return
+
+        if not cp.rewinds_conversation(checkpoint):
+            if what in ("conversation", "both"):
+                self.io.tool_error("This checkpoint only rewinds the code.")
+                return
+            what = "code"
+        elif what is None:
+            self.io.tool_output(f"Rewind to before: {cp.describe(checkpoint)}")
+            answer = self.io.choice_ask(
+                "What should go back?",
+                ["(c)ode and conversation", "c(o)de only", "co(n)versation only", "c(a)ncel"],
+                default="code and conversation",
+                yes_choice="cancel",
+            )
+            what = {
+                "code and conversation": "both",
+                "code only": "code",
+                "conversation only": "conversation",
+            }.get(answer)
+            if not what:
+                return
+        cp.rewind(
+            self.coder,
+            checkpoint,
+            code=what in ("code", "both"),
+            conversation=what in ("conversation", "both"),
+            confirm=confirm,
+        )
+
+    def find_checkpoint(self, listed, key):
+        """The checkpoint numbered key in the list /rewind shows (1 is the newest), or
+        whose id starts with key."""
+        if key.isdigit():
+            num = int(key)
+            if 1 <= num <= len(listed):
+                return listed[num - 1]
+            self.io.tool_error(f"There's no checkpoint {num}: they're numbered 1 to {len(listed)}.")
+            return None
+        matches = [checkpoint for checkpoint in listed if checkpoint["id"].startswith(key)]
+        if len(matches) == 1:
+            return matches[0]
+        self.io.tool_error(f"There's no checkpoint {key!r}. /rewind lists them.")
+        return None
+
+    def show_checkpoints(self, listed, limit=10):
+        """The newest checkpoints, numbered, with what changed in the files since each."""
+        from loom.checkpoints import describe
+
+        checkpoints = self.coder.checkpoints
+        current = None
+        if checkpoints.uses_git:
+            try:
+                current = checkpoints.write_tree()
+            except Exception as err:
+                self.io.tool_warning(f"Unable to compare the checkpoints with the files: {err}")
+        self.io.tool_output("Checkpoints, newest first:")
+        for num, checkpoint in enumerate(listed[:limit], 1):
+            since = ""
+            try:
+                if current and checkpoint.get("tree"):
+                    since = checkpoints.diff_trees(current, checkpoint["tree"]).short()
+                elif not checkpoints.uses_git:
+                    since = checkpoints.changes(self.coder.session, checkpoint).short()
+            except Exception:
+                since = ""
+            time = (checkpoint.get("time") or "")[11:16]
+            line = f"{num:>3}  {time}  {describe(checkpoint)}"
+            self.io.tool_output(line + (f"  · {since} since" if since else ""))
+        if len(listed) > limit:
+            self.io.tool_output(f"     … {len(listed) - limit} older; /rewind N picks any of them")
+
+    def gc_checkpoints(self):
+        from loom.tools import plural
+
+        session = self.coder.session
+        checkpoints = self.coder.checkpoints
+        dropped = checkpoints.gc(session.directory, current=session)
+        if checkpoints.uses_git:
+            self.io.tool_output(f"Dropped the checkpoints of {plural(dropped, 'deleted session')}.")
+        else:
+            self.io.tool_output(f"Dropped {plural(dropped, 'checkpoint')} of deleted sessions.")
+
     def cmd_reset(self, args):
         "Drop all files and clear the chat history"
         self._drop_all_files()

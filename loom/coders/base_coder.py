@@ -384,6 +384,7 @@ class Coder:
         hooks=None,
         auto_compact=True,
         project_settings=None,
+        checkpoint_steps=False,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -466,6 +467,8 @@ class Coder:
         self.auto_compact = auto_compact
         # Options for /project, like --build-retries
         self.project_settings = dict(project_settings or {})
+        # Also checkpoint before each agent step that edits files or runs commands
+        self.checkpoint_steps = checkpoint_steps
 
         self.shell_commands = []
 
@@ -1072,6 +1075,30 @@ class Coder:
     def todos(self):
         """The agent's to-do list for the conversation."""
         return self.session.todos
+
+    _checkpoints = None
+
+    @property
+    def checkpoints(self):
+        """What takes and restores the checkpoints /rewind goes back to
+        (loom/checkpoints.py)."""
+        if self._checkpoints is None:
+            from loom.checkpoints import Checkpoints
+
+            self._checkpoints = Checkpoints(self.io, self.root, self.repo)
+        return self._checkpoints
+
+    def take_checkpoint(self, prompt, kind="request"):
+        """Checkpoint the files and the conversation before prompt, so /rewind can go back
+        to here."""
+        if self.dry_run:
+            return None
+        checkpoint = self.checkpoints.take(
+            self.session, prompt, self.done_messages + self.cur_messages, kind
+        )
+        if checkpoint:
+            self.io.checkpoints_changed(self)
+        return checkpoint
 
     def save_session(self):
         """Save the conversation, so `loom --continue` can resume it."""

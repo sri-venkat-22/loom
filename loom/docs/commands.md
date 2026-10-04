@@ -47,6 +47,7 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/report` | Report a problem by opening a GitHub Issue |
 | `/reset` | Drop all files and clear the chat history |
 | `/resume` | Continue a saved conversation, by its id or the start of it (see /sessions) |
+| `/rewind` | Put the code and/or the conversation back to before an earlier request: /rewind [N] [code|conversation|both], /rewind --gc |
 | `/run` | Run a shell command and optionally add the output to the chat (alias: !) |
 | `/save` | Save commands to a file that can reconstruct the current chat session's files |
 | `/sessions` | List the saved conversations in this project, which /resume or --resume can continue |

@@ -354,6 +354,32 @@ export interface TimelineEvent extends Timeline {
   type: "timeline";
 }
 
+// What a checkpoint was taken before: a request, a /project phase, an agent step
+// (--checkpoint-steps) or a rewind
+export type CheckpointKind = "request" | "phase" | "step" | "rewind";
+
+export interface CheckpointItem {
+  id: string;
+  // What /rewind N takes: 1 is the newest
+  number: number;
+  time: string | null;
+  prompt: string;
+  kind: CheckpointKind;
+  // Whether it can rewind the conversation too, not just the code
+  conversation: boolean;
+  // The turn it was taken in, or null when that wasn't in this browser session
+  turn_id: string | null;
+}
+
+// Where /rewind can go back to in the conversation, newest first
+export interface CheckpointsEvent {
+  type: "checkpoints";
+  conversation: string;
+  // False without a git repo: a rewind only covers the files the agent edited
+  git: boolean;
+  items: CheckpointItem[];
+}
+
 export type ServerEvent =
   | SessionEvent
   | TimelineEvent
@@ -370,7 +396,8 @@ export type ServerEvent =
   | AskEvent
   | AskResolvedEvent
   | TerminalEvent
-  | ConversationEvent;
+  | ConversationEvent
+  | CheckpointsEvent;
 
 export type ClientEvent =
   | { type: "input"; text: string }

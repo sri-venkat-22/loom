@@ -585,6 +585,16 @@ def get_parser(default_config_files, git_root):
         ),
     )
     group.add_argument(
+        "--checkpoint-steps",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Checkpoint the files before each agent step that edits files or runs a command,"
+            " as well as before each request, so /rewind can undo a single step"
+            " (default: False)"
+        ),
+    )
+    group.add_argument(
         "--project-memory",
         action=argparse.BooleanOptionalAction,
         default=True,
