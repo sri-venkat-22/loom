@@ -52,6 +52,7 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/save` | Save commands to a file that can reconstruct the current chat session's files |
 | `/sessions` | List the saved conversations in this project, which /resume or --resume can continue |
 | `/settings` | Print out the current settings |
+| `/tasks` | List this conversation's sub-agent tasks, or show one's transcript: /tasks [N] |
 | `/test` | Run a shell command and add the output to the chat on non-zero exit code |
 | `/think-tokens` | Set the thinking token budget, eg: 8096, 8k, 10.5k, 0.5M, or 0 to disable. |
 | `/todos` | Show the agent's to-do list |

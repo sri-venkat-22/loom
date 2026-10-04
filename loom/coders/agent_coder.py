@@ -363,7 +363,7 @@ class AgentCoder(Coder):
     def register_task(self, task):
         """Number a task as it starts, and remember it in the session for /tasks."""
         with self.task_lock:
-            task.number = len(self.session.tasks) + 1
+            task.number = self.session.next_task_number()
             self.session.tasks.append(task)
         return task.number
 
@@ -372,11 +372,23 @@ class AgentCoder(Coder):
         from loom.subagent_io import SubAgentIO
 
         self.register_task(task)
-        result = task.run(SubAgentIO(self.io, task))
+        board = self.io.task_board(verbose=self.verbose)
+        try:
+            result = task.run(SubAgentIO(self.io, task, board.view(task)))
+        finally:
+            board.close()
+            self.save_task(task)
         if task.status == "denied":
             # The user said no to the sub-agent: wait for them here too
             self.action_denied()
         return result
+
+    def save_task(self, task):
+        """Save a finished task's transcript with the session, for /tasks."""
+        try:
+            self.session.save_task(task.record())
+        except (OSError, TypeError, ValueError) as err:
+            self.io.tool_warning(f"Unable to save task {task.number}'s transcript: {err}")
 
     def add_assistant_reply_to_cur_messages(self):
         tool_calls = self.get_tool_calls()

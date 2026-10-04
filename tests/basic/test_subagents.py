@@ -493,3 +493,270 @@ class TestTaskTool(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def capture(io, terminal=False, width=100):
+    """Point io's console at a string, as a terminal or not. Returns the string."""
+    from io import StringIO
+
+    from rich.console import Console
+
+    out = StringIO()
+    io.console = Console(
+        file=out, force_terminal=terminal, width=width, color_system=None, highlight=False
+    )
+    return out
+
+
+class FakeTask:
+    label = "explore: auth flow"
+
+
+class TestTaskDisplay(unittest.TestCase):
+    def board(self, terminal, verbose=False):
+        from loom.subagent_io import TaskBoard
+
+        io = InputOutput(pretty=True, yes=True)
+        out = capture(io, terminal=terminal)
+        board = TaskBoard(io, verbose=verbose)
+        return board, board.view(FakeTask()), out
+
+    def test_plain_output_prints_every_line(self):
+        board, view, out = self.board(terminal=False)
+        self.assertFalse(board.rolling)
+        for num in range(5):
+            view.tool_call("Read", f"file{num}.py")
+        view.note("The linter found problems in file4.py.")
+        board.close()
+        self.assertEqual(
+            out.getvalue().splitlines(),
+            [
+                "  ⎿  Read(file0.py)",
+                "     Read(file1.py)",
+                "     Read(file2.py)",
+                "     Read(file3.py)",
+                "     Read(file4.py)",
+                "     The linter found problems in file4.py.",
+            ],
+        )
+
+    def test_terminal_rolls_the_last_three(self):
+        board, view, out = self.board(terminal=True)
+        self.assertTrue(board.rolling)
+        printed = []
+        board.print = lambda text: printed.append(text.plain)
+        view.tool_call("Read", "src/auth/session.py")
+        self.assertEqual(
+            [t.plain for t in board.render().renderables], ["  ⎿  Read(src/auth/session.py)"]
+        )
+        for num in range(4):
+            view.tool_call("Grep", f'"pattern{num}"')
+        self.assertEqual(
+            [t.plain for t in board.render().renderables],
+            [
+                '  ⎿  Grep("pattern1")',
+                '     Grep("pattern2")',
+                '     Grep("pattern3")',
+                "     … +2 more tool uses",
+            ],
+        )
+        self.assertEqual(printed, [])
+        board.close()
+        # What stays on the screen
+        self.assertEqual(
+            printed,
+            [
+                '  ⎿  Grep("pattern1")',
+                '     Grep("pattern2")',
+                '     Grep("pattern3")',
+                "     … +2 more tool uses",
+            ],
+        )
+        self.assertIsNone(board.live)
+
+    def test_a_question_leaves_the_lines_on_the_screen(self):
+        board, view, out = self.board(terminal=True)
+        printed = []
+        board.print = lambda text: printed.append(text.plain)
+        view.tool_call("Read", "calc.py")
+        view.tool_call("Update", "calc.py")
+        board.pause()
+        self.assertEqual(printed, ["  ⎿  Read(calc.py)", "     Update(calc.py)"])
+        view.tool_call("Bash", "pytest")
+        self.assertEqual([t.plain for t in board.render().renderables], ["     Bash(pytest)"])
+        board.close()
+        self.assertEqual(printed[-1], "     Bash(pytest)")
+
+    def test_verbose_prints_every_line_in_a_terminal(self):
+        board, view, out = self.board(terminal=True, verbose=True)
+        self.assertFalse(board.rolling)
+        for num in range(5):
+            view.tool_call("Read", f"file{num}.py")
+        self.assertIn("Read(file0.py)", out.getvalue())
+        self.assertIn("Read(file4.py)", out.getvalue())
+
+    def test_task_display_in_a_run(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(pretty=False, yes=True)
+            out = capture(io)
+            llm = AgentsLLM(
+                parent=[reply(None, explore_task()), reply("Done.")],
+                explore=[
+                    reply(None, call("glob", pattern="*.py"), call("grep", pattern="add")),
+                    reply(None, call("read_file", path="calc.py")),
+                    reply("It said: " + EXPLORE_REPORT),
+                ],
+            )
+            with patch.object(litellm, "completion", llm):
+                make_coder(io).run(with_message="go")
+            lines = out.getvalue().splitlines()
+            start = lines.index("● Task(Find the adder)")
+            self.assertEqual(
+                lines[start : start + 5],
+                [
+                    "● Task(Find the adder)",
+                    "  ⎿  Glob(*.py)",
+                    '     Grep("add")',
+                    "     Read(calc.py)",
+                    lines[start + 4],
+                ],
+            )
+            self.assertRegex(
+                lines[start + 4], r"^  ⎿  Done \(3 tool uses · [\d.]+k tokens · \d+s\)$"
+            )
+            # The sub-agent's replies aren't shown
+            self.assertNotIn("It said", out.getvalue())
+
+    def test_rolling_display_in_a_run(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(pretty=True, yes=True)
+            out = capture(io, terminal=True)
+            llm = AgentsLLM(
+                parent=[reply(None, explore_task()), reply("Done.")],
+                explore=[
+                    reply(None, *[call("glob", pattern=f"*{num}.py") for num in range(5)]),
+                    reply(EXPLORE_REPORT),
+                ],
+            )
+            with patch.object(litellm, "completion", llm):
+                make_coder(io).run(with_message="go")
+            text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out.getvalue())
+            self.assertIn("     … +2 more tool uses\n  ⎿  Done (5 tool uses", text)
+
+
+class TestTranscripts(unittest.TestCase):
+    def run_with_session(self, io=None):
+        from loom.sessions import Session
+
+        io = io or InputOutput(pretty=False, yes=True)
+        session = Session(Path(".loom.sessions"))
+        llm = AgentsLLM(
+            parent=[reply(None, explore_task()), reply("Done.")],
+            explore=[
+                reply("Let me look.", call("read_file", path="calc.py")),
+                reply(EXPLORE_REPORT),
+            ],
+        )
+        coder = make_coder(io, session=session)
+        with patch.object(litellm, "completion", llm):
+            coder.run(with_message="go")
+        return coder, session
+
+    def test_transcript_is_saved_with_the_session(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            coder, session = self.run_with_session()
+            path = Path(".loom.sessions") / session.id / "tasks" / "1.json"
+            self.assertTrue(path.is_file())
+            import json
+
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(record["number"], 1)
+            self.assertEqual(record["agent"], "explore")
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(record["report"], EXPLORE_REPORT)
+            self.assertEqual(record["tool_uses"], 1)
+            self.assertTrue(record["prompt"].startswith("Find where add()"))
+            kinds = [event["kind"] for event in record["events"]]
+            self.assertEqual(
+                kinds, ["user", "assistant", "tool_call", "tool_result", "tool_done", "assistant"]
+            )
+            self.assertEqual(record["events"][2]["name"], "Read")
+            self.assertEqual(record["messages"][0]["content"], record["prompt"])
+            # The session file itself is still the parent's conversation
+            self.assertTrue((Path(".loom.sessions") / f"{session.id}.json").is_file())
+
+    def test_tasks_command(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(pretty=False, yes=True)
+            out = capture(io)
+            coder, session = self.run_with_session(io)
+            out.truncate(0)
+            out.seek(0)
+            coder.commands.run("/tasks")
+            listing = out.getvalue().splitlines()
+            self.assertEqual(
+                listing[0].split(), ["#", "Status", "Agent", "Tokens", "Time", "Description"]
+            )
+            self.assertRegex(
+                listing[1], r"^  1  done         explore\s+[\d.]+k\s+\d+s  Find the adder$"
+            )
+
+            out.truncate(0)
+            out.seek(0)
+            coder.commands.run("/tasks 1")
+            shown = out.getvalue()
+            self.assertIn("● Task 1(Find the adder)", shown)
+            self.assertIn("explore · done · 1 tool use", shown)
+            self.assertIn("> Find where add() is defined", shown)
+            self.assertIn("● Read(calc.py)\n  ⎿  Read 2 lines", shown)
+            self.assertIn(EXPLORE_REPORT, shown)
+
+            out.truncate(0)
+            out.seek(0)
+            coder.commands.run("/tasks 7")
+            self.assertIn("There's no task 7", out.getvalue())
+
+    def test_resumed_session_lists_its_tasks_and_numbers_on(self):
+        from loom.sessions import Session
+
+        with GitTemporaryDirectory():
+            make_repo()
+            coder, session = self.run_with_session()
+            resumed = Session.find(Path(".loom.sessions"), session.id)
+            self.assertEqual(list(resumed.load_tasks()), [1])
+            self.assertEqual(resumed.load_tasks()[1]["report"], EXPLORE_REPORT)
+            self.assertEqual(resumed.next_task_number(), 2)
+            resumed.restart()
+            self.assertEqual(resumed.load_tasks(), {})
+
+    def test_tasks_are_kept_in_memory_without_sessions(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            llm = AgentsLLM(
+                parent=[reply(None, explore_task()), reply("Done.")],
+                explore=[reply(EXPLORE_REPORT)],
+            )
+            coder = make_coder()
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="go")
+            self.assertIsNone(coder.session.directory)
+            self.assertEqual(coder.session.load_tasks()[1]["status"], "done")
+            self.assertFalse(Path(".loom.sessions").exists())
+
+    def test_deleting_an_old_session_deletes_its_tasks(self):
+        from loom import sessions
+
+        with GitTemporaryDirectory():
+            make_repo()
+            coder, session = self.run_with_session()
+            tasks = Path(".loom.sessions") / session.id
+            self.assertTrue(tasks.is_dir())
+            with patch.object(sessions, "MAX_SESSIONS", 0):
+                coder.session.restart()
+                coder.done_messages = [dict(role="user", content="new")]
+                coder.save_session()
+            self.assertFalse(tasks.exists())

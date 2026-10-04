@@ -25,7 +25,7 @@ from loom.repo import ANY_GIT_ERROR
 from loom.run_cmd import run_cmd
 from loom.scrape import Scraper, install_playwright
 from loom.sessions import Session, SessionError, list_sessions
-from loom.utils import is_image_file
+from loom.utils import format_tokens, is_image_file
 
 from .dump import dump  # noqa: F401
 
@@ -1644,6 +1644,40 @@ class Commands:
         done = sum(1 for todo in todos if todo.get("status") == "completed")
         self.io.tool_call("Todos", f"{done} of {len(todos)} done")
         self.io.todo_output(todos)
+
+    def completions_tasks(self):
+        return [str(number) for number in self.coder.session.load_tasks()]
+
+    def cmd_tasks(self, args):
+        "List this conversation's sub-agent tasks, or show one's transcript: /tasks [N]"
+        from loom.subagent_io import show_transcript
+        from loom.subagents import format_seconds
+
+        records = self.coder.session.load_tasks()
+        arg = args.strip().lstrip("#")
+        if arg:
+            if not arg.isdigit() or int(arg) not in records:
+                self.io.tool_error(f"There's no task {args.strip()} in this conversation.")
+                return
+            show_transcript(self.io, records[int(arg)])
+            return
+        if not records:
+            self.io.tool_output("No tasks in this conversation yet.")
+            return
+
+        width = max(len(record.get("agent") or "") for record in records.values())
+        self.io.tool_output(
+            f"{'#':>3}  {'Status':<11}  {'Agent':<{width}}  Tokens   Time  Description"
+        )
+        for number, record in records.items():
+            tokens = (record.get("tokens_sent") or 0) + (record.get("tokens_received") or 0)
+            seconds = format_seconds(record.get("seconds") or 0)
+            self.io.tool_output(
+                f"{number:>3}  {record.get('status', ''):<11}  {record.get('agent', ''):<{width}}"
+                f"  {format_tokens(tokens):>6}  {seconds:>5}  {record.get('description', '')}"
+            )
+        self.io.tool_output()
+        self.io.tool_output("Show one's transcript with /tasks N.")
 
     def completions_project(self):
         from loom.phases import PHASES

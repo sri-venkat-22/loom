@@ -11,6 +11,7 @@ to, so it survives switching chat modes.
 import json
 import os
 import secrets
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -173,7 +174,55 @@ class Session:
                     old.unlink()
                 except OSError:
                     pass
+                shutil.rmtree(old.with_suffix(""), ignore_errors=True)
         return True
+
+    # Sub-agents' tasks (loom/subagents.py): .loom.sessions/<id>/tasks/<number>.json
+
+    @property
+    def tasks_dir(self):
+        if not self.directory:
+            return None
+        return self.directory / self.id / "tasks"
+
+    def save_task(self, record):
+        """Save a task's record and transcript. Returns its path, or None when the session
+        isn't saved."""
+        directory = self.tasks_dir
+        if not directory:
+            return None
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{record['number']}.json"
+        tmp = path.with_name(path.name + ".tmp")
+        text = json.dumps(jsonable(record), indent=1, ensure_ascii=False)
+        tmp.write_text(text + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+        return path
+
+    def load_tasks(self):
+        """{number: record} for this conversation's tasks: the saved ones, and those of
+        this run, which may not be saved yet."""
+        res = {}
+        directory = self.tasks_dir
+        if directory and directory.is_dir():
+            for path in directory.glob("*.json"):
+                try:
+                    record = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if isinstance(record, dict) and isinstance(record.get("number"), int):
+                    res[record["number"]] = record
+        for task in self.tasks:
+            if task.number is not None and (task.number not in res or task.status == "running"):
+                res[task.number] = task.record()
+        return dict(sorted(res.items()))
+
+    def next_task_number(self):
+        numbers = [task.number for task in self.tasks if task.number is not None]
+        directory = self.tasks_dir
+        if directory and directory.is_dir():
+            numbers += [int(path.stem) for path in directory.glob("*.json") if path.stem.isdigit()]
+        return max(numbers, default=0) + 1
 
 
 def session_paths(directory):

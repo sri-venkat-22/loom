@@ -23,6 +23,7 @@ spends is added to the parent's tokens and cost.
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from loom import tools as agent_tools
@@ -185,6 +186,8 @@ class Task:
         self.seconds = 0.0
         self.report = ""
         self.error = None
+        # The sub-agent's io, which keeps its transcript
+        self.io = None
 
     @property
     def label(self):
@@ -250,6 +253,7 @@ class Task:
         once the sub-agent has stopped."""
         self.status = "running"
         self.started = time.time()
+        self.io = io
         interrupted = False
         try:
             self.child = self.make_child(io)
@@ -308,6 +312,34 @@ class Task:
             "interrupted": "Interrupted",
         }.get(self.status, f"Failed: {self.error}")
 
+    def record(self):
+        """The task as the session saves it: what it was, how it went, its transcript and
+        its conversation."""
+        child = self.child
+        return dict(
+            number=self.number,
+            description=self.description,
+            agent=self.agent_type.name,
+            model=self.model.name,
+            status=self.status,
+            error=self.error,
+            prompt=self.prompt,
+            report=self.report,
+            started=(
+                datetime.fromtimestamp(self.started).isoformat(timespec="seconds")
+                if self.started
+                else None
+            ),
+            seconds=round(self.seconds, 1),
+            tool_uses=self.tool_uses,
+            tokens_sent=child.total_tokens_sent if child else 0,
+            tokens_received=child.total_tokens_received if child else 0,
+            cost=round(self.cost, 6),
+            edited=sorted(child.edited) if child else [],
+            events=list(self.io.transcript) if self.io else [],
+            messages=(child.done_messages + child.cur_messages) if child else [],
+        )
+
     def result(self):
         """What the parent's model gets back: the report and one footer line."""
         if self.status == "failed":
@@ -325,6 +357,23 @@ class Task:
             body = self.report or "(The sub-agent gave no report.)"
         body = truncate(body.strip(), MAX_REPORT_CHARS)
         return f"{body}\n\n[task: {self.stats()}]"
+
+
+def describe_record(record):
+    """One line about a saved task, like explore · done · 12 tool uses · 31k tokens · 40s."""
+    tokens = (record.get("tokens_sent") or 0) + (record.get("tokens_received") or 0)
+    parts = [
+        record.get("agent") or "?",
+        record.get("status") or "?",
+        plural(record.get("tool_uses") or 0, "tool use"),
+        f"{format_tokens(tokens)} tokens",
+    ]
+    if record.get("cost"):
+        parts.append(format_cost(record["cost"]))
+    parts.append(format_seconds(record.get("seconds") or 0))
+    if record.get("model"):
+        parts.append(record["model"])
+    return " · ".join(parts)
 
 
 def fallback_report(messages, why):

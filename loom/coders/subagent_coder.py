@@ -122,6 +122,7 @@ class SubAgentCoder(AgentCoder):
         """One request of the agent loop. final allows a single step, without tools."""
         self.final_step = final
         self.limit = None
+        self.io.user_input(message)
         list(self.send_message(message))
 
     def final_text(self):
