@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import time
 
 from loom import plans, prompts
@@ -24,7 +25,7 @@ MCP_PREVIEW_LINES = 6
 HOOK_PREVIEW_LINES = 4
 
 # With --checkpoint-steps, a step that uses one of these is checkpointed first
-STEP_CHECKPOINT_TOOLS = ("edit_file", "write_file", "bash", "save_stitch_screen")
+STEP_CHECKPOINT_TOOLS = ("edit_file", "write_file", "bash", "save_stitch_screen", "task")
 
 # Compacting: when the conversation passes COMPACT_AT of the model's context window, loom
 # shrinks it to about COMPACT_TARGET, keeping the last KEEP_RECENT_STEPS steps as they are
@@ -106,21 +107,33 @@ class AgentCoder(Coder):
     # the orchestrator instead)
     checkpoint_requests = True
 
+    def __init__(self, main_model, io, **kwargs):
+        super().__init__(main_model, io, **kwargs)
+        # Sub-agents (loom/subagents.py) add what they spent and edited under it
+        self.task_lock = threading.RLock()
+        self.task_usage = new_task_usage()
+
     @property
     def tools(self):
         """The built-in tools, the web tools unless they're off, exit_plan_mode in plan
-        mode, save_stitch_screen while Google Stitch is connected, then those of the
-        connected MCP servers."""
+        mode, task for starting sub-agents, save_stitch_screen while Google Stitch is
+        connected, then those of the connected MCP servers."""
         res = agent_tools.schemas()
         if self.web_tools:
             res += agent_tools.web_schemas()
         if self.permissions.mode == "plan":
             res += agent_tools.plan_schemas()
+        if self.can_delegate():
+            res += agent_tools.task_schemas(self)
         if self.mcp:
             if self.mcp.stitch():
                 res += agent_tools.stitch_schemas()
             res += self.mcp.tool_schemas()
         return res
+
+    def can_delegate(self):
+        """Whether the model gets the task tool, to start sub-agents."""
+        return self.subagent_settings.get("enabled", True)
 
     def get_announcements(self):
         lines = super().get_announcements()
@@ -168,6 +181,8 @@ class AgentCoder(Coder):
             extra.append(self.stitch_prompt())
         if self.web_tools:
             extra.append(self.gpt_prompts.web_tools_prompt)
+        if self.can_delegate():
+            extra.append(self.gpt_prompts.task_prompt)
         if self.permissions.mode == "plan":
             extra.append(self.gpt_prompts.plan_mode_prompt)
         elif self.active_plan:
@@ -216,12 +231,7 @@ class AgentCoder(Coder):
         self.request_text = inp
         self.tools_error = None
         self.nudged_text_tool_call = False
-        if self.mcp:
-            # When loom started in another chat mode
-            self.mcp.start()
-        if self.hooks:
-            self.hooks.start()
-        self.permissions.start()
+        self.start_request()
 
         message = inp
         try:
@@ -234,10 +244,11 @@ class AgentCoder(Coder):
                     message = None
                     if not self.continue_loop or self.tools_error:
                         break
+                    if self.over_budget():
+                        self.limit_reached("budget")
+                        break
                 else:
-                    self.io.tool_warning(
-                        f'Stopped after {self.max_steps} steps. Say "continue" to keep going.'
-                    )
+                    self.limit_reached("steps")
         except KeyboardInterrupt:
             # Between steps: still commit what was done and keep the history
             self.keyboard_interrupt()
@@ -249,6 +260,23 @@ class AgentCoder(Coder):
         if self.tools_error:
             self.tools_rejected()
         self.finish_request(inp)
+
+    def start_request(self):
+        """Before a request: connect the MCP servers (when loom started in another chat
+        mode) and ask about the project's hooks and allow rules."""
+        if self.mcp:
+            self.mcp.start()
+        if self.hooks:
+            self.hooks.start()
+        self.permissions.start()
+
+    def over_budget(self):
+        """Whether the request has spent its budget, checked after each step."""
+        return False
+
+    def limit_reached(self, reason):
+        """The request stopped at its step limit ("steps") or budget ("budget")."""
+        self.io.tool_warning(f'Stopped after {self.max_steps} steps. Say "continue" to keep going.')
 
     def send(self, messages, model=None, functions=None):
         try:
@@ -303,8 +331,52 @@ class AgentCoder(Coder):
 
     def show_usage_report(self):
         # One report for the whole request, not one per step
-        if not self.in_agent_loop:
-            super().show_usage_report()
+        if self.in_agent_loop:
+            return
+        usage = self.task_usage
+        if usage["tasks"] and self.usage_report:
+            # Rebuilt, since sub-agents may have finished after the last step
+            self.usage_report = (
+                self.format_usage_report()
+                + f" Including {agent_tools.plural(usage['tasks'], 'task')}:"
+                f" {format_tokens(usage['sent'])} sent, {format_tokens(usage['received'])}"
+                " received."
+            )
+        super().show_usage_report()
+        self.task_usage = new_task_usage()
+
+    def add_task_usage(self, cost, sent, received, edited=()):
+        """Add what a sub-agent spent to this request's tokens and cost, and the files it
+        edited to the ones the request commits. Sub-agents finish on their own threads."""
+        with self.task_lock:
+            self.total_cost += cost
+            self.message_cost += cost
+            self.message_tokens_sent += sent
+            self.message_tokens_received += received
+            usage = self.task_usage
+            usage["tasks"] += 1
+            usage["sent"] += sent
+            usage["received"] += received
+            usage["cost"] += cost
+            self.agent_edited.update(edited)
+
+    def register_task(self, task):
+        """Number a task as it starts, and remember it in the session for /tasks."""
+        with self.task_lock:
+            task.number = len(self.session.tasks) + 1
+            self.session.tasks.append(task)
+        return task.number
+
+    def run_task(self, task):
+        """Run a sub-agent's task (the task tool) and return its result for the model."""
+        from loom.subagent_io import SubAgentIO
+
+        self.register_task(task)
+        result = task.run(SubAgentIO(self.io, task))
+        if task.status == "denied":
+            # The user said no to the sub-agent: wait for them here too
+            self.action_denied()
+        return result
 
     def add_assistant_reply_to_cur_messages(self):
         tool_calls = self.get_tool_calls()
@@ -379,7 +451,8 @@ class AgentCoder(Coder):
                 args = {}
             if not isinstance(args, dict):
                 args = {}
-            detail = " ".join(str(args.get("path") or describe_args(args)).split())[:60]
+            detail = args.get("path") or args.get("description") or describe_args(args)
+            detail = " ".join(str(detail).split())[:60]
             shown.append(f"{agent_tools.display_name(name)}({detail})")
         if shown:
             self.take_checkpoint(", ".join(shown), kind="step")
@@ -427,13 +500,13 @@ class AgentCoder(Coder):
 
         # When the user is asked, the question shows the diff or the command
         asked = self.permissions.decide(action, hook_allowed) == "ask"
-        outcome, message = self.permissions.request(action, hook_allowed)
+        outcome, message = self.permissions.request(action, hook_allowed, io=self.io)
         if outcome == "deny":
             self.io.tool_result("Refused in plan mode", error=True)
             return message
         if outcome == "user-deny":
             self.io.tool_result("Denied", error=True)
-            self.stop_requested = True
+            self.action_denied()
             return message
 
         if action.kind == "edit":
@@ -468,6 +541,10 @@ class AgentCoder(Coder):
                 self.show_hook_feedback(hook.message)
                 result += f"\n\nThe user's PostToolUse hook says:\n{hook.message}"
         return result
+
+    def action_denied(self):
+        """The user denied an action: stop and wait for them."""
+        self.stop_requested = True
 
     def refuse_action(self, name, action):
         """Why this coder won't let the model use tool name for action, or None. Subclasses
@@ -920,6 +997,11 @@ class AgentCoder(Coder):
         content = (self.request_text or request["content"]) + "\n\n" + summary + todos
         self.cur_messages = [dict(request, content=content)] + self.cur_messages[end:]
         return max(num_steps, 1)
+
+
+def new_task_usage():
+    """What a request's sub-agents spent, for its usage report."""
+    return dict(tasks=0, sent=0, received=0, cost=0.0)
 
 
 def describe_args(args):

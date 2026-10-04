@@ -53,6 +53,8 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--agent-diffs | --no-agent-diffs] [--allow]
             [--checkpoint-steps | --no-checkpoint-steps]
             [--web-tools | --no-web-tools] [--web-search]
+            [--subagents | --no-subagents] [--subagent-max-steps]
+            [--subagent-budget] [--subagent-model]
             [--project-memory | --no-project-memory]
             [--auto-compact | --no-auto-compact] [--mcp | --no-mcp]
             [--mcp-config] [--hooks | --no-hooks] [--build-retries]
@@ -559,6 +561,28 @@ Aliases:
 ### `--web-search BACKEND`
 How web_search searches: brave (BRAVE_API_KEY), tavily (TAVILY_API_KEY), searxng (SEARXNG_URL) or duckduckgo (no key, best-effort). Without it loom uses the first one set up, and duckduckgo otherwise  
 Environment variable: `LOOM_WEB_SEARCH`  
+
+### `--subagents`
+Enable/disable the agent's task tool, which hands a focused job to a sub-agent with a fresh context of its own (default: True)  
+Default: True  
+Environment variable: `LOOM_SUBAGENTS`  
+Aliases:
+  - `--subagents`
+  - `--no-subagents`
+
+### `--subagent-max-steps STEPS`
+How many steps a sub-agent may take before it must report (default: 40)  
+Default: 40  
+Environment variable: `LOOM_SUBAGENT_MAX_STEPS`  
+
+### `--subagent-budget DOLLARS`
+Stop a sub-agent and have it report once it has spent this much (default: none)  
+Environment variable: `LOOM_SUBAGENT_BUDGET`  
+
+### `--subagent-model MODEL`
+A model the agent may run a task on, besides the main and weak models (can be used multiple times)  
+Default: []  
+Environment variable: `LOOM_SUBAGENT_MODEL`  
 
 ### `--project-memory`
 Enable/disable adding LOOM.md files to the system prompt (default: True)  

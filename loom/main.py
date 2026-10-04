@@ -1273,6 +1273,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             checkpoint_steps=args.checkpoint_steps,
             web_tools=args.web_tools,
             web_search=args.web_search,
+            subagent_settings=dict(
+                enabled=args.subagents,
+                max_steps=max(1, args.subagent_max_steps),
+                budget=args.subagent_budget,
+                models=args.subagent_model,
+            ),
         )
     except UnknownEditFormat as err:
         io.tool_error(str(err))

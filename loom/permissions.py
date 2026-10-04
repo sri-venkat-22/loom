@@ -518,9 +518,9 @@ class Permissions:
     def decide(self, action, hook_allowed=False):
         """Returns "allow", "ask" or "deny" for an action, without asking anyone.
         hook_allowed means a PreToolUse hook approved it, which works like an allow rule."""
-        if action.kind in ("todo", "memory", "plan") or self.mode == "bypass":
-            # Only loom's own to-do list, project memory or a plan the user is asked to
-            # approve, or the user said to stop asking
+        if action.kind in ("todo", "memory", "plan", "task") or self.mode == "bypass":
+            # Only loom's own to-do list, project memory, a plan the user is asked to
+            # approve or a sub-agent, whose own actions ask; or the user said to stop asking
             return "allow"
         if action.kind == "read":
             if action.inside or hook_allowed or self.is_allowed(action):
@@ -551,13 +551,15 @@ class Permissions:
             return "allow"
         return "ask"
 
-    def request(self, action, hook_allowed=False):
+    def request(self, action, hook_allowed=False, io=None):
         """Decide on an action, asking the user if needed.
 
         Returns (outcome, message) where outcome is "allow", "deny" (refused by the mode,
         the agent should carry on) or "user-deny" (the user said no, the agent should stop
-        and wait for them). message explains a refusal to the model.
+        and wait for them). message explains a refusal to the model. io asks the question,
+        when it's not this one's, like a sub-agent's, which says who asks.
         """
+        io = io or self.io
         decision = self.decide(action, hook_allowed)
         if decision == "allow":
             return "allow", ""
@@ -596,7 +598,7 @@ class Permissions:
 
         if action.kind == "edit":
             # The diff only when asked for; otherwise the file and how many lines change
-            subject = action.preview if self.io.agent_diffs else action.changes or action.preview
+            subject = action.preview if io.agent_diffs else action.changes or action.preview
         elif action.kind == "mcp":
             subject = action.preview
         elif action.kind == "web_fetch":
@@ -609,7 +611,7 @@ class Permissions:
             subject = None
         # A fetch sends its URL out, so --yes-always doesn't approve it either
         explicit = action.kind in ("bash", "mcp", "web_fetch") or protects(action, self.root)
-        answer = self.io.permission_ask(
+        answer = io.permission_ask(
             question,
             subject=subject,
             always=always,
@@ -619,7 +621,7 @@ class Permissions:
 
         if answer == "bypass":
             self.mode = "bypass"
-            self.io.tool_warning(
+            io.tool_warning(
                 "Bypassing permissions: edits, commands and everything else run without asking"
                 " for the rest of this session. Use /permissions ask to go back."
             )
@@ -627,7 +629,7 @@ class Permissions:
         if answer == "always":
             if action.kind == "edit":
                 self.mode = "accept-edits"
-                self.io.tool_output(
+                io.tool_output(
                     "Edits in the project will be applied without asking for the rest of this"
                     " session. Use /permissions ask to go back."
                 )
@@ -639,14 +641,14 @@ class Permissions:
         if answer == "yes":
             return "allow", ""
 
-        if explicit and self.io.yes is True:
+        if explicit and io.yes is True:
             message = (
                 "Refused: shell commands, MCP tools, web fetches and edits to protected files"
                 " need explicit approval, and --yes-always doesn't give it. Allow commands with"
                 " --allow 'bash(PATTERN)', MCP tools with --allow 'mcp(SERVER)' and web pages"
                 " with --allow 'web_fetch(domain:HOST)'."
             )
-            self.io.tool_warning(message)
+            io.tool_warning(message)
             return "user-deny", message
         return (
             "user-deny",

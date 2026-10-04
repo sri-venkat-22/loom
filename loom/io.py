@@ -1327,15 +1327,7 @@ class InputOutput:
         """Show one line for a tool the agent is using, like: ● Read(loom/io.py)
 
         args are the call's arguments as the model sent them, for UIs that show them."""
-        name = sanitize_for_display(name, show_escapes=True)
-        detail = sanitize_for_display(detail, show_escapes=True)
-        if detail:
-            # One line: the first line of a multi-line command, with whitespace collapsed
-            first, _, rest = detail.strip().partition("\n")
-            detail = " ".join(first.split()) + (" …" if rest.strip() else "")
-        width = max(20, self.console.width - len(name) - 4)
-        if len(detail) > width:
-            detail = detail[: width - 1] + "…"
+        name, detail = tool_call_parts(name, detail, self.console.width - 4)
         shown = f"{name}({detail})" if detail else name
         self.append_chat_history(shown, linebreak=True, blockquote=True)
 
@@ -1665,6 +1657,21 @@ class InputOutput:
             console.print(Columns(files_with_label))
 
         return output.getvalue()
+
+
+def tool_call_parts(name, detail, width):
+    """A tool call's name and detail, safe to show and fitting in width columns: the
+    detail on one line (the first of a multi-line command, whitespace collapsed), cut with
+    … if it's too long."""
+    name = sanitize_for_display(name, show_escapes=True)
+    detail = sanitize_for_display(detail or "", show_escapes=True)
+    if detail:
+        first, _, rest = detail.strip().partition("\n")
+        detail = " ".join(first.split()) + (" …" if rest.strip() else "")
+    width = max(20, width - len(name))
+    if len(detail) > width:
+        detail = detail[: width - 1] + "…"
+    return name, detail
 
 
 def choice_keys(choices):

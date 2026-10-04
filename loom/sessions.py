@@ -71,6 +71,8 @@ class Session:
         self.plan = self.data.get("plan")
         # Where /rewind can go back to, oldest first (loom/checkpoints.py)
         self.checkpoints = list(self.data.get("checkpoints") or [])
+        # The sub-agents' tasks started in this conversation (loom/subagents.py)
+        self.tasks = []
 
     @property
     def path(self):
@@ -126,6 +128,7 @@ class Session:
         self.title = ""
         self.plan = None
         self.checkpoints = []
+        self.tasks = []
 
     def to_dict(self, coder):
         messages = jsonable(coder.done_messages + coder.cur_messages)

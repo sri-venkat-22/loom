@@ -9,6 +9,7 @@ A ToolError is a problem the model should hear about (a missing file, an ambiguo
 edit); it becomes the tool's result and never ends the agent loop.
 """
 
+import copy
 import difflib
 import json
 import os
@@ -65,7 +66,8 @@ class ToolError(Exception):
 class Action:
     """Something a tool is about to do, for Permissions to decide on."""
 
-    kind: str  # "read", "edit", "bash", "todo", "mcp", "memory", "plan", "web_search", "web_fetch"
+    # "read", "edit", "bash", "todo", "mcp", "memory", "plan", "web_search", "web_fetch", "task"
+    kind: str
     target: str  # what allow rules match: a path (relative if inside the project) or a command
     inside: bool  # the target is inside the project
     title: str  # a short description, like "Edit loom/io.py"
@@ -1052,6 +1054,53 @@ def exit_plan_mode(coder, plan):
     return action
 
 
+# Sub-agents (loom/subagents.py)
+
+
+def task(coder, description, prompt, agent=None, model=None):
+    from loom import subagents
+
+    if not getattr(coder, "can_delegate", lambda: False)():
+        raise ToolError("a sub-agent can't start tasks of its own: do the work yourself")
+    description = " ".join(description.split())
+    if not description:
+        raise ToolError("description must say in 3-5 words what the task is")
+    if not prompt.strip():
+        raise ToolError("prompt must say what the sub-agent should do and what to report")
+    types = subagents.agent_types(coder)
+    name = (agent or "").strip() or subagents.DEFAULT_AGENT
+    agent_type = types.get(name) or types.get(name.lower())
+    if not agent_type:
+        raise ToolError(f"there is no agent type {name!r}; use one of: {', '.join(types)}")
+    if coder.permissions.mode == "plan" and not agent_type.read_only:
+        read_only = ", ".join(n for n, t in types.items() if t.read_only)
+        raise ToolError(
+            f"loom is in plan mode, where only read-only agent types run ({read_only}), and"
+            f" the {agent_type.name} agent can edit files and run commands. Investigate with"
+            " a read-only one, then present your plan."
+        )
+    chosen = subagents.resolve_model(coder, model or agent_type.model)
+    job = subagents.Task(coder, None, description, prompt.strip(), agent_type, chosen)
+
+    def run():
+        try:
+            return coder.run_task(job)
+        finally:
+            action.summary = job.summary()
+
+    action = Action(
+        "task",
+        description,
+        True,
+        f"Start the {agent_type.name} agent: {description}",
+        run,
+        name="Task",
+        detail=description,
+        extra=dict(task=job, agent=agent_type.name, read_only=agent_type.read_only),
+    )
+    return action
+
+
 def tool(name, prepare, description, properties, required):
     return dict(
         name=name,
@@ -1362,7 +1411,49 @@ STITCH_TOOLS = {
     ]
 }
 
-ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS, **PLAN_TOOLS, **WEB_TOOLS, **STITCH_TOOLS}
+# Offered to the agent, but never to a sub-agent; the description is the coder's own
+TASK_TOOLS = {
+    t["name"]: t
+    for t in [
+        tool(
+            "task",
+            task,
+            "",
+            dict(
+                description=dict(
+                    type="string",
+                    description="What the task is, in 3-5 words, shown to the user.",
+                ),
+                prompt=dict(
+                    type="string",
+                    description=(
+                        "The whole task, self-contained: the sub-agent sees nothing of this"
+                        " conversation. Say the goal, the constraints, what you already know,"
+                        " and exactly what to report."
+                    ),
+                ),
+                agent=dict(type="string", description="The agent type (default: general)."),
+                model=dict(
+                    type="string",
+                    description=(
+                        "main (yours, the default), weak (cheaper and faster, for simple"
+                        " searches) or a model name the config allows."
+                    ),
+                ),
+            ),
+            ["description", "prompt"],
+        ),
+    ]
+}
+
+TASK_DESCRIPTION = (
+    "Start a sub-agent: a separate agent with a fresh context that does one focused task"
+    " with its own tools and returns only its final report, so its work doesn't fill your"
+    " context. It sees nothing of this conversation, so the prompt must be self-contained."
+    " Several task calls in one reply run in parallel. The agent types:"
+)
+
+ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS, **PLAN_TOOLS, **WEB_TOOLS, **STITCH_TOOLS, **TASK_TOOLS}
 
 
 def schemas():
@@ -1385,6 +1476,22 @@ def stitch_schemas():
     return [t["schema"] for t in STITCH_TOOLS.values()]
 
 
+def task_schemas(coder):
+    """The task tool, its description listing the agent types the coder's tasks can use."""
+    from loom import subagents
+
+    types = subagents.agent_types(coder)
+    lines = [TASK_DESCRIPTION]
+    lines += [f"- {agent_type.name}: {agent_type.description}" for agent_type in types.values()]
+    if coder.permissions.mode == "plan":
+        read_only = ", ".join(name for name, agent_type in types.items() if agent_type.read_only)
+        lines.append(f"loom is in plan mode, so only the read-only types run: {read_only}.")
+    schema = copy.deepcopy(TASK_TOOLS["task"]["schema"])
+    schema["function"]["description"] = "\n".join(lines)
+    schema["function"]["parameters"]["properties"]["agent"]["enum"] = list(types)
+    return [schema]
+
+
 DISPLAY_NAMES = dict(
     read_file="Read",
     list_dir="List",
@@ -1400,10 +1507,13 @@ DISPLAY_NAMES = dict(
     web_search="WebSearch",
     web_fetch="WebFetch",
     save_stitch_screen="Stitch",
+    task="Task",
 )
 
 # What hooks call the tools whose names differ in Claude Code, so hooks written for it work
-HOOK_NAMES = dict(exit_plan_mode="ExitPlanMode", web_search="WebSearch", web_fetch="WebFetch")
+HOOK_NAMES = dict(
+    exit_plan_mode="ExitPlanMode", web_search="WebSearch", web_fetch="WebFetch", task="Task"
+)
 
 
 def hook_name(name):
@@ -1510,7 +1620,7 @@ def prepare(coder, name, args):
             )
         return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
 
-    if name in STITCH_TOOLS:
+    if name in STITCH_TOOLS or name in TASK_TOOLS:
         return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
 
     mcp = getattr(coder, "mcp", None)

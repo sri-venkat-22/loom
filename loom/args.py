@@ -615,6 +615,39 @@ def get_parser(default_config_files, git_root):
         ),
     )
     group.add_argument(
+        "--subagents",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable the agent's task tool, which hands a focused job to a sub-agent"
+            " with a fresh context of its own (default: True)"
+        ),
+    )
+    group.add_argument(
+        "--subagent-max-steps",
+        type=int,
+        metavar="STEPS",
+        default=40,
+        help="How many steps a sub-agent may take before it must report (default: 40)",
+    )
+    group.add_argument(
+        "--subagent-budget",
+        type=float,
+        metavar="DOLLARS",
+        default=None,
+        help="Stop a sub-agent and have it report once it has spent this much (default: none)",
+    )
+    group.add_argument(
+        "--subagent-model",
+        action="append",
+        metavar="MODEL",
+        default=[],
+        help=(
+            "A model the agent may run a task on, besides the main and weak models (can be"
+            " used multiple times)"
+        ),
+    )
+    group.add_argument(
         "--project-memory",
         action=argparse.BooleanOptionalAction,
         default=True,

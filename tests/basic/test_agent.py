@@ -211,6 +211,7 @@ class TestAgentLoop(unittest.TestCase):
                     "todo_write",
                     "web_search",
                     "web_fetch",
+                    "task",
                 ],
             )
             results = tool_results(llm.requests[1]["messages"])

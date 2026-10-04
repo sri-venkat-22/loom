@@ -387,6 +387,7 @@ class Coder:
         checkpoint_steps=False,
         web_tools=True,
         web_search=None,
+        subagent_settings=None,
     ):
         # Fill in a dummy Analytics if needed, but it is never .enable()'d
         self.analytics = analytics if analytics is not None else Analytics()
@@ -475,6 +476,8 @@ class Coder:
         # one; see loom/websearch.py)
         self.web_tools = web_tools
         self.web_search = web_search
+        # Options for the agent's sub-agents, like --subagent-max-steps (loom/subagents.py)
+        self.subagent_settings = dict(subagent_settings or {})
 
         self.shell_commands = []
 
@@ -2424,16 +2427,8 @@ class Coder:
         self.message_cache_hit_tokens += cache_hit_tokens
         self.message_cache_write_tokens += cache_write_tokens
 
-        tokens_report = f"Tokens: {format_tokens(self.message_tokens_sent)} sent"
-
-        if self.message_cache_write_tokens:
-            tokens_report += f", {format_tokens(self.message_cache_write_tokens)} cache write"
-        if self.message_cache_hit_tokens:
-            tokens_report += f", {format_tokens(self.message_cache_hit_tokens)} cache hit"
-        tokens_report += f", {format_tokens(self.message_tokens_received)} received."
-
         if not self.main_model.info.get("input_cost_per_token"):
-            self.usage_report = tokens_report
+            self.usage_report = self.format_usage_report()
             return
 
         try:
@@ -2449,6 +2444,21 @@ class Coder:
 
         self.total_cost += cost
         self.message_cost += cost
+        self.usage_report = self.format_usage_report()
+
+    def format_usage_report(self):
+        """The tokens and cost of the message so far, like: Tokens: 12k sent, 1.2k received.
+        Cost: $0.02 message, $0.31 session."""
+        tokens_report = f"Tokens: {format_tokens(self.message_tokens_sent)} sent"
+
+        if self.message_cache_write_tokens:
+            tokens_report += f", {format_tokens(self.message_cache_write_tokens)} cache write"
+        if self.message_cache_hit_tokens:
+            tokens_report += f", {format_tokens(self.message_cache_hit_tokens)} cache hit"
+        tokens_report += f", {format_tokens(self.message_tokens_received)} received."
+
+        if not self.main_model.info.get("input_cost_per_token"):
+            return tokens_report
 
         def format_cost(value):
             if value == 0:
@@ -2469,7 +2479,7 @@ class Coder:
         else:
             sep = " "
 
-        self.usage_report = tokens_report + sep + cost_report
+        return tokens_report + sep + cost_report
 
     def compute_costs_from_tokens(
         self, prompt_tokens, completion_tokens, cache_write_tokens, cache_hit_tokens

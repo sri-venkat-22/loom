@@ -47,6 +47,10 @@ class PhaseCoder(AgentCoder):
             if schema["function"]["name"] in self.phase.tools
         ] + self.stitch_schemas()
 
+    def can_delegate(self):
+        # Phase agents don't start sub-agents
+        return False
+
     def stitch_server(self):
         """The connected Google Stitch server, when the phase may use it."""
         if not self.mcp or self.phase.tools is None or "stitch" not in self.phase.tools:
