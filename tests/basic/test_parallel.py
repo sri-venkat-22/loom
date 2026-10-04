@@ -1,12 +1,14 @@
 import os
 import sys
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from litellm.types.utils import Choices, Message, ModelResponse
 
+from loom import tools
 from loom.coders import Coder, phase_prompts
 from loom.io import InputOutput
 from loom.llm import litellm
@@ -254,7 +256,8 @@ class TestParallelBuilding(unittest.TestCase):
 
             # What they spent is the project's
             total = sum(run["cost"] for run in state.run_log("building"))
-            self.assertAlmostEqual(coder.total_cost, total, places=6)
+            # Each run's cost is rounded to 6 places
+            self.assertAlmostEqual(coder.total_cost, total, delta=1e-5)
 
             # The report lists them
             from loom.project_report import ProjectReport
@@ -297,29 +300,39 @@ class TestParallelBuilding(unittest.TestCase):
 
     def test_a_cancel_stops_every_builder_and_run_picks_up(self):
         with GitTemporaryDirectory():
-            make_repo()
+            repo = make_repo()
+            # Committed, so the builders' worktrees have it
             Path("sleep.py").write_bytes(b"import time\ntime.sleep(60)\n")
+            repo.git.add("sleep.py")
+            repo.git.commit("-m", "A slow command")
             coder, orchestrator = project(allow=(f"bash({PYTEST}*)", f"bash({PYTHON} sleep.py)"))
             io = orchestrator.io
-            # ^C while the main thread asks the user about shout's command
-            io.permission_ask = MagicMock(side_effect=KeyboardInterrupt)
+
+            # ^C while the main thread asks the user about shout's command, once adder's
+            # slow command runs
+            def interrupt(*args, **kwargs):
+                for _ in range(200):
+                    if tools.RUNNING:
+                        break
+                    time.sleep(0.05)
+                raise KeyboardInterrupt
+
+            io.permission_ask = MagicMock(side_effect=interrupt)
             sleeping = [reply(None, call("bash", command=f"{PYTHON} sleep.py")), reply("Slept.")]
             llm = RoutedLLM(
                 Scaffold=SCAFFOLD,
                 Building_adder=sleeping,
                 Building_shout=[reply(None, call("bash", command=f"{PYTHON} shout.py"))],
             )
+            started = time.monotonic()
             with self.assertRaises(KeyboardInterrupt):
                 build(orchestrator, llm)
             state = orchestrator.state
             packages = state.phase_data("building")["packages"]
             self.assertEqual(packages["adder"]["status"], "stopped")
             self.assertEqual(packages["shout"]["status"], "stopped")
-            # adder's sleep was killed, not waited for
-            adder = [
-                m for m in llm.requests["Building adder"][-1]["messages"] if m["role"] == "tool"
-            ]
-            self.assertNotIn("Timed out", adder[-1]["content"] if adder else "")
+            # adder's sleep was killed, not waited for: the test took seconds, not a minute
+            self.assertLess(time.monotonic() - started, 50)
             # As /project run's handler of the interrupt does
             self.assertEqual(state.status("building"), "running")
             state.stop("building", "interrupted")
