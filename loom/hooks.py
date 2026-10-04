@@ -22,16 +22,26 @@ project) and the project's .loom/hooks.json (shared with the repo):
     }
 
 matcher is a regular expression for the whole tool name (bash, edit_file, write_file,
-read_file, list_dir, glob, grep, todo_write, ExitPlanMode, WebSearch, WebFetch or
+read_file, list_dir, glob, grep, todo_write, ExitPlanMode, WebSearch, WebFetch, Task or
 mcp__SERVER__TOOL), ignoring case. Leave it out, or use "" or "*", to match every tool.
 Tools Claude Code has under another name get its name in the payload (ExitPlanMode,
-WebSearch and WebFetch for exit_plan_mode, web_search and web_fetch); a matcher with
-loom's name matches them too.
+WebSearch, WebFetch and Task for exit_plan_mode, web_search, web_fetch and task); a
+matcher with loom's name matches them too.
 
 A hook gets the tool call as JSON on stdin: hook_event_name, tool_name, tool_input, cwd,
-session_id, permission_mode and, after the tool ran, tool_response. It runs in the project
-root with LOOM_PROJECT_DIR, LOOM_HOOK_EVENT, LOOM_TOOL_NAME and, for tools with a path,
-LOOM_FILE_PATH set.
+session_id, permission_mode and, after the tool ran, tool_response. A sub-agent's tool
+calls (loom/subagents.py) also carry agent_id, its task's number, and agent_type. Task's
+tool_input has Claude Code's subagent_type as well as loom's agent. It runs in the
+project root with LOOM_PROJECT_DIR, LOOM_HOOK_EVENT, LOOM_TOOL_NAME and, for tools with a
+path, LOOM_FILE_PATH set.
+
+SubagentStop hooks run when a sub-agent has written its report. Their matcher is for the
+agent type, like explore. The payload has hook_event_name, session_id, cwd,
+permission_mode, agent_id, agent_type, description, report, transcript_path (its saved
+transcript, when the session is saved) and stop_hook_active, true when a SubagentStop
+hook already sent it back. Blocking (exit code 2, or {"decision": "block", "reason":
+"..."}) sends the sub-agent back to work with the reason as its next message, at most
+three times.
 
 Its exit code says what to do:
 - 0: carry on. A PreToolUse hook can print {"decision": "allow"} to skip asking the user
@@ -56,7 +66,7 @@ from pathlib import Path
 from loom.display import sanitize_for_display
 from loom.tools import HOOK_NAMES, finish_killed, kill_process_tree
 
-EVENTS = ("PreToolUse", "PostToolUse")
+EVENTS = ("PreToolUse", "PostToolUse", "SubagentStop")
 PROJECT_CONFIG = ".loom/hooks.json"
 DEFAULT_TIMEOUT = 60
 MAX_TIMEOUT = 600
@@ -462,29 +472,51 @@ class Hooks:
     def run(self, event, coder, tool_name, tool_input, action, tool_response=None):
         """Run the hooks for an event and a tool call. Returns a HookOutcome."""
         hooks = self.matching(event, tool_name)
-        outcome = HookOutcome()
         if not hooks:
-            return outcome
+            return HookOutcome()
 
-        root = str(coder.root)
-        payload = dict(
-            hook_event_name=event,
-            session_id=coder.session.id,
-            cwd=root,
-            permission_mode=coder.permissions.mode,
-            tool_name=tool_name,
-            tool_input=tool_input,
-        )
+        payload = dict(tool_name=tool_name, tool_input=tool_input)
         if tool_response is not None:
             payload["tool_response"] = tool_response
-        env = dict(
-            os.environ,
-            LOOM_PROJECT_DIR=root,
-            LOOM_HOOK_EVENT=event,
-            LOOM_TOOL_NAME=tool_name,
-        )
+        env = dict(LOOM_TOOL_NAME=tool_name)
         if action is not None and action.path:
             env["LOOM_FILE_PATH"] = str(action.path)
+        return self.run_hooks(event, hooks, coder, payload, env)
+
+    def subagent_stop(self, coder, task, transcript_path=None, active=False):
+        """Run the SubagentStop hooks for a sub-agent (coder) that finished task. Returns a
+        HookOutcome: "block" with a message sends it back to work."""
+        hooks = self.matching("SubagentStop", task.agent_type.name)
+        if not hooks:
+            return HookOutcome()
+        payload = dict(
+            description=task.description,
+            report=task.report,
+            transcript_path=str(transcript_path) if transcript_path else None,
+            stop_hook_active=active,
+        )
+        outcome = self.run_hooks("SubagentStop", hooks, coder, payload, {})
+        if outcome.decision != "block":
+            outcome.message = ""
+        return outcome
+
+    def run_hooks(self, event, hooks, coder, extra, extra_env):
+        """Run hooks for event with coder's payload and environment, plus extra."""
+        outcome = HookOutcome()
+        root = str(coder.root)
+        # A sub-agent's hooks see its parent's conversation
+        parent = getattr(coder, "parent", None)
+        payload = dict(
+            hook_event_name=event,
+            session_id=(parent or coder).session.id,
+            cwd=root,
+            permission_mode=coder.permissions.mode,
+        )
+        task = getattr(coder, "task", None)
+        if task is not None:
+            payload.update(agent_id=str(task.number), agent_type=task.agent_type.name)
+        payload.update(extra)
+        env = dict(os.environ, LOOM_PROJECT_DIR=root, LOOM_HOOK_EVENT=event, **extra_env)
 
         messages = []
         for hook in hooks:
@@ -511,6 +543,10 @@ class Hooks:
                     return HookOutcome("block", message or "(the hook gave no reason)")
                 if decision == "allow":
                     outcome.decision = "allow"
+            elif event == "SubagentStop":
+                if decision == "block":
+                    outcome.decision = "block"
+                    messages.append(message or "A SubagentStop hook wants you to carry on.")
             elif decision == "block" or message:
                 messages.append(message)
 

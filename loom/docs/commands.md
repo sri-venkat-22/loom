@@ -8,6 +8,7 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 |---|---|
 | `/add` | Add files to the chat so loom can edit them or review them in detail |
 | `/agent` | Work as an agent that explores, edits files and runs commands with tools. If no prompt provided, switches to agent mode. |
+| `/agents` | List the agent types the agent's tasks can use, or start a new one: /agents [new NAME] |
 | `/architect` | Enter architect/editor mode using 2 different models. If no prompt provided, switches to architect/editor mode. |
 | `/ask` | Ask questions about the code base without editing any files. If no prompt provided, switches to ask mode. |
 | `/chat-mode` | Switch to a new chat mode |

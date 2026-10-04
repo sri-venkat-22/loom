@@ -1645,6 +1645,56 @@ class Commands:
         self.io.tool_call("Todos", f"{done} of {len(todos)} done")
         self.io.todo_output(todos)
 
+    def completions_agents(self):
+        return ["new"]
+
+    def cmd_agents(self, args):
+        "List the agent types the agent's tasks can use, or start a new one: /agents [new NAME]"
+        from loom import subagents
+
+        words = args.split()
+        if words[:1] == ["new"]:
+            if len(words) != 2:
+                self.io.tool_error("Use /agents new NAME")
+                return
+            try:
+                path = subagents.new_agent_file(self.coder.root, words[1])
+            except (subagents.AgentFileError, OSError) as err:
+                self.io.tool_error(str(err))
+                return
+            rel = path.relative_to(self.coder.root).as_posix()
+            self.io.tool_output(
+                f"Created {rel}. Edit it to say when to use the agent, its tools and its prompt;"
+                " loom asks before first using it."
+            )
+            return
+        if words:
+            self.io.tool_error("Use /agents, or /agents new NAME")
+            return
+
+        registry = subagents.registry(self.coder)
+        for name, agent_type in registry.all().items():
+            notes = [agent_type.where(self.coder.root)]
+            if agent_type.read_only:
+                notes.append("read-only")
+            if agent_type.model:
+                notes.append(f"model {agent_type.model}")
+            if not registry.is_approved(agent_type):
+                notes.append("asks before first use")
+            self.io.tool_output(f"{name} ({', '.join(notes)})")
+            self.io.tool_output(f"  {agent_type.description}")
+        for problem in registry.problems:
+            self.io.tool_warning(problem)
+        self.io.tool_output()
+        if not getattr(self.coder, "can_delegate", lambda: False)():
+            self.io.tool_output(
+                "The agent's task tool is off here (--no-subagents, or not the agent)."
+            )
+        self.io.tool_output(
+            f"Add your own with /agents new NAME ({subagents.PROJECT_DIR}/NAME.md), or in"
+            " ~/.loom/agents/ for every project."
+        )
+
     def completions_tasks(self):
         return [str(number) for number in self.coder.session.load_tasks()]
 

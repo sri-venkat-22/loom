@@ -499,8 +499,11 @@ class AgentCoder(Coder):
             return f"Refused: {refusal}"
 
         hook_allowed = self.preapproved(action)
+        hook_input = agent_tools.hook_input(name, args)
         if self.hooks:
-            hook = self.hooks.run("PreToolUse", self, agent_tools.hook_name(name), args, action)
+            hook = self.hooks.run(
+                "PreToolUse", self, agent_tools.hook_name(name), hook_input, action
+            )
             if hook.decision == "block":
                 reason = hook.message.strip().split("\n", 1)[0]
                 self.io.tool_result(f"Blocked by a hook: {reason}", error=True)
@@ -547,7 +550,7 @@ class AgentCoder(Coder):
 
         if self.hooks:
             hook = self.hooks.run(
-                "PostToolUse", self, agent_tools.hook_name(name), args, action, result
+                "PostToolUse", self, agent_tools.hook_name(name), hook_input, action, result
             )
             if hook.message:
                 self.show_hook_feedback(hook.message)

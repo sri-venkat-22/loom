@@ -1079,7 +1079,21 @@ def task(coder, description, prompt, agent=None, model=None):
             f" the {agent_type.name} agent can edit files and run commands. Investigate with"
             " a read-only one, then present your plan."
         )
-    chosen = subagents.resolve_model(coder, model or agent_type.model)
+    try:
+        chosen = subagents.resolve_model(coder, model or agent_type.model)
+    except ToolError as err:
+        if model or not agent_type.model:
+            raise
+        raise ToolError(
+            f"the {agent_type.name} agent's file asks for the model {agent_type.model!r}, which"
+            f" tasks can't use until the user allows it with --subagent-model ({err})"
+        )
+    if not subagents.registry(coder).approve(agent_type, coder.io):
+        coder.action_denied()
+        raise ToolError(
+            f"the user didn't approve the project's {agent_type.name} agent, so it didn't run."
+            " Stop and wait for the user's instructions."
+        )
     job = subagents.Task(coder, None, description, prompt.strip(), agent_type, chosen)
 
     def run():
@@ -1519,6 +1533,14 @@ HOOK_NAMES = dict(
 def hook_name(name):
     """The tool name a hook sees, like ExitPlanMode for exit_plan_mode."""
     return HOOK_NAMES.get(name, name)
+
+
+def hook_input(name, args):
+    """The tool_input a hook sees: the model's arguments, and for task Claude Code's
+    subagent_type too."""
+    if name == "task" and isinstance(args, dict):
+        return dict(args, subagent_type=args.get("agent") or "general")
+    return args
 
 
 def display_name(name):

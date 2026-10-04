@@ -92,11 +92,41 @@ class SubAgentCoder(AgentCoder):
     # Doing the task
 
     def do_task(self, prompt):
-        """Do the task, and return its report: its final reply. A sub-agent that ran out of
+        """Do the task, and return its report: its final reply. Then the SubagentStop hooks
+        run, and one can send it back to work."""
+        self.init_before_message()
+        report = self.work(prompt)
+        for num in range(subagents.MAX_STOP_BLOCKS):
+            if self.interrupted or self.failed or self.denied:
+                break
+            outcome = self.stop_hooks(report, active=num > 0)
+            if outcome.decision != "block":
+                break
+            reason = outcome.message.strip()
+            self.io.tool_warning("SubagentStop hook: " + reason.split("\n", 1)[0])
+            report = self.work(reason)
+        return report
+
+    def stop_hooks(self, report, active):
+        """Run the SubagentStop hooks, with the transcript saved for them to read."""
+        from loom.hooks import HookOutcome
+
+        task = self.task
+        if not (self.hooks and self.hooks.matching("SubagentStop", task.agent_type.name)):
+            return HookOutcome()
+        task.report = report
+        try:
+            path = self.parent.session.save_task(task.record())
+        except (OSError, TypeError, ValueError):
+            path = None
+        return self.hooks.subagent_stop(self, task, path, active)
+
+    def work(self, message):
+        """Send message and return the report: its final reply. A sub-agent that ran out of
         steps or budget is told to stop and report, one that ended without a report is asked
         for one, and if it still writes none its last tool results stand in for it."""
-        self.init_before_message()
-        self.send_request(prompt)
+        self.incomplete = False
+        self.send_request(message)
         if self.interrupted or self.failed or self.denied:
             return self.final_text()
 

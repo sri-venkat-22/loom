@@ -1,3 +1,4 @@
+import json
 import re
 import threading
 import unittest
@@ -21,6 +22,7 @@ from .test_agent import (
     reply,
     stream_response,
 )
+from .test_mcp import HomeDirMixin
 
 FOOTER_RE = re.compile(r"\n\n\[task: \d+ tool uses? · [\d.]+k? tokens( · \$[\d.]+)? · \d+s\]$")
 
@@ -79,7 +81,7 @@ def explore_task(prompt="Find where add() is defined and what's wrong with it.")
     return call("task", description="Find the adder", prompt=prompt, agent="explore")
 
 
-class TestTaskTool(unittest.TestCase):
+class TestTaskTool(HomeDirMixin, unittest.TestCase):
     def run_parent(self, llm, message="fix the adder", **kwargs):
         coder = make_coder(**kwargs)
         with patch.object(litellm, "completion", llm):
@@ -512,7 +514,7 @@ class FakeTask:
     label = "explore: auth flow"
 
 
-class TestTaskDisplay(unittest.TestCase):
+class TestTaskDisplay(HomeDirMixin, unittest.TestCase):
     def board(self, terminal, verbose=False):
         from loom.subagent_io import TaskBoard
 
@@ -646,7 +648,7 @@ class TestTaskDisplay(unittest.TestCase):
             self.assertIn("     … +2 more tool uses\n  ⎿  Done (5 tool uses", text)
 
 
-class TestTranscripts(unittest.TestCase):
+class TestTranscripts(HomeDirMixin, unittest.TestCase):
     def run_with_session(self, io=None):
         from loom.sessions import Session
 
@@ -760,3 +762,412 @@ class TestTranscripts(unittest.TestCase):
                 coder.done_messages = [dict(role="user", content="new")]
                 coder.save_session()
             self.assertFalse(tasks.exists())
+
+
+REVIEWER = """---
+name: reviewer
+description: Reviews a change for bugs. Use it after making a change.
+tools: Read, Grep, glob, mcp__github
+model: weak
+---
+You are a careful code reviewer.
+Report bugs with file:line references.
+"""
+
+
+def write_agent(path, text):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+class TestAgentFiles(HomeDirMixin, unittest.TestCase):
+    def test_parsing(self):
+        with GitTemporaryDirectory():
+            path = write_agent(".loom/agents/reviewer.md", REVIEWER)
+            agent_type, problems = subagents.load_agent_file(path, "project")
+            self.assertEqual(problems, [])
+            self.assertEqual(agent_type.name, "reviewer")
+            self.assertEqual(
+                agent_type.description, "Reviews a change for bugs. Use it after making a change."
+            )
+            # Claude Code's names become loom's
+            self.assertEqual(agent_type.tools, ("read_file", "grep", "glob", "mcp__github"))
+            self.assertEqual(agent_type.model, "weak")
+            self.assertEqual(
+                agent_type.prompt,
+                "You are a careful code reviewer.\nReport bugs with file:line references.",
+            )
+            self.assertFalse(agent_type.read_only)
+            self.assertEqual(agent_type.where(Path.cwd()), ".loom/agents/reviewer.md")
+            self.assertTrue(agent_type.allows("mcp__github__get_issue"))
+            self.assertFalse(agent_type.allows("mcp__gitlab__get_issue"))
+            self.assertFalse(agent_type.allows("bash"))
+
+    def test_defaults_and_problems(self):
+        with GitTemporaryDirectory():
+            path = write_agent(
+                "finder.md",
+                (
+                    "---\ntools: [read_file, grep, Task, frobnicate]\nmodel: inherit\n---\n"
+                    "Find things quickly.\nThen stop.\n"
+                ),
+            )
+            agent_type, problems = subagents.load_agent_file(path, "user")
+            # The name from the file, the description from the prompt
+            self.assertEqual(
+                (agent_type.name, agent_type.description), ("finder", "Find things quickly.")
+            )
+            self.assertIsNone(agent_type.model)
+            self.assertEqual(agent_type.tools, ("read_file", "grep"))
+            self.assertTrue(agent_type.read_only)
+            self.assertEqual(len(problems), 2)
+            self.assertIn("Task isn't available to sub-agents", problems[0])
+            self.assertIn("unknown tool 'frobnicate'", problems[1])
+
+            no_tools = write_agent("helper.md", "---\nname: helper\n---\nHelp.\n")
+            agent_type, _ = subagents.load_agent_file(no_tools, "user")
+            self.assertIsNone(agent_type.tools)
+            self.assertTrue(agent_type.allows("bash"))
+            self.assertFalse(agent_type.allows("task"))
+
+            for text, error in [
+                ("---\nname: x\n---\n", "has no prompt"),
+                ("---\nname: bad name\n---\nHi.\n", "isn't a valid agent name"),
+                ("---\nname: [x\n---\nHi.\n", "invalid front matter"),
+            ]:
+                path = write_agent("broken.md", text)
+                with self.assertRaises(subagents.AgentFileError) as ctx:
+                    subagents.load_agent_file(path, "user")
+                self.assertIn(error, str(ctx.exception))
+
+    def test_project_overrides_user_and_builtins_cant_be_overridden(self):
+        with GitTemporaryDirectory():
+            write_agent(Path.home() / ".loom/agents/reviewer.md", REVIEWER.replace("weak", "main"))
+            write_agent(Path.home() / ".loom/agents/mine.md", "---\nname: mine\n---\nMine.\n")
+            write_agent(".loom/agents/reviewer.md", REVIEWER)
+            write_agent(".loom/agents/explore.md", "---\nname: explore\n---\nNot the real one.\n")
+            io = InputOutput(yes=True)
+            io.tool_warning = MagicMock()
+            registry = subagents.AgentTypes(io, Path.cwd())
+            types = registry.all()
+            self.assertEqual(list(types), ["explore", "general", "plan", "mine", "reviewer"])
+            self.assertEqual(types["reviewer"].source, "project")
+            self.assertEqual(types["reviewer"].model, "weak")
+            self.assertEqual(types["mine"].source, "user")
+            self.assertIs(types["explore"], subagents.BUILTIN_TYPES["explore"])
+            io.tool_warning.assert_called_once()
+            self.assertIn(
+                "built-in explore agent can't be overridden", io.tool_warning.call_args[0][0]
+            )
+
+            # Warned once, and reloaded when a file changes
+            registry.all()
+            io.tool_warning.assert_called_once()
+            write_agent(".loom/agents/reviewer.md", REVIEWER.replace("weak", "main") + "More.\n")
+            self.assertEqual(registry.all()["reviewer"].model, "main")
+
+    def test_project_agents_need_approval(self):
+        with GitTemporaryDirectory():
+            path = write_agent(".loom/agents/reviewer.md", REVIEWER)
+            write_agent(Path.home() / ".loom/agents/mine.md", "---\nname: mine\n---\nMine.\n")
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            registry = subagents.AgentTypes(io, Path.cwd())
+            types = registry.all()
+
+            self.assertTrue(registry.approve(types["mine"], io))
+            self.assertTrue(registry.approve(types["explore"], io))
+            io.permission_ask.assert_not_called()
+
+            self.assertFalse(registry.approve(types["reviewer"], io))
+            question = io.permission_ask.call_args[0][0]
+            self.assertEqual(
+                question, "Use the reviewer agent from this project's .loom/agents/reviewer.md?"
+            )
+            self.assertIn(
+                "tools: read_file, grep, glob, mcp__github",
+                io.permission_ask.call_args[1]["subject"],
+            )
+            self.assertTrue(io.permission_ask.call_args[1]["explicit_yes_required"])
+
+            # Yes is for this session
+            io.permission_ask.return_value = "yes"
+            self.assertTrue(registry.approve(types["reviewer"], io))
+            self.assertTrue(registry.approve(types["reviewer"], io))
+            self.assertEqual(io.permission_ask.call_count, 2)
+            self.assertFalse(subagents.approvals_file().exists())
+            self.assertFalse(subagents.AgentTypes(io, Path.cwd()).is_approved(types["reviewer"]))
+
+            # Always is remembered, until the file changes
+            io.permission_ask.return_value = "always"
+            fresh = subagents.AgentTypes(io, Path.cwd())
+            self.assertTrue(fresh.approve(fresh.all()["reviewer"], io))
+            saved = json.loads(subagents.approvals_file().read_text())
+            self.assertEqual(saved, {str(path.resolve()): types["reviewer"].hash})
+            again = subagents.AgentTypes(io, Path.cwd())
+            self.assertTrue(again.is_approved(again.all()["reviewer"]))
+            write_agent(path, REVIEWER + "Also check the tests.\n")
+            self.assertFalse(again.is_approved(again.all()["reviewer"]))
+
+    def test_new_agent_file(self):
+        with GitTemporaryDirectory():
+            path = subagents.new_agent_file(Path.cwd(), "reviewer")
+            self.assertEqual(path, Path.cwd() / ".loom/agents/reviewer.md")
+            agent_type, problems = subagents.load_agent_file(path, "project")
+            self.assertEqual(problems, [])
+            self.assertEqual(agent_type.name, "reviewer")
+            self.assertEqual(agent_type.tools, ("read_file", "list_dir", "glob", "grep"))
+            for name, error in [
+                ("reviewer", "already exists"),
+                ("explore", "built-in"),
+                ("no way", "isn't a valid agent name"),
+            ]:
+                with self.assertRaises(subagents.AgentFileError) as ctx:
+                    subagents.new_agent_file(Path.cwd(), name)
+                self.assertIn(error, str(ctx.exception))
+
+    def test_agents_command(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            write_agent(".loom/agents/reviewer.md", REVIEWER)
+            io = InputOutput(pretty=False, yes=True)
+            out = capture(io)
+            coder = make_coder(io)
+            coder.commands.run("/agents")
+            text = out.getvalue()
+            self.assertIn("explore (built-in, read-only)\n  Read-only: searches the code", text)
+            self.assertIn("plan (built-in, read-only)", text)
+            self.assertIn(
+                (
+                    "reviewer (.loom/agents/reviewer.md, model weak, asks before first use)\n"
+                    "  Reviews a change for bugs."
+                ),
+                text,
+            )
+            coder.commands.run("/agents new tester")
+            self.assertTrue(Path(".loom/agents/tester.md").is_file())
+            self.assertIn("Created .loom/agents/tester.md", out.getvalue())
+
+
+class TestCustomAgentTasks(HomeDirMixin, unittest.TestCase):
+    def test_custom_agent_runs_with_its_tools_model_and_prompt(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            write_agent(".loom/agents/reviewer.md", REVIEWER)
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="yes")
+            llm = AgentsLLM(
+                parent=[
+                    reply(
+                        None,
+                        call(
+                            "task", description="Review", prompt="Review calc.py.", agent="reviewer"
+                        ),
+                    ),
+                    reply("Done."),
+                ],
+                reviewer=[
+                    reply(None, call("bash", command="rm -rf /")),
+                    reply("calc.py:2 subtracts."),
+                ],
+            )
+            coder = make_coder(io)
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="review it")
+            self.assertEqual(llm.left(), {})
+
+            # The task tool lists it
+            description = next(
+                schema["function"]["description"]
+                for schema in llm.requests["parent"][0]["tools"]
+                if schema["function"]["name"] == "task"
+            )
+            self.assertIn("- reviewer: Reviews a change for bugs.", description)
+            self.assertIn("- plan: Read-only: investigates", description)
+
+            first = llm.requests["reviewer"][0]
+            self.assertEqual(tool_names(first), ["read_file", "glob", "grep"])
+            self.assertEqual(first["model"], coder.main_model.weak_model.name)
+            self.assertIn("You are a careful code reviewer.", first["messages"][0]["content"])
+            refused = results_of(llm.requests["reviewer"][1]["messages"])[0]
+            self.assertIn("Refused: the reviewer agent can't use bash", refused)
+            # Asked once, before it first ran
+            self.assertIn("Use the reviewer agent", io.permission_ask.call_args_list[0][0][0])
+
+    def test_unapproved_project_agent_stops_the_parent(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            write_agent(".loom/agents/reviewer.md", REVIEWER)
+            io = InputOutput(yes=None)
+            io.permission_ask = MagicMock(return_value="no")
+            llm = AgentsLLM(
+                parent=[
+                    reply(
+                        None, call("task", description="Review", prompt="Review.", agent="reviewer")
+                    )
+                ],
+            )
+            coder = make_coder(io)
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="review it")
+            self.assertTrue(coder.stop_requested)
+            self.assertIn(
+                "didn't approve the project's reviewer agent", results_of(coder.done_messages)[0]
+            )
+            self.assertEqual(coder.session.tasks, [])
+
+    def test_plan_mode_allows_read_only_custom_agents(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            write_agent(
+                Path.home() / ".loom/agents/finder.md", "---\ntools: Read, Grep\n---\nFind.\n"
+            )
+            write_agent(
+                Path.home() / ".loom/agents/fixer.md", "---\ntools: Read, Edit\n---\nFix.\n"
+            )
+            write_agent(Path.home() / ".loom/agents/planner.md", "---\nname: planner\n---\nPlan.\n")
+            io = InputOutput(yes=True)
+            llm = AgentsLLM(
+                parent=[
+                    reply(
+                        None,
+                        call("task", description="Find", prompt="Find add.", agent="finder"),
+                        call("task", description="Fix", prompt="Fix add.", agent="fixer"),
+                        call("task", description="Plan", prompt="Plan.", agent="planner"),
+                        call("task", description="Plan", prompt="Plan the fix.", agent="plan"),
+                    ),
+                    reply("Plan: fix calc.py:2."),
+                ],
+                finder=[reply("calc.py:2")],
+                plan=[reply("1. Change calc.py:2.")],
+            )
+            coder = make_coder(io, Permissions(io, mode="plan"))
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="plan it")
+            self.assertEqual(llm.left(), {})
+            found, fixer, planner, plan = results_of(llm.requests["parent"][1]["messages"])
+            self.assertTrue(found.startswith("calc.py:2"))
+            self.assertIn("plan mode", fixer)
+            self.assertIn("plan mode", planner)
+            self.assertTrue(plan.startswith("1. Change calc.py:2."))
+            self.assertIn("read_only types run: explore, plan, finder", description_of(llm))
+            self.assertNotIn("exit_plan_mode", tool_names(llm.requests["plan"][0]))
+
+
+def description_of(llm):
+    return next(
+        schema["function"]["description"]
+        for schema in llm.requests["parent"][0]["tools"]
+        if schema["function"]["name"] == "task"
+    ).replace("read-only", "read_only")
+
+
+TASK_HOOK = """
+import json, sys
+data = json.load(sys.stdin)
+with open("hook-log.jsonl", "a") as f:
+    f.write(json.dumps(data) + "\\n")
+action = sys.argv[1]
+if action == "block-task":
+    print("No sub-agents in this repo", file=sys.stderr)
+    sys.exit(2)
+if action == "carry-on":
+    log = [json.loads(line) for line in open("hook-log.jsonl")]
+    if len([e for e in log if e["hook_event_name"] == "SubagentStop"]) == 1:
+        print(json.dumps({"decision": "block", "reason": "Also check the tests."}))
+"""
+
+
+class TestTaskHooks(HomeDirMixin, unittest.TestCase):
+    def hooks(self, io, *specs):
+        import sys
+
+        from loom.hooks import Hook, Hooks
+
+        Path("hook.py").write_text(TASK_HOOK)
+        hooks = [
+            Hook(event, matcher, f'"{sys.executable}" hook.py {action}', 60, "test")
+            for event, matcher, action in specs
+        ]
+        return Hooks(io, hooks, root=str(Path.cwd()))
+
+    def log(self):
+        return [json.loads(line) for line in Path("hook-log.jsonl").read_text().splitlines()]
+
+    def test_pre_tool_use_hook_blocks_a_task(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            io = InputOutput(yes=True)
+            llm = AgentsLLM(parent=[reply(None, explore_task()), reply("Ok.")])
+            coder = make_coder(io, hooks=self.hooks(io, ("PreToolUse", "Task", "block-task")))
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="go")
+            self.assertEqual(llm.left(), {})
+            result = results_of(llm.requests["parent"][1]["messages"])[0]
+            self.assertIn("No sub-agents in this repo", result)
+            self.assertEqual(coder.session.tasks, [])
+            event = self.log()[0]
+            self.assertEqual(event["tool_name"], "Task")
+            self.assertEqual(event["tool_input"]["subagent_type"], "explore")
+            self.assertEqual(event["tool_input"]["description"], "Find the adder")
+
+    def test_hooks_see_the_childs_tool_calls_and_subagent_stop(self):
+        with GitTemporaryDirectory():
+            make_repo()
+            from loom.sessions import Session
+
+            io = InputOutput(yes=True)
+            hooks = self.hooks(
+                io,
+                ("PreToolUse", "task|read_file", "log"),
+                ("PostToolUse", "Task", "log"),
+                ("SubagentStop", "explore", "carry-on"),
+                ("SubagentStop", "general", "log"),
+            )
+            llm = AgentsLLM(
+                parent=[reply(None, explore_task()), reply("Ok.")],
+                explore=[
+                    reply(None, call("read_file", path="calc.py")),
+                    reply("First report."),
+                    reply(None, call("glob", pattern="test_*.py")),
+                    reply("Second report, with the tests."),
+                ],
+            )
+            session = Session(Path(".loom.sessions"))
+            coder = make_coder(io, hooks=hooks, session=session)
+            with patch.object(litellm, "completion", llm):
+                coder.run(with_message="go")
+            self.assertEqual(llm.left(), {})
+
+            log = self.log()
+            events = [(e["hook_event_name"], e.get("tool_name")) for e in log]
+            self.assertEqual(
+                events,
+                [
+                    ("PreToolUse", "Task"),
+                    ("PreToolUse", "read_file"),
+                    ("SubagentStop", None),
+                    ("SubagentStop", None),
+                    ("PostToolUse", "Task"),
+                ],
+            )
+            read = log[1]
+            self.assertEqual((read["agent_id"], read["agent_type"]), ("1", "explore"))
+            self.assertEqual(read["session_id"], session.id)
+            first_stop, second_stop = log[2], log[3]
+            self.assertEqual(first_stop["report"], "First report.")
+            self.assertFalse(first_stop["stop_hook_active"])
+            self.assertTrue(second_stop["stop_hook_active"])
+            self.assertEqual(first_stop["description"], "Find the adder")
+            self.assertTrue(Path(first_stop["transcript_path"]).is_file())
+            # The hook's reason went to the sub-agent, which carried on
+            self.assertEqual(
+                llm.requests["explore"][2]["messages"][-1],
+                dict(role="user", content="Also check the tests."),
+            )
+            result = results_of(llm.requests["parent"][1]["messages"])[0]
+            self.assertTrue(result.startswith("Second report, with the tests."))
+            self.assertIn("[task: 2 tool uses", result)
+            self.assertTrue(log[4]["tool_response"].startswith("Second report"))

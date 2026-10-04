@@ -13,21 +13,56 @@ sub-agents can't start sub-agents.
 Agent types:
 - explore: read-only. Searches broadly and reports findings with file:line references.
 - general: every tool the parent has, except task.
+- plan: read-only. Returns a step-by-step implementation plan with the files to change.
 
-In plan mode only read-only agent types may run.
+Custom agents are Markdown files, in Claude Code's format:
+
+    .loom/agents/reviewer.md      the project's (commit it to share it)
+    ~/.loom/agents/reviewer.md    yours, in every project
+
+    ---
+    name: reviewer
+    description: Reviews a change for bugs. Use it after making a change.
+    tools: read_file, grep, glob, bash
+    model: main
+    ---
+    You are a code reviewer...
+
+description says when to use it, which the task tool shows the model. tools is a comma
+list of loom's tool names (or Claude Code's: Read, Grep, Glob, LS, Edit, Write, Bash,
+WebFetch, WebSearch, TodoWrite) and MCP tools (mcp__SERVER__TOOL, mcp__SERVER for all of a
+server's); without it the agent gets every tool except task. model is main (the default),
+weak or a model allowed with --subagent-model. The text after the front matter is added
+to the agent's system prompt. A project agent overrides a personal one with the same
+name, and the built-in agents can't be overridden. The project's agents come with the
+repo, so loom asks before first using each one, and remembers "always" in
+~/.loom/agents-approvals.json until the file changes.
+
+In plan mode only read-only agent types may run: explore, plan and custom agents whose
+tools are all read-only.
+
+When a sub-agent finishes, the SubagentStop hooks run (loom/hooks.py), and one can keep
+it going by blocking.
 
 The child doesn't commit or checkpoint: the files it edits join the parent's, so the
 parent's commit at the end of the request and its /rewind checkpoint cover them. What it
 spends is added to the parent's tokens and cost.
 """
 
+import hashlib
+import json
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 
+import yaml
+
 from loom import tools as agent_tools
-from loom.coders.subagent_prompts import EXPLORE_PROMPT, GENERAL_PROMPT
+from loom.coders.subagent_prompts import EXPLORE_PROMPT, GENERAL_PROMPT, PLAN_PROMPT
+from loom.custom_commands import FRONT_MATTER_RE, first_line
 from loom.tools import ToolError, plural, truncate
 from loom.utils import format_tokens
 
@@ -53,6 +88,26 @@ ASK_FOR_REPORT = (
 )
 NOT_RUN = "Not run: you have no steps left. Write your report now, without tools."
 
+# How many times SubagentStop hooks may send a finished sub-agent back to work
+MAX_STOP_BLOCKS = 3
+
+PROJECT_DIR = ".loom/agents"
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+# Claude Code's names for loom's tools, so agent files written for it work
+CLAUDE_TOOL_NAMES = dict(
+    Read="read_file",
+    Write="write_file",
+    Edit="edit_file",
+    MultiEdit="edit_file",
+    Bash="bash",
+    Grep="grep",
+    Glob="glob",
+    LS="list_dir",
+    WebFetch="web_fetch",
+    WebSearch="web_search",
+    TodoWrite="todo_write",
+)
+
 
 @dataclass
 class AgentType:
@@ -74,6 +129,8 @@ class AgentType:
     path: Path = None
     # Whether the sub-agent gets the repo map
     repo_map: bool = False
+    # The agent file's sha256, which approving a project agent is for
+    hash: str = ""
 
     def allows(self, name, coder=None):
         """Whether a sub-agent of this type may use tool name. coder is the sub-agent, to
@@ -82,7 +139,25 @@ class AgentType:
             return False
         if self.read_only and name not in READ_ONLY_TOOLS and not is_read_only_mcp(coder, name):
             return False
-        return self.tools is None or name in self.tools
+        if self.tools is None:
+            return True
+        return any(
+            fnmatchcase(name, pattern) or fnmatchcase(name, pattern + "__*")
+            for pattern in self.tools
+        )
+
+    def where(self, root=None):
+        """Where it comes from: built-in, or its file relative to the project or ~."""
+        if not self.path:
+            return self.source
+        path = Path(self.path)
+        for base, prefix in ((root, ""), (Path.home(), "~/")):
+            if base:
+                try:
+                    return prefix + path.resolve().relative_to(Path(base).resolve()).as_posix()
+                except ValueError:
+                    pass
+        return str(path)
 
 
 BUILTIN_TYPES = {
@@ -106,13 +181,271 @@ BUILTIN_TYPES = {
             ),
             GENERAL_PROMPT,
         ),
+        AgentType(
+            "plan",
+            (
+                "Read-only: investigates and returns a step-by-step implementation plan with"
+                " the files to change and how to verify it. Use it to plan a change before"
+                " making it."
+            ),
+            PLAN_PROMPT,
+            read_only=True,
+        ),
     ]
 }
 
 
+class AgentFileError(Exception):
+    pass
+
+
+def user_dir():
+    return Path.home() / ".loom" / "agents"
+
+
+def agent_dirs(root):
+    """The directories holding agent files, later ones overriding earlier ones."""
+    dirs = [(user_dir(), "user")]
+    if root:
+        dirs.append((Path(root) / PROJECT_DIR, "project"))
+    return dirs
+
+
+def agent_files(root):
+    """(path, "user" or "project") for every agent file, in the order they override."""
+    res = []
+    for directory, source in agent_dirs(root):
+        if directory.is_dir():
+            res += [(path, source) for path in sorted(directory.glob("*.md")) if path.is_file()]
+    return res
+
+
+def parse_tools(value):
+    """loom's tool names (or MCP patterns) for an agent file's tools, and the problems."""
+    if isinstance(value, str):
+        items = value.split(",")
+    elif isinstance(value, list):
+        items = [str(item) for item in value]
+    else:
+        raise AgentFileError("tools should be a comma list of tool names")
+    tools, problems = [], []
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+        name = CLAUDE_TOOL_NAMES.get(item, item)
+        if name in ("task", "Task") or name in CHILD_EXCLUDED_TOOLS:
+            problems.append(f"{item} isn't available to sub-agents")
+        elif name in agent_tools.ALL_TOOLS or name.startswith("mcp__"):
+            if name not in tools:
+                tools.append(name)
+        else:
+            problems.append(f"unknown tool {item!r}")
+    return tuple(tools), problems
+
+
+def load_agent_file(path, source):
+    """The AgentType in an agent file, and the problems with it that don't stop it
+    loading. Raises AgentFileError for a file that can't be used."""
+    path = Path(path)
+    try:
+        data = path.read_bytes()
+        text = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as err:
+        raise AgentFileError(f"Unable to read {path}: {err}")
+
+    meta = {}
+    match = FRONT_MATTER_RE.match(text)
+    if match:
+        try:
+            meta = yaml.safe_load(match.group(1)) or {}
+        except yaml.YAMLError as err:
+            raise AgentFileError(f"{path} has invalid front matter: {err}")
+        if not isinstance(meta, dict):
+            raise AgentFileError(f"{path}: the front matter should be key: value lines")
+        text = text[match.end() :]
+    prompt = text.strip()
+    if not prompt:
+        raise AgentFileError(f"{path} has no prompt after its front matter")
+
+    name = str(meta.get("name") or path.stem).strip()
+    if not NAME_RE.match(name):
+        raise AgentFileError(f"{path}: {name!r} isn't a valid agent name (letters, digits, - or _)")
+    description = " ".join(str(meta.get("description") or "").split()) or first_line(prompt)
+
+    problems = []
+    tools = None
+    if meta.get("tools") not in (None, "", "*"):
+        tools, problems = parse_tools(meta["tools"])
+    model = str(meta.get("model") or "").strip()
+    if model in ("", "inherit"):
+        model = None
+
+    agent_type = AgentType(
+        name,
+        description,
+        prompt,
+        tools=tools,
+        read_only=tools is not None and all(tool in READ_ONLY_TOOLS for tool in tools),
+        model=model,
+        source=source,
+        path=path,
+        hash=hashlib.sha256(data).hexdigest(),
+    )
+    return agent_type, [f"{path}: {problem}" for problem in problems]
+
+
+class AgentTypes:
+    """The agent types a coder's tasks can use: the built-in ones and those in agent
+    files, reloaded when the files change."""
+
+    def __init__(self, io, root):
+        self.io = io
+        self.root = root
+        self.signature = None
+        self.custom = {}
+        self.problems = []
+        # Project agents approved for this session: {path: hash}
+        self.approved = {}
+
+    def signature_now(self):
+        res = []
+        for path, source in agent_files(self.root):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            res.append((str(path), source, stat.st_mtime_ns, stat.st_size))
+        return tuple(res)
+
+    def refresh(self):
+        signature = self.signature_now()
+        if signature == self.signature:
+            return
+        self.signature = signature
+        old_problems = self.problems
+        self.custom, self.problems = {}, []
+        for path, source in agent_files(self.root):
+            try:
+                agent_type, problems = load_agent_file(path, source)
+            except AgentFileError as err:
+                self.problems.append(str(err))
+                continue
+            self.problems += problems
+            if agent_type.name in BUILTIN_TYPES:
+                self.problems.append(
+                    f"{path}: the built-in {agent_type.name} agent can't be overridden; rename it"
+                )
+                continue
+            # A project agent overrides a personal one
+            self.custom[agent_type.name] = agent_type
+        for problem in self.problems:
+            if problem not in old_problems:
+                self.io.tool_warning(problem)
+
+    def all(self):
+        self.refresh()
+        return {**BUILTIN_TYPES, **self.custom}
+
+    def is_approved(self, agent_type):
+        if agent_type.source != "project":
+            return True
+        key = str(Path(agent_type.path).resolve())
+        return agent_type.hash in (self.approved.get(key), load_approvals().get(key))
+
+    def approve(self, agent_type, io):
+        """Whether a project agent may run: approved before, or now by the user."""
+        if self.is_approved(agent_type):
+            return True
+        where = agent_type.where(self.root)
+        tools = ", ".join(agent_type.tools) if agent_type.tools is not None else "all"
+        subject = [
+            f"description: {agent_type.description}",
+            f"tools: {tools}",
+            f"model: {agent_type.model or 'main'}",
+        ] + agent_type.prompt.splitlines()[:8]
+        answer = io.permission_ask(
+            f"Use the {agent_type.name} agent from this project's {where}?",
+            subject="\n".join(subject),
+            always="trust it in this project until it changes",
+            explicit_yes_required=True,
+        )
+        if answer not in ("yes", "always", "bypass"):
+            return False
+        key = str(Path(agent_type.path).resolve())
+        self.approved[key] = agent_type.hash
+        if answer == "always":
+            save_approval(key, agent_type.hash, io)
+        return True
+
+
+def approvals_file():
+    return Path.home() / ".loom" / "agents-approvals.json"
+
+
+def load_approvals():
+    """The project agents the user said to always trust: {path: hash of the file}."""
+    try:
+        data = json.loads(approvals_file().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_approval(key, value, io=None):
+    data = load_approvals()
+    data[key] = value
+    try:
+        path = approvals_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except OSError as err:
+        if io:
+            io.tool_warning(f"Unable to save the approval to {approvals_file()}: {err}")
+
+
+def registry(coder):
+    """The coder's AgentTypes, made the first time it's needed."""
+    res = getattr(coder, "agent_registry", None)
+    if res is None:
+        res = AgentTypes(coder.io, coder.root)
+        coder.agent_registry = res
+    return res
+
+
 def agent_types(coder=None):
     """{name: AgentType} for the agent types a task can use."""
-    return dict(BUILTIN_TYPES)
+    if coder is None:
+        return dict(BUILTIN_TYPES)
+    return registry(coder).all()
+
+
+AGENT_TEMPLATE = """---
+name: {name}
+description: When the main agent should use this agent, in a sentence or two.
+# The tools it may use, like: read_file, list_dir, glob, grep, edit_file, write_file, bash
+# (or Claude Code's Read, LS, Glob, Grep, Edit, Write, Bash). Leave it out for every tool.
+tools: read_file, list_dir, glob, grep
+# main (the default), weak, or a model allowed with --subagent-model
+model: main
+---
+You are the {name} agent. Say what its job is, how it should go about it, and what its
+report should contain.
+"""
+
+
+def new_agent_file(root, name):
+    """Write a starting .loom/agents/NAME.md. Returns its path. Raises AgentFileError."""
+    if not NAME_RE.match(name or ""):
+        raise AgentFileError(f"{name!r} isn't a valid agent name: use letters, digits, - or _")
+    if name in BUILTIN_TYPES:
+        raise AgentFileError(f"{name} is a built-in agent; choose another name")
+    path = Path(root) / PROJECT_DIR / f"{name}.md"
+    if path.exists():
+        raise AgentFileError(f"{path} already exists")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(AGENT_TEMPLATE.format(name=name), encoding="utf-8")
+    return path
 
 
 def is_read_only_mcp(coder, name):
