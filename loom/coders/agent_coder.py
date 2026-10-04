@@ -24,7 +24,7 @@ MCP_PREVIEW_LINES = 6
 HOOK_PREVIEW_LINES = 4
 
 # With --checkpoint-steps, a step that uses one of these is checkpointed first
-STEP_CHECKPOINT_TOOLS = ("edit_file", "write_file", "bash")
+STEP_CHECKPOINT_TOOLS = ("edit_file", "write_file", "bash", "save_stitch_screen")
 
 # Compacting: when the conversation passes COMPACT_AT of the model's context window, loom
 # shrinks it to about COMPACT_TARGET, keeping the last KEEP_RECENT_STEPS steps as they are
@@ -109,13 +109,16 @@ class AgentCoder(Coder):
     @property
     def tools(self):
         """The built-in tools, the web tools unless they're off, exit_plan_mode in plan
-        mode, then those of the connected MCP servers."""
+        mode, save_stitch_screen while Google Stitch is connected, then those of the
+        connected MCP servers."""
         res = agent_tools.schemas()
         if self.web_tools:
             res += agent_tools.web_schemas()
         if self.permissions.mode == "plan":
             res += agent_tools.plan_schemas()
         if self.mcp:
+            if self.mcp.stitch():
+                res += agent_tools.stitch_schemas()
             res += self.mcp.tool_schemas()
         return res
 
@@ -162,6 +165,7 @@ class AgentCoder(Coder):
         extra = []
         if self.mcp:
             extra.append(self.mcp.instructions())
+            extra.append(self.stitch_prompt())
         if self.web_tools:
             extra.append(self.gpt_prompts.web_tools_prompt)
         if self.permissions.mode == "plan":
@@ -171,6 +175,13 @@ class AgentCoder(Coder):
             plan = plans.brief(self.active_plan, self.active_plan_path)
             extra.append(self.gpt_prompts.approved_plan_prompt.format(plan=plan))
         return extra
+
+    def stitch_prompt(self):
+        """How to design with Google Stitch, while it's connected."""
+        server = self.mcp.stitch() if self.mcp else None
+        if not server:
+            return ""
+        return self.gpt_prompts.stitch_prompt.format(server=server.name)
 
     def format_chat_chunks(self):
         chunks = super().format_chat_chunks()

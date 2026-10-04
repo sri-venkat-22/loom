@@ -27,6 +27,11 @@ current versions and docs of the libraries it picks. They cite the URLs they rel
 a Sources section of their document. Building has the web tools too, with every other
 tool; Testing and Launch don't. `--no-web-tools` turns them off for every agent.
 
+When [Google Stitch](mcp.md#google-stitch) is connected, the Design agent also designs the
+main screens of a product with a user interface, and lists them in a UI design section of
+the architecture document. The Building agent saves them into the code with
+`save_stitch_screen` and builds them as designed.
+
 Each agent starts a fresh conversation with the idea and the documents of the earlier
 phases it needs. loom only reads documents that are files in the project, up to 1 MB: one
 that's a symlink out of the project is ignored, with a warning. Permissions work as usual: you approve edits and commands (writing the

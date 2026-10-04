@@ -45,12 +45,36 @@ class PhaseCoder(AgentCoder):
             schema
             for schema in agent_tools.schemas() + web + project
             if schema["function"]["name"] in self.phase.tools
+        ] + self.stitch_schemas()
+
+    def stitch_server(self):
+        """The connected Google Stitch server, when the phase may use it."""
+        if not self.mcp or self.phase.tools is None or "stitch" not in self.phase.tools:
+            return None
+        return self.mcp.stitch()
+
+    def stitch_schemas(self):
+        server = self.stitch_server()
+        if not server:
+            return []
+        prefix = f"mcp__{server.name}__"
+        return [
+            schema
+            for schema in self.mcp.tool_schemas()
+            if schema["function"]["name"].startswith(prefix)
         ]
+
+    def is_stitch_tool(self, name):
+        server = self.stitch_server()
+        return bool(server) and name.startswith(f"mcp__{server.name}__")
 
     def system_prompt_extras(self):
         extra = super().system_prompt_extras() if self.phase.tools is None else []
         if self.phase.tools is not None and self.web_tools and "web_fetch" in self.phase.tools:
             extra.append(self.gpt_prompts.web_tools_prompt)
+        if self.stitch_server():
+            extra.append(self.stitch_prompt())
+            extra.append(self.gpt_prompts.stitch_phase_prompt)
         extra.append(self.phase_brief())
         return extra
 
@@ -62,8 +86,12 @@ class PhaseCoder(AgentCoder):
             lines.append("All of the coding agent's tools, and recall and record_decision.")
         else:
             tools = [
-                name for name in phase.tools if self.web_tools or name not in agent_tools.WEB_TOOLS
+                name
+                for name in phase.tools
+                if (self.web_tools or name not in agent_tools.WEB_TOOLS) and name != "stitch"
             ]
+            if self.stitch_server():
+                tools.append(f"Google Stitch's tools (mcp__{self.stitch_server().name}__*)")
             lines.append(", ".join(tools))
         lines += ["", "## What you may write"]
         lines.append(f"- {phase.document} (your {phase.document_title})")
@@ -103,7 +131,7 @@ class PhaseCoder(AgentCoder):
 
     def refuse_action(self, name, action):
         phase = self.phase
-        if phase.tools is not None and name not in phase.tools:
+        if phase.tools is not None and name not in phase.tools and not self.is_stitch_tool(name):
             return f"the {phase.agent} can't use {name}. Its tools are: {', '.join(phase.tools)}."
         if action.kind == "edit" and action.inside and action.target in self.locked:
             return (

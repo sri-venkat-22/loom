@@ -58,6 +58,69 @@ falls back to a default, so keep tokens in the environment (or in
 Loom connects to the servers when it starts in agent mode, or when you switch to it.
 The announcements list them, like `MCP: github (26 tools), docs (failed)`.
 
+## Google Stitch
+
+[Google Stitch](https://stitch.withgoogle.com) designs UI screens from a description and
+gives back each screen's HTML (with Tailwind CSS) and a screenshot. Loom has it built in:
+set `STITCH_API_KEY` and the agent designs websites and apps with Stitch instead of
+writing layouts from scratch.
+
+1. Sign in at [stitch.withgoogle.com](https://stitch.withgoogle.com), open your profile's
+   Settings and create an API key.
+2. Put it in `~/.loom/credentials.json` (or the environment, or a `.env` file):
+
+   ```json
+   {"STITCH_API_KEY": "..."}
+   ```
+
+3. Start loom. The announcements show `MCP: stitch (15 tools)`.
+
+```
+agent> design a landing page for my bakery, warm and hand-made, with the menu and opening hours
+● stitch - create_project (MCP)(title: "Crumb & Co.")
+● stitch - generate_screen_from_text (MCP)(projectId: "4044680601076201931", prompt: "A warm, hand-made…", deviceType: "DESKTOP")
+● Stitch(site/index.html)
+  ⎿  Saved the Stitch screen to site/index.html
+```
+
+When Stitch is connected, the agent is told how to design with it: one Stitch project per
+product, a design system so every page matches, one detailed prompt per page (the product,
+its audience, the style, colors and fonts, and each section with its real content), one
+call per generation, which takes a few minutes, then `edit_screens` for changes and
+`generate_variants` for options. It shows you each screen's screenshot link.
+
+To build a design, the agent uses loom's own `save_stitch_screen` tool, offered while
+Stitch is connected: it gets the screen from Stitch and writes its HTML to a file in the
+project, as an edit (so it asks like any other edit). The agent then fits it to the
+project's stack, keeping the design: its Tailwind classes, colors, fonts and spacing. In a
+[project](project.md), the Design agent designs the screens and lists them in the
+architecture document, and the Building agent saves and builds them.
+
+The built-in server is
+
+```json
+{
+  "type": "http",
+  "url": "https://stitch.googleapis.com/mcp",
+  "headers": {"X-Goog-Api-Key": "${STITCH_API_KEY}"},
+  "timeout": 600
+}
+```
+
+A server named `stitch` in a config file replaces it, for example one that signs in with
+OAuth (`"headers": {"Authorization": "Bearer ${STITCH_TOKEN}", "X-Goog-User-Project":
+"my-gcp-project"}`), and `{"mcpServers": {"stitch": {"disabled": true}}}` turns it off.
+Any server offering Stitch's tools gets the same help, whatever it's called.
+
+Stitch's tools ask before they run, like other MCP tools. To let them run without asking:
+
+```bash
+loom --allow "mcp(stitch)"
+```
+
+`--yes-always` doesn't approve them, so give that rule to a `/project` run with
+`--yes-always`, or the Design agent can't use Stitch.
+
 ## Using the tools
 
 The model sees each tool as `mcp__<server>__<tool>`, with the description and parameters

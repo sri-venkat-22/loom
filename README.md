@@ -16,6 +16,7 @@ Loom lets you pair program with LLMs to start a new project or build on your exi
 - **Project memory** — put standing instructions in a `LOOM.md` file and they apply to every request.
 - **Sessions** — `loom --continue` picks up your last conversation, and long tasks compact themselves instead of overflowing the context window. See [sessions](loom/docs/sessions.md).
 - **MCP tools** — connect [MCP servers](loom/docs/mcp.md) and the agent can use their tools too.
+- **Google Stitch** — set `STITCH_API_KEY` and the agent designs websites and apps with [Stitch](loom/docs/mcp.md#google-stitch), then builds the designs into your code.
 - **Custom commands and hooks** — save prompts as [`/commands`](loom/docs/custom-commands.md) in `.loom/commands/`, and run [hooks](loom/docs/hooks.md) before or after the agent's tools to block commands, format files or report lint errors.
 - **Cloud and local LLMs** — works best with Claude Sonnet, GPT-4o/o1/o3, and DeepSeek, but connects to almost any model, including local ones.
 - **Maps your codebase** — builds a map of your whole repo so it works well in larger projects, not just single files.

@@ -988,6 +988,51 @@ def extract_from_page(coder, url, text, prompt):
         return None
 
 
+# Google Stitch designs (loom/stitch.py)
+
+
+def save_stitch_screen(coder, screen, path, project_id=None):
+    from loom import stitch
+
+    server = stitch.find_server(getattr(coder, "mcp", None))
+    if not server:
+        raise ToolError("no Google Stitch MCP server is connected")
+    try:
+        project, screen_id = stitch.parse_screen(screen, project_id)
+    except stitch.StitchError as err:
+        raise ToolError(str(err))
+    # Check the path before spending a download on it
+    check_editable(coder, resolve_path(coder, path))
+    try:
+        data, html = stitch.fetch_screen(server, project, screen_id)
+    except stitch.StitchError as err:
+        raise ToolError(str(err))
+
+    action = write_file(coder, path, html)
+    write = action.run
+    title = data.get("title") if isinstance(data.get("title"), str) else ""
+    screenshot = stitch.download_url(data, "screenshot")
+
+    def run():
+        res = write()
+        notes = [f"Saved the HTML of the Stitch screen {title or screen_id!r}: {res}"]
+        if screenshot:
+            notes.append(f"Screenshot (a temporary link): {screenshot}")
+        notes.append(
+            "Read the file, then make it part of the project: keep its design (colors,"
+            " fonts, spacing, Tailwind classes and tailwind.config), and fit its markup to the"
+            " project's stack and real content."
+        )
+        return "\n".join(notes)
+
+    action.run = run
+    action.name = "Stitch"
+    action.title = f"Save the Stitch screen {title or screen_id!r} to {action.target}"
+    action.summary = f"Saved the Stitch screen to {action.target}"
+    action.extra = dict(action.extra, stitch_screen=f"projects/{project}/screens/{screen_id}")
+    return action
+
+
 # Presenting a plan, in plan mode (loom/plans.py)
 
 
@@ -1279,7 +1324,45 @@ WEB_TOOLS = {
     ]
 }
 
-ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS, **PLAN_TOOLS, **WEB_TOOLS}
+# Offered while a Google Stitch MCP server is connected (loom/stitch.py)
+STITCH_TOOLS = {
+    t["name"]: t
+    for t in [
+        tool(
+            "save_stitch_screen",
+            save_stitch_screen,
+            (
+                "Save a screen designed with Google Stitch into the project as an HTML file:"
+                " loom gets the screen from Stitch and writes its full HTML (Tailwind CSS) to"
+                " path, ready to read and adapt. Use it instead of fetching Stitch's download"
+                " links yourself."
+            ),
+            dict(
+                screen=dict(
+                    type="string",
+                    description=(
+                        "The screen's resource name, projects/PROJECT_ID/screens/SCREEN_ID, as"
+                        " Stitch's tools return it."
+                    ),
+                ),
+                path=dict(
+                    type="string",
+                    description=(
+                        "Where to write the HTML, relative to the project root, like"
+                        " design/home.html."
+                    ),
+                ),
+                project_id=dict(
+                    type="string",
+                    description="The Stitch project id, when screen is a bare screen id.",
+                ),
+            ),
+            ["screen", "path"],
+        ),
+    ]
+}
+
+ALL_TOOLS = {**TOOLS, **PROJECT_TOOLS, **PLAN_TOOLS, **WEB_TOOLS, **STITCH_TOOLS}
 
 
 def schemas():
@@ -1298,6 +1381,10 @@ def web_schemas():
     return [t["schema"] for t in WEB_TOOLS.values()]
 
 
+def stitch_schemas():
+    return [t["schema"] for t in STITCH_TOOLS.values()]
+
+
 DISPLAY_NAMES = dict(
     read_file="Read",
     list_dir="List",
@@ -1312,6 +1399,7 @@ DISPLAY_NAMES = dict(
     exit_plan_mode="Plan",
     web_search="WebSearch",
     web_fetch="WebFetch",
+    save_stitch_screen="Stitch",
 )
 
 # What hooks call the tools whose names differ in Claude Code, so hooks written for it work
@@ -1420,6 +1508,9 @@ def prepare(coder, name, args):
             raise ToolError(
                 "loom isn't in plan mode, so there's no plan to approve: carry on with the request."
             )
+        return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
+
+    if name in STITCH_TOOLS:
         return ALL_TOOLS[name]["prepare"](coder, **coerce_args(name, args))
 
     mcp = getattr(coder, "mcp", None)

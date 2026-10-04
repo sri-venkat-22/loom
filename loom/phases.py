@@ -6,7 +6,8 @@ of tools and one document it produces. The orchestrator (loom/orchestrator.py) r
 The Building agent is the coding agent itself (every tool, MCP included) with a brief;
 the others write a document, and Testing and Launch may also write test and deployment
 files. Every phase agent can search the project's shared memory and record decisions in it,
-and Idea Check, Planning and Design can research on the web.
+and Idea Check, Planning and Design can research on the web. Design can also design the
+screens with Google Stitch when it's connected, for Building to save into the code.
 """
 
 import re
@@ -22,6 +23,8 @@ WRITE_TOOLS = ("write_file", "edit_file")
 WEB_TOOLS = ("web_search", "web_fetch")
 # The project's shared memory (loom/memory.py)
 MEMORY_TOOLS = ("recall", "record_decision")
+# The tools of the Google Stitch MCP server, while one is connected (loom/stitch.py)
+STITCH_TOOLS = ("stitch",)
 
 TEST_FILES = (
     "**/tests/**",
@@ -124,7 +127,7 @@ PHASES = [
         "architecture document",
         "architecture doc",
         phase_prompts.DESIGN,
-        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + ("todo_write",),
+        tools=READ_TOOLS + WEB_TOOLS + WRITE_TOOLS + MEMORY_TOOLS + STITCH_TOOLS + ("todo_write",),
         inputs=("idea", "planning"),
         recall="constraints performance security scale platforms risks",
     ),

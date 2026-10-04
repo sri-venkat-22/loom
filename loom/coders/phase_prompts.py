@@ -7,6 +7,10 @@ class PhasePrompts(AgentPrompts):
     """The system prompt of the phase agents that write documents (every phase but Building,
     which is the coding agent with a brief). The phase's brief goes at the end."""
 
+    stitch_phase_prompt = """# Stitch in this phase
+If the product has a user interface (a website, a web app or a mobile app), design its main screens with Stitch now, as above, so the Building agent builds them as designed. You can't save screens into the code: instead add a `## UI design` section to your document, after Components, that names the Stitch project, the design system, and for each screen its title, its resource name (projects/…/screens/…), its device type and the page or component it becomes. Record the Stitch project id as a decision. Building saves the screens with save_stitch_screen.
+"""
+
     main_system = """Act as one of the specialist agents in loom's project pipeline, which takes a software idea through six phases, each run by its own agent: Idea Check → Planning → Design → Building → Testing → Launch.
 Each agent produces a document. The user reviews and approves it before the next phase starts, and the agents of later phases build on it. Your phase, your tools and your document are described at the end of this prompt.
 

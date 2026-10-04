@@ -94,8 +94,9 @@ def expand_env(value, env=None):
     return value
 
 
-def load_config_file(path):
-    """{server name: config} from an MCP config file."""
+def load_config_file(path, disabled=None):
+    """{server name: config} from an MCP config file. The names of the servers it disables
+    are added to the set disabled."""
     path = Path(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -117,6 +118,10 @@ def load_config_file(path):
                 f"{path}: server names can only use letters, digits, _ . and -, and must not"
                 " contain __ (which separates the server from the tool name)"
             )
+        if config.get("disabled"):
+            if disabled is not None:
+                disabled.add(name)
+            continue
         if not (config.get("command") or config.get("url")):
             raise McpError(f"{path}: {name!r} needs a command to run or a url")
         if config.get("command") and config.get("url"):
@@ -125,9 +130,24 @@ def load_config_file(path):
         for key, kind in [("args", list), ("env", dict), ("headers", dict)]:
             if config.get(key) is not None and not isinstance(config[key], kind):
                 raise McpError(f"{path}: {key} for {name!r} should be a {kind.__name__}")
-        if config.get("disabled"):
-            continue
         res[name] = config
+    return res
+
+
+def builtin_servers(env=None):
+    """[(name, config, where it comes from)] for loom's own servers that are set up."""
+    from loom import stitch
+
+    env = os.environ if env is None else env
+    res = []
+    if env.get(stitch.API_KEY_ENV, "").strip():
+        res.append(
+            (
+                stitch.SERVER_NAME,
+                dict(stitch.SERVER_CONFIG),
+                f"built in, as {stitch.API_KEY_ENV} is set",
+            )
+        )
     return res
 
 
@@ -463,6 +483,11 @@ class HttpConnection(Connection):
         status = response.status_code
         if status < 400:
             return
+        if status in (401, 403) and self.headers:
+            raise McpError(
+                f"HTTP {status}: the server refused the credentials in the headers of its config;"
+                " check that the key or token is right and still valid"
+            )
         if status in (401, 403):
             raise McpError(
                 f"HTTP {status}: the server needs authorization. loom doesn't do OAuth; set an"
@@ -537,10 +562,12 @@ def is_project_file(path, root):
 
 
 class McpServer:
-    def __init__(self, name, config, source, root=None, project=False):
+    def __init__(self, name, config, source, root=None, project=False, builtin=False):
         self.name = name
         self.config = config
         self.source = source  # the config file it came from
+        # Loom's own, like Google Stitch when STITCH_API_KEY is set: no config file
+        self.builtin = builtin
         self.root = root
         # The config came with the repo, from a file it names rather than one inside it
         self.project = project
@@ -556,10 +583,14 @@ class McpServer:
     @property
     def is_project_server(self):
         """Whether the server came with the repo, so it needs the user's approval."""
+        if self.builtin:
+            return False
         return self.project or is_project_file(self.source, self.root)
 
     def source_name(self):
         """The config file, relative to the project when it's inside."""
+        if self.builtin:
+            return self.source
         try:
             return (
                 Path(os.path.abspath(self.source))
@@ -721,8 +752,12 @@ class McpManager:
         default file is skipped with a warning; a broken config_file raises McpError.
 
         project_config_files are config_files the repo asked for (in a .loom.conf.yml or
-        .env inside it), so their servers need approval wherever the files are."""
+        .env inside it), so their servers need approval wherever the files are.
+
+        With the default files, loom's built-in servers are added too unless a file names
+        or disables them: Google Stitch when STITCH_API_KEY is set (loom/stitch.py)."""
         configs = {}
+        disabled = set()
         sources = []
         if use_default_files:
             sources.append((user_config_file(), False, False))
@@ -737,7 +772,7 @@ class McpManager:
             if not explicit and not path.is_file():
                 continue
             try:
-                servers = load_config_file(path)
+                servers = load_config_file(path, disabled)
             except McpError as err:
                 if explicit:
                     raise
@@ -750,6 +785,12 @@ class McpManager:
             McpServer(name, config, source, root, project)
             for name, (config, source, project) in configs.items()
         ]
+        if use_default_files:
+            servers += [
+                McpServer(name, config, source, root, builtin=True)
+                for name, config, source in builtin_servers()
+                if name not in configs and name not in disabled
+            ]
         return cls(io, servers, root)
 
     # Approving the project's servers
@@ -881,6 +922,12 @@ class McpManager:
         if not name.startswith("mcp__"):
             return None
         return self.tool_map().get(name)
+
+    def stitch(self):
+        """The connected Google Stitch server, or None (loom/stitch.py)."""
+        from loom import stitch
+
+        return stitch.find_server(self)
 
     def instructions(self):
         """What the connected servers told loom about using them, for the system prompt."""
