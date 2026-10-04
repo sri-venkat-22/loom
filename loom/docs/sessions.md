@@ -89,8 +89,9 @@ A snapshot doesn't touch your index, `HEAD`, branches, stash or `git status`: lo
 writes it with its own index file into a private ref, `refs/loom/checkpoints/<session>`
 (so `git log --all` shows it, but `git log` doesn't). Git stores each version of a file
 once, so a snapshot only costs the files that changed, and one of an unchanged tree
-reuses the previous one. Restoring shows how many files change, are created and are
-deleted, and asks first.
+reuses the previous one. Files come back byte for byte, line endings included, whatever
+`core.autocrlf` or `.gitattributes` say. Restoring shows how many files change, are
+created and are deleted, and asks first.
 
 The checkpoints are saved with the conversation, the last 100 of them, so they survive
 `--resume`. `/project` takes one before each phase's agents run, and with

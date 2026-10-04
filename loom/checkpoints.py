@@ -49,6 +49,13 @@ MAX_PROMPT_CHARS = 10_000
 # .gitignore ignores what they name
 LOOM_FILES = (":(glob)**/.loom*", ":(glob)**/.loom*/**")
 EXCLUDE = tuple(":(exclude," + spec[2:] for spec in LOOM_FILES)
+# Snapshots keep files' bytes as they are and restores write them back the same, whatever
+# the repo's line-ending settings: otherwise a file could come back with other line endings,
+# which git status then reports as changed
+RAW = ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.safecrlf=false"]
+# Git's empty tree, as the source of attributes: none, so no text, eol or filter
+# conversions (--attr-source needs git 2.40)
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 # Git operations that leave the repo half-way, when a rewind would make a mess
 BUSY_STATES = {
     "MERGE_HEAD": "a merge",
@@ -155,6 +162,8 @@ class Checkpoints:
         self.root = Path(repo.root if repo else root).resolve()
         # The name and email commit-tree uses when git has none configured
         self.identity = None
+        # The options that make git leave files' bytes alone, once worked out
+        self.raw = None
 
     @property
     def uses_git(self):
@@ -172,10 +181,35 @@ class Checkpoints:
     def index_path(self, name=INDEX_FILE):
         return self.git_dir() / name
 
+    def raw_options(self):
+        """git's options for reading and writing files' bytes as they are."""
+        if self.raw is None:
+            self.raw = list(RAW)
+            if self.git_version() >= (2, 40):
+                self.raw.append(f"--attr-source={EMPTY_TREE}")
+        return self.raw
+
+    def git_version(self):
+        try:
+            return tuple(self.repo.repo.git.version_info[:2])
+        except Exception:
+            return (0, 0)
+
     def with_index(self, index, *args, **kwargs):
-        """Run a git command with index as the index file."""
+        """Run a git command with index as the index file, leaving files' bytes alone."""
         env = dict(os.environ, GIT_INDEX_FILE=str(index))
-        return self.git.execute(["git", *args], env=env, **kwargs)
+        return self.git.execute(["git", *self.raw_options(), *args], env=env, **kwargs)
+
+    def converts_files(self):
+        """Whether git changes files as it reads them in this repo, with core.autocrlf or
+        .gitattributes, so the user's index doesn't hold their bytes."""
+        if (self.git_config("core.autocrlf") or "false").lower() in ("true", "input"):
+            return True
+        try:
+            attributes = self.git.ls_files("-z", "--", ":(glob)**/.gitattributes")
+        except Exception:
+            return True
+        return bool(attributes) or (self.git_dir() / "info" / "attributes").exists()
 
     def write_tree(self, index_name=INDEX_FILE):
         """Snapshot the working tree into the index file index_name and return its tree's
@@ -183,7 +217,7 @@ class Checkpoints:
         index = self.index_path(index_name)
         if not index.exists():
             real = self.git_dir() / "index"
-            if real.exists():
+            if real.exists() and not self.converts_files():
                 # Start from the user's index, whose file times save rereading every file
                 shutil.copyfile(real, index)
         try:

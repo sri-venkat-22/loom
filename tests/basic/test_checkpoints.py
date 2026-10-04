@@ -27,8 +27,7 @@ def write(path, data):
 
 
 def read(path):
-    """A file's text. Windows runners check files out with core.autocrlf, so a rewind
-    writes their lines with \r\n, as git checkout would."""
+    """A file's text, with \r\n read as \n."""
     return Path(path).read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
@@ -209,6 +208,22 @@ class TestRestore(unittest.TestCase):
         self.checkpoints.restore(self.session, checkpoint, changes)
         for name in names:
             self.assertEqual(Path(name).read_bytes(), b"one\r\ntwo\r\n", name)
+
+    def test_line_endings_come_back_as_they_were(self):
+        # Like Windows runners: git converts line endings as it reads and writes files
+        with self.repo.config_writer() as config:
+            config.set_value("core", "autocrlf", "true")
+        write("dos.txt", b"one\r\ntwo\r\n")
+        checkpoints = Checkpoints(self.io, ".", self.checkpoints.repo)
+        session = Session()
+        checkpoint = checkpoints.take(session, "endings", [])
+        status = self.repo.git.status("--porcelain", "--untracked-files=all")
+        write("calc.py", "changed\n")
+        write("dos.txt", b"changed\r\n")
+        checkpoints.restore(session, checkpoint)
+        self.assertEqual(Path("calc.py").read_bytes(), b"def add(a, b):\n    return a - b\n")
+        self.assertEqual(Path("dos.txt").read_bytes(), b"one\r\ntwo\r\n")
+        self.assertEqual(self.repo.git.status("--porcelain", "--untracked-files=all"), status)
 
     def test_a_file_replaced_by_a_folder(self):
         os.remove("scratch.py")
