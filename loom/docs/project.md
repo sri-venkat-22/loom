@@ -48,7 +48,7 @@ phase's work to git.
 ## Running a project
 
 ```
-agent> /project new A web app where students swap used textbooks
+> /project new A web app where students swap used textbooks
 ```
 
 The orchestrator runs the phases in order, and stops at an approval checkpoint after
@@ -207,7 +207,7 @@ Dockerfile, a CI workflow, `fly.toml` for Fly.io, ...) and the deployment docume
 you **ship** it:
 
 ```
-agent> /project ship
+> /project ship
 ```
 
 | Command | What it ships |
@@ -296,7 +296,7 @@ brief for each phase's agent, a skeleton of files to start the code from, the te
 command, and checks that run after the phases. Start a project from one with:
 
 ```
-agent> /project new --template fastapi-react A web app where students swap used textbooks
+> /project new --template fastapi-react A web app where students swap used textbooks
 ```
 
 `/project templates` lists them. loom comes with three:
@@ -363,7 +363,7 @@ hand in:
 - an appendix with the project's history
 
 ```
-agent> /project report docx
+> /project report docx
 Wrote the project report to loom-project/report.docx
 ```
 

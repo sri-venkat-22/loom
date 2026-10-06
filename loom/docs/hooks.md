@@ -9,7 +9,7 @@ to enforce rules the model can't talk its way around, or to do chores after each
 - log every command the agent runs.
 
 ```
-agent> tidy up the imports in app.py
+> tidy up the imports in app.py
 ● Update(app.py)
   ⎿  Updated app.py with 2 additions and 3 removals
   ⎿  Hook: app.py:14:80: E501 line too long (88 > 79 characters)

@@ -46,7 +46,7 @@ Before every request the agent handles, loom takes a checkpoint of the project's
 and remembers where the conversation was. `/rewind` goes back to any of them:
 
 ```
-agent> /rewind
+> /rewind
 Checkpoints, newest first:
   1  10:42  add a test for subtract  · 1 changed, 1 created since
   2  10:31  fix the failing test  · 2 changed, 1 created since

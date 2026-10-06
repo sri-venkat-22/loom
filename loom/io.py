@@ -1,6 +1,7 @@
 import base64
 import functools
 import os
+import random
 import re
 import shutil
 import signal
@@ -10,7 +11,7 @@ import time
 import webbrowser
 from collections import defaultdict
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from io import StringIO
 from pathlib import Path
@@ -24,6 +25,9 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.vi_state import InputMode
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout import walk
+from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.output.vt100 import is_dumb_terminal
 from prompt_toolkit.shortcuts import CompleteStyle, PromptSession
@@ -32,15 +36,23 @@ from pygments.lexers import MarkdownLexer, guess_lexer_for_filename
 from pygments.token import Token
 from rich.color import ColorParseError
 from rich.columns import Columns
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.markdown import Markdown
+from rich.padding import Padding
 from rich.panel import Panel
 from rich.style import Style as RichStyle
 from rich.text import Text
+from rich.theme import Theme as RichTheme
 
 from loom.display import sanitize_for_display
 from loom.esc import EscListener
 from loom.mdstream import MarkdownStream
+from loom.tui import palette
+from loom.tui import theme as tui_theme
+from loom.tui import widgets
+from loom.tui.banner import banner_lines, invitation_lines
+from loom.tui.logo import play_intro
 
 from .dump import dump  # noqa: F401
 from .editor import pipe_editor
@@ -48,6 +60,46 @@ from .utils import is_image_file
 
 # Constants
 NOTIFICATION_MESSAGE = "Loom is waiting for your input"
+
+# The agent's permission modes, each in its own colour in the toolbar, so a Shift-Tab
+# that lands somewhere unexpected is obvious, with what each means. ask lists the
+# prompt's shortcuts instead.
+MODE_COLORS = {"ask": "accent", "accept-edits": "ok", "plan": "info", "bypass": "fail"}
+MODE_HINTS = {
+    "ask": ("ask mode on", None),
+    "accept-edits": ("accept edits on", "edits apply without asking, commands still ask"),
+    "plan": ("plan mode on", "read-only: loom investigates, then shows you a plan"),
+    "bypass": ("bypass permissions on", "everything runs without asking"),
+}
+# What the other chat modes do, for the toolbar
+EDIT_FORMAT_HINTS = {
+    "ask": "questions only, no file changes",
+    "architect": "an architect model plans, an editor model edits",
+    "context": "finds the files a change needs",
+    "help": "questions about using loom",
+}
+# Shown faint in an empty prompt, one at a time
+PROMPT_HINTS = {
+    "agent": [
+        'Try "find where sessions are saved and explain it"',
+        'Try "add a test for the failing case, then fix it"',
+        'Try "/plan" to have loom look before it changes anything',
+        'Try "!git status" to run a command yourself',
+        'Try "/effort" to trade speed for thoroughness',
+        'Try "/help" to see every command',
+    ],
+    "other": [
+        'Try "/agent" to let loom explore and run commands itself',
+        'Try "/help" to see every command',
+    ],
+}
+# What each answer to the agent's plan does, for the plan picker
+PLAN_CHOICE_DETAILS = {
+    "approve and auto-accept edits": "edits apply without asking, commands still ask",
+    "yes, approve and ask for each edit": "loom asks before each edit",
+    "keep planning": "say what should change in the plan",
+    "edit plan": "open the plan in your editor",
+}
 
 
 def ensure_hash_prefix(color):
@@ -140,6 +192,38 @@ def count_diff_changes(diff):
     return added, removed
 
 
+# The most rows the / palette and other completion menus show at once
+MENU_ROWS = 12
+
+
+class LoomPromptSession(PromptSession):
+    """A PromptSession whose toolbar stays right under what's typed, rather than at the
+    bottom of the terminal: once prompt_toolkit knows where the cursor is, it lets the
+    input grow into every row below it. With snug set, the input never grows, and the
+    rows for the / palette are only made while it's open."""
+
+    snug = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for window in self.layout.find_all_windows():
+            if getattr(window.content, "buffer", None) is self.default_buffer:
+                window.dont_extend_height = Condition(lambda: self.snug)
+        for container in walk(self.layout.container):
+            if isinstance(container, CompletionsMenu):
+                container.content.height = Dimension(min=1, max=MENU_ROWS)
+
+    def _get_default_buffer_control_height(self):
+        if not self.snug:
+            return super()._get_default_buffer_control_height()
+        state = self.default_buffer.complete_state
+        if state is None or get_app().is_done:
+            return Dimension()
+        # The line typed, and below it as many rows as the menu shows
+        lines = self.default_buffer.document.line_count
+        return Dimension(min=lines + min(len(state.completions), MENU_ROWS))
+
+
 class CommandCompletionException(Exception):
     """Raised when a command should use the normal autocompleter instead of
     command-specific completion."""
@@ -159,12 +243,22 @@ class ConfirmGroup:
 
 class AutoCompleter(Completer):
     def __init__(
-        self, root, rel_fnames, addable_rel_fnames, commands, encoding, abs_read_only_fnames=None
+        self,
+        root,
+        rel_fnames,
+        addable_rel_fnames,
+        commands,
+        encoding,
+        abs_read_only_fnames=None,
+        theme=None,
     ):
         self.addable_rel_fnames = addable_rel_fnames
         self.rel_fnames = rel_fnames
         self.encoding = encoding
         self.abs_read_only_fnames = abs_read_only_fnames or []
+        self.theme = theme or tui_theme.current()
+        # The / palette's commands and their descriptions, read when first needed
+        self.palette = None
 
         fname_to_rel_fnames = defaultdict(list)
         for rel_fname in addable_rel_fnames:
@@ -214,12 +308,27 @@ class AutoCompleter(Completer):
                 (token[1], f"`{token[1]}`") for token in tokens if token[0] in Token.Name
             )
 
+    def palette_entries(self):
+        if self.palette is None:
+            try:
+                self.palette = palette.entries(self.commands)
+            except Exception:
+                names = getattr(self, "command_names", [])
+                self.palette = [palette.Entry(name, "", "other") for name in names]
+        return self.palette
+
     def get_command_completions(self, document, complete_event, text, words):
         if len(words) == 1 and not text[-1].isspace():
-            partial = words[0].lower()
-            candidates = [cmd for cmd in self.command_names if cmd.startswith(partial)]
-            for candidate in sorted(candidates):
-                yield Completion(candidate, start_position=-len(words[-1]))
+            # The palette: matching commands, best first, each with what it does. The
+            # marker is only visible on the current one (see InputOutput.theme_styles)
+            marker = self.theme.glyph("selected") + " "
+            for entry in palette.matches(words[0][1:], self.palette_entries()):
+                yield Completion(
+                    entry.name,
+                    start_position=-len(words[-1]),
+                    display=[("class:palette.marker", marker), ("class:palette.name", entry.name)],
+                    display_meta=entry.description,
+                )
             return
 
         if len(words) <= 1 or text[-1].isspace():
@@ -321,16 +430,16 @@ class InputOutput:
         chat_history_file=None,
         input=None,
         output=None,
-        user_input_color="blue",
+        user_input_color=None,
         tool_output_color=None,
-        tool_error_color="red",
-        tool_warning_color="#FFA500",
-        assistant_output_color="blue",
+        tool_error_color=None,
+        tool_warning_color=None,
+        assistant_output_color=None,
         completion_menu_color=None,
         completion_menu_bg_color=None,
         completion_menu_current_color=None,
         completion_menu_current_bg_color=None,
-        code_theme="default",
+        code_theme=None,
         encoding="utf-8",
         line_endings="platform",
         dry_run=False,
@@ -342,6 +451,8 @@ class InputOutput:
         root=".",
         notifications=False,
         notifications_command=None,
+        theme=None,
+        animation=True,
     ):
         self.placeholder = None
         self.interrupted = False
@@ -359,6 +470,15 @@ class InputOutput:
         no_color = os.environ.get("NO_COLOR")
         if no_color is not None and no_color != "":
             pretty = False
+
+        # Colours not given come from the theme (loom/tui/theme.py), whose text keeps the
+        # terminal's own colour
+        base_theme = theme or tui_theme.current()
+        # Plain until the terminal is known
+        self.theme = base_theme.degrade(tui_theme.PLAIN)
+        tool_error_color = tool_error_color or base_theme.raw_color("fail")
+        tool_warning_color = tool_warning_color or base_theme.raw_color("accent")
+        code_theme = code_theme or base_theme.code_theme
 
         self.user_input_color = ensure_hash_prefix(user_input_color) if pretty else None
         self.tool_output_color = ensure_hash_prefix(tool_output_color) if pretty else None
@@ -435,8 +555,8 @@ class InputOutput:
             if self.input_history_file is not None:
                 session_kwargs["history"] = FileHistory(self.input_history_file)
             try:
-                self.prompt_session = PromptSession(**session_kwargs)
-                self.console = Console()  # pretty console
+                self.prompt_session = LoomPromptSession(**session_kwargs)
+                self.console = Console(theme=rich_theme(base_theme))  # pretty console
             except Exception as err:
                 self.console = Console(force_terminal=False, no_color=True)
                 self.tool_error(f"Can't initialize prompt toolkit: {err}")  # non-pretty
@@ -445,11 +565,26 @@ class InputOutput:
             if self.is_dumb_terminal:
                 self.tool_output("Detected dumb terminal, disabling fancy input and pretty output.")
 
+        # What the terminal can show. Pickers, the toolbar and animations need a real
+        # terminal that loom reads keys from
+        caps = tui_theme.Capabilities.detect(pretty=self.pretty, animation=animation)
+        if not self.prompt_session or self.input is not None or self.output is not None:
+            caps = replace(caps, interactive=False, animate=False)
+        self.theme = base_theme.degrade(caps)
+        if self.prompt_session:
+            self.prompt_session.snug = self.fancy
+
         self.file_watcher = file_watcher
         self.root = root
 
         # Validate color settings after console is initialized
         self._validate_color_settings()
+
+    @property
+    def fancy(self):
+        """Whether loom draws for a terminal: the banner, pickers and the toolbar. Pipes,
+        dumb terminals and tests get the plain lines instead."""
+        return self.theme.caps.interactive
 
     def _validate_color_settings(self):
         """Validate configured color strings and reset invalid ones."""
@@ -477,8 +612,47 @@ class InputOutput:
                     )
                     setattr(self, attr_name, None)  # Reset invalid color to None
 
+    def theme_styles(self):
+        """prompt_toolkit's styles for the prompt, its toolbar and the / palette."""
+        t = self.theme
+        no_color = t.caps.color == "none"
+        styles = {
+            "prompt": t.pt("accent", bold=True),
+            "prompt.files": t.pt("dim"),
+            "prompt.continuation": t.pt("faint"),
+            "placeholder": t.pt("faint", italic=True),
+            "bottom-toolbar": "noreverse",
+            "bottom-toolbar.text": "",
+            "toolbar.rule": t.pt("edge"),
+            "toolbar.hint": t.pt("faint"),
+            "toolbar.key": t.pt("dim"),
+            "toolbar.status": t.pt("faint"),
+            "toolbar.fail": t.pt("fail"),
+            "completion-menu": t.pt(bg="inset"),
+            "completion-menu.completion": t.pt("fg", bg="inset"),
+            "completion-menu.completion.current": "noreverse " + t.pt(
+                "accent", bg="selection", bold=True
+            ),
+            "completion-menu.meta.completion": t.pt("faint", bg="inset"),
+            "completion-menu.meta.completion.current": "noreverse " + t.pt("dim", bg="selection"),
+            "completion-menu.multi-column-meta": t.pt("dim", bg="inset"),
+            "scrollbar.background": t.pt(bg="inset"),
+            "scrollbar.button": t.pt(bg="edge"),
+            "scrollbar.arrow": t.pt("faint", bg="inset"),
+            # The palette's ❯ shows on the current command only
+            "palette.marker": "hidden" if no_color else t.pt("inset"),
+            "completion-menu.completion.current palette.marker": (
+                "nohidden bold" if no_color else t.pt("accent", bold=True)
+            ),
+        }
+        for mode, color in MODE_COLORS.items():
+            styles[f"toolbar.mode.{mode}"] = t.pt(color, bold=True)
+        return styles
+
     def _get_style(self):
         style_dict = {}
+        if self.fancy:
+            style_dict.update(self.theme_styles())
         if not self.pretty:
             return Style.from_dict(style_dict)
 
@@ -642,7 +816,9 @@ class InputOutput:
                 raise
 
     def rule(self):
-        if self.pretty:
+        if self.fancy:
+            self.console.rule(style=self.theme.style("edge"), characters=self.theme.glyph("rule"))
+        elif self.pretty:
             style = dict(style=self.user_input_color) if self.user_input_color else dict()
             self.console.rule(**style)
         else:
@@ -664,9 +840,15 @@ class InputOutput:
         abs_read_only_fnames=None,
         edit_format=None,
         cycle_mode=None,
+        mode=None,
+        status=None,
     ):
         """Read the user's next message. cycle_mode, if given, is called on Shift-Tab to switch
-        modes and returns the new edit_format label for the prompt."""
+        modes and returns the new edit_format label for the prompt.
+
+        In a terminal the prompt is just > and the toolbar under it says the rest: mode, if
+        given, returns the agent's permission mode for it to show in its colour, and status
+        returns what goes at its right, like the session's cost."""
         self.rule()
 
         # Ring the bell if needed
@@ -689,16 +871,37 @@ class InputOutput:
 
         style = self._get_style()
 
-        completer_instance = ThreadedCompleter(
-            AutoCompleter(
-                root,
-                rel_fnames,
-                addable_rel_fnames,
-                commands,
-                self.encoding,
-                abs_read_only_fnames=abs_read_only_fnames,
-            )
+        completer = AutoCompleter(
+            root,
+            rel_fnames,
+            addable_rel_fnames,
+            commands,
+            self.encoding,
+            abs_read_only_fnames=abs_read_only_fnames,
+            theme=self.theme,
         )
+        completer_instance = ThreadedCompleter(completer)
+        fancy = self.fancy and self.prompt_session is not None
+        hint = random.choice(PROMPT_HINTS["agent" if mode else "other"])
+
+        def message():
+            if not fancy:
+                return show
+            if multiline_input:
+                return [("class:prompt.continuation", self.theme.glyph("warp") + " ")]
+            return [
+                ("class:prompt.files", files_show),
+                ("class:prompt", self.theme.glyph("prompt") + " "),
+            ]
+
+        def toolbar():
+            return self.toolbar(get_app().current_buffer, edit_format, mode, status, completer)
+
+        def placeholder():
+            # Never left behind in the scrollback when an empty line is sent
+            if get_app().is_done or multiline_input:
+                return []
+            return [("class:placeholder", hint)]
 
         def suspend_to_bg(event):
             """Suspend currently running application."""
@@ -804,20 +1007,38 @@ class InputOutput:
                             self.clipboard_watcher.start()
 
                     def get_continuation(width, line_number, is_soft_wrap):
+                        if fancy:
+                            return [("class:prompt.continuation", self.theme.glyph("warp") + " ")]
                         return self.prompt_prefix
 
+                    extra = {}
+                    if fancy:
+                        extra = dict(
+                            bottom_toolbar=toolbar,
+                            placeholder=placeholder,
+                            color_depth=widgets.COLOR_DEPTHS.get(self.theme.caps.color),
+                        )
+
                     # A callable, so Shift-Tab can change the prompt while it's shown
-                    line = self.prompt_session.prompt(
-                        lambda: show,
-                        default=default,
-                        completer=completer_instance,
-                        reserve_space_for_menu=4,
-                        complete_style=CompleteStyle.MULTI_COLUMN,
-                        style=style,
-                        key_bindings=kb,
-                        complete_while_typing=True,
-                        prompt_continuation=get_continuation,
-                    )
+                    try:
+                        line = self.prompt_session.prompt(
+                            message,
+                            default=default,
+                            completer=completer_instance,
+                            reserve_space_for_menu=8 if fancy else 4,
+                            complete_style=(
+                                CompleteStyle.COLUMN if fancy else CompleteStyle.MULTI_COLUMN
+                            ),
+                            style=style,
+                            key_bindings=kb,
+                            complete_while_typing=True,
+                            prompt_continuation=get_continuation,
+                            **extra,
+                        )
+                    finally:
+                        # The session keeps what a prompt was given; questions get neither
+                        self.prompt_session.bottom_toolbar = None
+                        self.prompt_session.placeholder = None
                 else:
                     line = input(show)
 
@@ -991,6 +1212,7 @@ class InputOutput:
         question = sanitize_for_display(question, show_escapes=True)
         if subject:
             subject = sanitize_for_display(subject, show_escapes=True)
+        plain_question = question
 
         if group and not group.show_group:
             group = None
@@ -1014,7 +1236,10 @@ class InputOutput:
         else:
             question += options + f" [{default}]: "
 
-        if subject:
+        if subject and self.fancy:
+            self.tool_output()
+            self.subject_output(subject)
+        elif subject:
             self.tool_output()
             if "\n" in subject:
                 lines = subject.splitlines()
@@ -1039,6 +1264,10 @@ class InputOutput:
         elif group and group.preference:
             res = group.preference
             self.user_input(f"{question}{res}", log_only=False)
+        elif self.fancy:
+            res = self.confirm_select(
+                plain_question, default, group, explicit_yes_required, allow_never
+            )
         else:
             while True:
                 try:
@@ -1115,6 +1344,7 @@ class InputOutput:
         question = sanitize_for_display(question, show_escapes=True)
         if subject:
             subject = sanitize_for_display(subject, show_escapes=True)
+        plain_question = question
 
         choices = ["yes", "no"]
         options = " (Y)es/(N)o"
@@ -1129,6 +1359,8 @@ class InputOutput:
         if subject:
             if subject.startswith("--- "):
                 self.diff_output(subject, indent="     ")
+            elif self.fancy:
+                self.subject_output(subject)
             else:
                 self.tool_output(subject, bold=True)
 
@@ -1136,6 +1368,8 @@ class InputOutput:
             res = "no" if explicit_yes_required else "yes"
         elif self.yes is False:
             res = "no"
+        elif self.fancy:
+            res = self.permission_select(plain_question, always, bypass)
         else:
             style = self._get_style()
             while True:
@@ -1193,6 +1427,7 @@ class InputOutput:
             self.print_plan(plan["text"], plan.get("path"))
         self.ring_bell()
         question = sanitize_for_display(question, show_escapes=True)
+        plain_question = question
         options = "/".join(shown for _key, shown in keys.values())
         question += f" {options} [{default.capitalize()}]: "
 
@@ -1200,6 +1435,22 @@ class InputOutput:
             res = yes_choice or default
         elif self.yes is False:
             res = no_choice or choices[-1]
+        elif self.fancy:
+            if checkpoint:
+                self.gate_header(checkpoint)
+            details = choice_details(checkpoint, plan)
+            options = [
+                widgets.Option(choice[:1].upper() + choice[1:], key, details.get(choice, ""))
+                for choice, (key, _shown) in keys.items()
+            ]
+            cancel = choices.index(no_choice) if no_choice in choices else len(choices) - 1
+            start = choices.index(default) if default in choices else 0
+            try:
+                picked = self.ask_select(plain_question, options, start, cancel)
+            except EOFError:
+                picked = cancel
+            res = choices[picked]
+            self.answered(plain_question, res, choice_tone(res))
         else:
             style = self._get_style()
             while True:
@@ -1227,6 +1478,300 @@ class InputOutput:
             self.tool_output(hist)
         return res
 
+    # Pickers (loom/tui/widgets.py), which replace typed answers in a terminal
+
+    def ask_select(self, question, options, default=0, cancel=None, hint=None):
+        """Ask with an inline picker; returns the index of the option picked."""
+        return widgets.select(
+            self.theme,
+            question,
+            options,
+            default=default,
+            cancel=cancel,
+            hint=hint,
+            input=self.input,
+            output=self.output,
+        )
+
+    def effort_slider(self, stops, index, title="Effort"):
+        """The effort slider (loom/tui/widgets.py): stops are widgets.Stop. Returns the
+        index picked, or None for Esc."""
+        try:
+            return widgets.slider(
+                self.theme, title, stops, index, input=self.input, output=self.output
+            )
+        except EOFError:
+            return None
+
+    def cost_report(self, sections):
+        """/cost: for each (title, [(glyph, label, cost)]) section, a row per label with a
+        bar of its share of the section's total, growing in a terminal."""
+        width = 24
+
+        def money(cost):
+            return f"${cost:.2f}" if cost >= 0.01 or not cost else f"${cost:.4f}"
+
+        if not self.fancy:
+            for title, rows in sections:
+                total = sum(cost for _glyph, _label, cost in rows)
+                self.tool_output(f"{title[:1].upper()}{title[1:]}:")
+                pad = max(len(label) for _glyph, label, _cost in rows)
+                for _glyph, label, cost in rows:
+                    share = f"  {cost / total:.0%}" if total else ""
+                    self.tool_output(f"  {label:<{pad}}  {money(cost):>8}{share}")
+                self.tool_output(f"  {'total':<{pad}}  {money(total):>8}")
+            return
+
+        t = self.theme
+
+        def frame(progress):
+            lines = []
+            for title, rows in sections:
+                total = sum(cost for _glyph, _label, cost in rows)
+                pad = max(len(label) for _glyph, label, _cost in rows)
+                lines.append(Text(f"  {title}", style=t.style("dim")))
+                for glyph, label, cost in rows:
+                    share = cost / total if total else 0.0
+                    fill = round(width * share * progress)
+                    color = (
+                        "info"
+                        if glyph == "running"
+                        else "accent" if share >= 0.25 else "accent_dim"
+                    )
+                    line = Text("  ")
+                    line.append(f"{phase_glyph(t, glyph)} ", style=t.style("accent"))
+                    line.append(f"{label:<{pad}}  ", style=t.style("fg"))
+                    line.append(f"{money(cost):>8}  ", style=t.style("fg"))
+                    line.append(t.glyph("bar") * fill, style=t.style(color))
+                    line.append(t.glyph("bar_track") * (width - fill), style=t.style("edge"))
+                    line.append(f"  {share:4.0%}", style=t.style("faint"))
+                    lines.append(line)
+                rule = t.glyph("rule") * (pad + 14 + width)
+                lines.append(Text(f"  {rule}", style=t.style("edge")))
+                total_line = Text("  ")
+                total_line.append(
+                    f"{'  total':<{pad + 2}}  {money(total):>8}", style=t.style("fg", bold=True)
+                )
+                lines.append(total_line)
+                lines.append(Text(""))
+            return Group(*lines)
+
+        for title, rows in sections:
+            self.append_chat_history(title, linebreak=True, blockquote=True)
+            for _glyph, label, cost in rows:
+                self.append_chat_history(f"{label}: {money(cost)}", linebreak=True, blockquote=True)
+        if not self.theme.caps.animate:
+            self.console.print(frame(1.0))
+            return
+        steps = 10
+        with Live(frame(0.0), console=self.console, auto_refresh=False, transient=False) as live:
+            for num in range(1, steps + 1):
+                time.sleep(1 / self.theme.max_fps)
+                live.update(frame(1 - (1 - num / steps) ** 3), refresh=True)
+
+    def answered(self, question, answer, tone="ok"):
+        """The line a picker leaves in the scrollback: the question and its answer."""
+        t = self.theme
+        glyph = dict(ok="ok", fail="denied", accent="running", dim="queued")[tone]
+        line = Text()
+        line.append(" ".join(question.split()), style=t.style("fg"))
+        line.append("  ")
+        line.append(f"{t.glyph(glyph)} {answer}", style=t.style(tone, bold=tone != "dim"))
+        self._print_text(Padding(line, (0, 0, 0, 2)))
+
+    def confirm_select(self, question, default, group, explicit_yes_required, allow_never):
+        """confirm_ask's picker. Returns its answer's letter: y, n, a, s or d."""
+        options = [widgets.Option("Yes", "y"), widgets.Option("No", "n")]
+        if group:
+            if not explicit_yes_required:
+                options.append(widgets.Option("All", "a", "yes to this and the rest"))
+            options.append(widgets.Option("Skip all", "s", "no to this and the rest"))
+        if allow_never:
+            options.append(widgets.Option("Don't ask again", "d", "no, and not again this session"))
+        letters = [option.key for option in options]
+        start = 1 if default.lower().startswith("n") else 0
+        try:
+            res = letters[self.ask_select(question, options, start, cancel=1)]
+        except EOFError:
+            res = default.lower()[0]
+        words = dict(y="yes", n="no", a="all", s="skip all", d="don't ask again")
+        self.answered(question, words.get(res, res), "ok" if res in "ya" else "dim")
+        return res
+
+    def permission_select(self, question, always=None, bypass=None):
+        """permission_ask's picker. Returns yes, no, always or bypass."""
+        options = [widgets.Option("Yes", "y")]
+        answers = ["yes"]
+        if always:
+            options.append(widgets.Option("Always", "a", always))
+            answers.append("always")
+        if bypass:
+            options.append(widgets.Option("Bypass permissions", "b", bypass))
+            answers.append("bypass")
+        options.append(widgets.Option("No", "n", "and tell loom what to do instead"))
+        answers.append("no")
+        try:
+            res = answers[self.ask_select(question, options, 0, cancel=len(options) - 1)]
+        except EOFError:
+            res = "no"
+        tone = dict(yes="ok", always="ok", bypass="fail", no="fail")[res]
+        self.answered(question, res, tone)
+        return res
+
+    def gate_header(self, checkpoint):
+        """The rule and title over a /project checkpoint: the phase's glyph and name, and
+        the document being reviewed."""
+        t = self.theme
+        right = checkpoint.get("document") or ""
+        path = Path(self.root or ".") / right if right else None
+        try:
+            if path and path.is_file():
+                size = path.stat().st_size
+                right += f" {t.glyph('dot')} " + (
+                    f"{size / 1000:.1f} kB" if size >= 1000 else f"{size} bytes"
+                )
+        except OSError:
+            pass
+        self.banner_row(checkpoint.get("phase"), f"{checkpoint.get('title', '')} checkpoint", right)
+
+    def phase_banner(self, number, total, key, title, right, plain):
+        """The banner a /project phase starts under: plain for pipes and other UIs."""
+        if not self.fancy:
+            self.rule()
+            self.tool_output(plain, bold=True)
+            return
+        self.append_chat_history(plain, linebreak=True, blockquote=True)
+        self.banner_row(key, title, right, f"  {number}/{total}")
+
+    def banner_row(self, key, title, right, after=""):
+        """Between two rules: a /project phase's glyph and title, after it, then right at
+        the right."""
+        t = self.theme
+        left = Text("  ")
+        left.append(phase_glyph(t, key) + "  ", style=t.style("accent"))
+        left.append(title, style=t.style("accent", bold=True))
+        left.append(after, style=t.style("faint"))
+        left.append(" " * max(2, self.console.width - len(left.plain) - len(right) - 2))
+        left.append(right, style=t.style("dim"))
+        self.console.print()
+        self.console.rule(style=t.style("edge"), characters=t.glyph("rule"))
+        self._print_text(left, no_wrap=True, overflow="ellipsis")
+        self.console.rule(style=t.style("edge"), characters=t.glyph("rule"))
+
+    # The prompt's toolbar
+
+    def toolbar(self, buffer, label, mode=None, status=None, completer=None):
+        """The two lines under the prompt: a rule, then what the prompt will do with
+        what's typed or else the mode, and at the right the status."""
+        t = self.theme
+        try:
+            width = get_app().output.get_size().columns
+        except Exception:
+            width = self.console.width
+        state = buffer.complete_state
+        picked = state.current_completion if state else None
+        if picked is not None and picked.text.startswith("/"):
+            dot = f" {t.glyph('dot')} "
+            keys = "↑/↓" if t.caps.unicode else "up/down"
+            left = [
+                ("class:toolbar.hint", "  Enter runs "),
+                ("class:toolbar.key", picked.text),
+                ("class:toolbar.hint", f"{dot}{keys} to move{dot}type to filter"),
+            ]
+        else:
+            left = self.toolbar_hint(buffer.text, label, mode, completer)
+        res = [("class:toolbar.rule", t.glyph("rule") * max(width - 1, 0)), ("", "\n")]
+        res += left
+        right = ""
+        try:
+            right = status() if status else ""
+        except Exception:
+            right = ""
+        used = sum(widgets.get_cwidth(fragment[1]) for fragment in left)
+        if right and used + widgets.get_cwidth(right) + 4 < width:
+            res.append(("", " " * (width - 2 - used - widgets.get_cwidth(right))))
+            res.append(("class:toolbar.status", right))
+        return res
+
+    def toolbar_hint(self, text, label, mode=None, completer=None):
+        t = self.theme
+        dot = f" {t.glyph('dot')} "
+        stripped = text.lstrip()
+        if stripped.startswith("/") and " " not in stripped and completer is not None:
+            found = palette.matches(stripped[1:], completer.palette_entries())
+            if not found:
+                return [
+                    ("class:toolbar.hint", "  no command matches "),
+                    ("class:toolbar.fail", stripped),
+                    ("class:toolbar.hint", f"{dot}nothing is sent to the model"),
+                ]
+            count = f"{len(found)} command{'s' if len(found) != 1 else ''}"
+            pick = "Tab or ↓ to pick" if t.caps.unicode else "Tab to pick"
+            return [
+                ("class:toolbar.hint", "  "),
+                ("class:toolbar.key", count),
+                ("class:toolbar.hint", f"{dot}{pick}{dot}Enter runs it"),
+            ]
+        if stripped.startswith("!"):
+            return [
+                ("class:toolbar.mode.ask", "  !"),
+                (
+                    "class:toolbar.hint",
+                    " runs this in the shell; loom asks before adding its output to the chat",
+                ),
+            ]
+
+        res = []
+        current = mode() if mode else None
+        if current in MODE_HINTS:
+            name, meaning = MODE_HINTS[current]
+            res.append((f"class:toolbar.mode.{current}", f"  {t.glyph('mode')} {name}"))
+            res.append(("class:toolbar.hint", " (shift+tab to cycle)"))
+            if meaning:
+                res.append(("class:toolbar.hint", dot + meaning))
+            else:
+                shortcuts = [("!", "for bash"), ("/", "for commands")]
+                if self.editingmode == EditingMode.EMACS:
+                    shortcuts.append(("esc esc", "to rewind"))
+                for key, words in shortcuts:
+                    res.append(("class:toolbar.hint", dot))
+                    res.append(("class:toolbar.key", key))
+                    res.append(("class:toolbar.hint", " " + words))
+        else:
+            name = (label or "code").split()[0]
+            res.append(("class:toolbar.key", f"  {t.glyph('mode')} {name} mode"))
+            if name in EDIT_FORMAT_HINTS:
+                res.append(("class:toolbar.hint", dot + EDIT_FORMAT_HINTS[name]))
+            res.append(("class:toolbar.hint", dot))
+            res.append(("class:toolbar.key", "/"))
+            res.append(("class:toolbar.hint", " for commands"))
+        if self.multiline_mode:
+            res.append(("class:toolbar.hint", f"{dot}multiline: alt+enter sends"))
+        return res
+
+    def show_banner(self, info, lines, intro=False, edit_format=None, can_cycle=False):
+        """Say who loom is talking to and where: info (a BannerInfo) drawn in a terminal,
+        or lines, the plain announcements, anywhere else. intro, at launch, plays the
+        wordmark first and ends with what to type."""
+        if not self.fancy:
+            bold = True
+            for line in lines:
+                self.tool_output(line, bold=bold)
+                bold = False
+            return
+        for line in lines:
+            self.append_chat_history(line, linebreak=True, blockquote=True)
+        if intro:
+            self.console.print()
+            if play_intro(self.console, self.theme):
+                self.console.print()
+        for row in banner_lines(self.theme, info, self.console.width):
+            self._print_text(row, no_wrap=True, overflow="ellipsis")
+        if intro:
+            self.console.print()
+            for row in invitation_lines(self.theme, edit_format, can_cycle):
+                self._print_text(Padding(row, (0, 0, 0, 2)))
+
     def print_plan(self, text, path=None):
         """Show a plan the agent presents, as rendered markdown in a box."""
         text = sanitize_for_display(text)
@@ -1234,11 +1779,15 @@ class InputOutput:
             self.append_chat_history(line, linebreak=True, blockquote=True, strip=False)
         title = f"Plan · {path}" if path else "Plan"
         body = Markdown(text, code_theme=self.code_theme) if self.pretty else Text(text)
+        border = "cyan" if self.pretty else "none"
+        if self.fancy:
+            border = self.theme.style("accent_dim")
+            title = Text(title, style=self.theme.style("accent", bold=True))
         panel = Panel(
             body,
             title=title,
             title_align="left",
-            border_style="cyan" if self.pretty else "none",
+            border_style=border,
             padding=(0, 1),
         )
         try:
@@ -1274,6 +1823,10 @@ class InputOutput:
 
         lines = numbered_diff_lines(diff)
         width = max((len(str(line[0])) for line in lines if line), default=1)
+        colors = {"-": "red", "+": "green", "": "dim"}
+        if self.fancy:
+            t = self.theme
+            colors = {"-": t.style("fail"), "+": t.style("ok"), "": t.style("faint")}
         text = Text()
         for line in lines:
             if line is None:
@@ -1282,7 +1835,7 @@ class InputOutput:
             num, marker, content = line
             style = None
             if self.pretty:
-                style = {"-": "red", "+": "green", "": "dim"}.get(marker)
+                style = colors.get(marker)
             text.append(f"{indent}{num:>{width}} {marker} {content}".rstrip() + "\n", style=style)
         self._print_text(text, end="")
 
@@ -1319,6 +1872,8 @@ class InputOutput:
         try:
             self.console.print(text, **kwargs)
         except UnicodeEncodeError:
+            if isinstance(text, Padding):
+                text = text.renderable
             plain = text.plain if isinstance(text, Text) else str(text)
             plain = plain.replace("●", "*").replace("⎿", "|").replace("⋮", ":")
             self.console.print(plain.encode("ascii", errors="replace").decode("ascii"), **kwargs)
@@ -1332,10 +1887,17 @@ class InputOutput:
         self.append_chat_history(shown, linebreak=True, blockquote=True)
 
         text = Text()
-        text.append("● ", style="green" if self.pretty else None)
-        text.append(name, style="bold" if self.pretty else None)
-        if detail:
-            text.append(f"({detail})")
+        if self.fancy:
+            t = self.theme
+            text.append(t.glyph("tool") + " ", style=t.style("accent"))
+            text.append(name, style=t.style("fg", bold=True))
+            if detail:
+                text.append(f"({detail})", style=t.style("dim"))
+        else:
+            text.append("● ", style="green" if self.pretty else None)
+            text.append(name, style="bold" if self.pretty else None)
+            if detail:
+                text.append(f"({detail})")
         self._print_text(text)
 
     def tool_result(self, lines, error=False, styles=None):
@@ -1349,15 +1911,19 @@ class InputOutput:
             self.append_chat_history(line, linebreak=True, blockquote=True)
 
         default = None
-        if self.pretty:
+        connector, connector_style = "⎿", "dim" if self.pretty else None
+        if self.fancy:
+            default = self.tool_error_color if error else self.theme.style("dim")
+            connector, connector_style = self.theme.glyph("result"), self.theme.style("faint")
+        elif self.pretty:
             default = self.tool_error_color if error else "dim"
         text = Text()
         for num, line in enumerate(lines):
-            prefix = "  ⎿  " if num == 0 else "     "
+            prefix = f"  {connector}  " if num == 0 else "     "
             style = default
             if styles and num < len(styles) and styles[num] and self.pretty:
                 style = styles[num]
-            text.append(prefix, style="dim" if self.pretty else None)
+            text.append(prefix, style=connector_style)
             text.append(line + "\n", style=style)
         # One screen line per result line
         self._print_text(text, end="", no_wrap=True, overflow="ellipsis")
@@ -1380,23 +1946,40 @@ class InputOutput:
     def usage_output(self, report, sent=0, received=0, cost=0.0):
         """Show the tokens and cost of a request: report says them, and sent, received and
         cost are the numbers, for UIs that add them up."""
-        self.tool_output(report)
+        if not self.fancy:
+            self.tool_output(report)
+            return
+        report = sanitize_for_display(report)
+        self.append_chat_history(report.strip(), linebreak=True, blockquote=True)
+        self._print_text(Text(report, style=self.theme.style("faint")))
+
+    def subject_output(self, subject):
+        """What a question is about, like a command or a file, shown just as it is above
+        the question's picker."""
+        for line in subject.splitlines():
+            self.append_chat_history(line, linebreak=True, blockquote=True)
+        text = Text(subject, style=self.theme.style("fg", bold=True))
+        self._print_text(Padding(text, (0, 0, 0, 2)))
 
     def todo_output(self, todos):
         """Show the agent's to-do list as a checklist."""
         lines = []
         styles = []
+        t = self.theme
+        glyphs = ("☒", "◼", "☐")
+        looks = ("dim strike", "bold", "")
+        if self.fancy:
+            glyphs = (t.glyph("todo_done"), t.glyph("todo_active"), t.glyph("todo_pending"))
+            looks = (
+                t.style("faint", strike=True),
+                t.style("accent", bold=True),
+                t.style("fg"),
+            )
         for todo in todos:
             status = todo.get("status")
-            if status == "completed":
-                lines.append(f"☒ {todo['content']}")
-                styles.append("dim strike")
-            elif status == "in_progress":
-                lines.append(f"◼ {todo['content']}")
-                styles.append("bold")
-            else:
-                lines.append(f"☐ {todo['content']}")
-                styles.append("")
+            kind = {"completed": 0, "in_progress": 1}.get(status, 2)
+            lines.append(f"{glyphs[kind]} {todo['content']}")
+            styles.append(looks[kind])
         if not lines:
             lines = ["(empty)"]
             styles = ["dim"]
@@ -1491,18 +2074,21 @@ class InputOutput:
         if self.pretty:
             if self.tool_output_color:
                 style["color"] = ensure_hash_prefix(self.tool_output_color)
-            style["reverse"] = bold
+            if self.fancy:
+                style["bold"] = bold
+            else:
+                style["reverse"] = bold
 
         style = RichStyle(**style)
         self.console.print(*messages, style=style)
 
     def get_assistant_mdstream(self):
         mdargs = dict(
-            style=self.assistant_output_color,
+            style=self.assistant_output_color or "none",
             code_theme=self.code_theme,
             inline_code_lexer="text",
         )
-        mdStream = MarkdownStream(mdargs=mdargs)
+        mdStream = MarkdownStream(mdargs=mdargs, theme=rich_theme(self.theme))
         return mdStream
 
     def assistant_output(self, message, pretty=None):
@@ -1519,7 +2105,7 @@ class InputOutput:
 
         if pretty:
             show_resp = Markdown(
-                message, style=self.assistant_output_color, code_theme=self.code_theme
+                message, style=self.assistant_output_color or "none", code_theme=self.code_theme
             )
         else:
             show_resp = Text(message or "(empty response)")
@@ -1700,6 +2286,64 @@ def choice_keys(choices):
         else:
             res[choice] = (choice[:1].lower(), f"({choice[:1].upper()}){choice[1:]}")
     return res
+
+
+def choice_details(checkpoint=None, plan=None):
+    """{choice: what picking it does} for choice_ask's picker."""
+    if plan:
+        return PLAN_CHOICE_DETAILS
+    if not checkpoint:
+        return {}
+    title = checkpoint.get("title") or "the phase"
+    following = checkpoint.get("next_title")
+    document = checkpoint.get("document_title") or "document"
+    return {
+        "approve": f"continue to {following}" if following else "finish the project",
+        "approve anyway": f"carry on to {following} anyway" if following else "approve it anyway",
+        "edit": f"open the {document} in your editor, then decide",
+        "reject": f"say what to change, and {title} runs again",
+        "send back": "the Building agent fixes what the tests found",
+    }
+
+
+def choice_tone(choice):
+    """The colour of a choice_ask answer: go, stop or something else."""
+    if choice.startswith(("approve", "yes")):
+        return "ok"
+    if choice.startswith(("reject", "no")):
+        return "fail"
+    return "accent"
+
+
+def phase_glyph(theme, key):
+    """The glyph of a /project phase, like ⊞ for design."""
+    try:
+        return theme.glyph(key)
+    except KeyError:
+        return theme.glyph("running")
+
+
+def rich_theme(theme):
+    """rich's styles for the model's Markdown, in the theme's colours."""
+    styles = {
+        "markdown.h1": theme.style("accent", bold=True),
+        "markdown.h1.border": theme.style("accent_dim"),
+        "markdown.h2": theme.style("accent", bold=True),
+        "markdown.h3": theme.style("highlight", bold=True),
+        "markdown.h4": theme.style("fg", bold=True),
+        "markdown.code": theme.style("highlight", bg="inset"),
+        "markdown.block_quote": theme.style("dim", italic=True),
+        "markdown.item.bullet": theme.style("accent"),
+        "markdown.item.number": theme.style("accent"),
+        "markdown.link": theme.style("info"),
+        "markdown.link_url": theme.style("info"),
+        "markdown.hr": theme.style("edge"),
+        "markdown.table.border": theme.style("edge"),
+        "markdown.table.header": theme.style("accent", bold=True),
+        "rule.line": theme.style("edge"),
+    }
+    # Unused styles come out as "none", which leaves rich's own
+    return RichTheme({name: style for name, style in styles.items() if style != "none"})
 
 
 def get_rel_fname(fname, root):

@@ -8,6 +8,7 @@ from loom import plans, prompts, subagents
 from loom import tools as agent_tools
 from loom.editor import pipe_editor
 from loom.tools import ToolError
+from loom.tui.status import Activity, format_elapsed
 from loom.utils import format_tokens
 from loom.waiting import WaitingSpinner
 
@@ -93,6 +94,8 @@ class AgentCoder(Coder):
     stop_requested = False
     pending_tool_calls = []
     request_started = None
+    # Which step of the loop the current request is on, for the spinner's line
+    agent_step = 0
     request_text = None
     overflow_retries = 0
     # The error, when the provider rejected the tools
@@ -162,10 +165,26 @@ class AgentCoder(Coder):
             )
         return lines
 
+    def get_banner_info(self):
+        info = super().get_banner_info()
+        if self.mcp and self.mcp.servers:
+            info.details.append(f"MCP {self.mcp.summary()}")
+        if self.hooks and self.hooks.hooks:
+            info.details.append(f"hooks {self.hooks.summary()}")
+        if not self.main_model.info.get("supports_function_calling"):
+            info.warnings.append(
+                f"{self.main_model.name} may not support tool calling, which the agent needs."
+                " Use --no-agent if it doesn't work."
+            )
+        return info
+
     def get_prompt_label(self):
         if self.permissions.mode == "ask":
             return self.edit_format
         return f"{self.edit_format} {self.permissions.mode}"
+
+    def get_prompt_mode(self):
+        return self.permissions.mode
 
     def get_mode_cycler(self):
         def cycle():
@@ -249,7 +268,8 @@ class AgentCoder(Coder):
         message = inp
         try:
             with self.io.esc_interrupts():
-                for _step in range(self.max_steps):
+                for step in range(self.max_steps):
+                    self.agent_step = step + 1
                     self.continue_loop = False
                     self.overflow_retries = 0
                     self.compact_if_needed()
@@ -335,10 +355,14 @@ class AgentCoder(Coder):
                     break
             info = []
             if self.request_started:
-                info.append(f"{int(time.time() - self.request_started)}s")
+                info.append(format_elapsed(time.time() - self.request_started))
+            if self.agent_step > 1:
+                info.append(f"step {self.agent_step}")
+            if self.message_cost >= 0.01:
+                info.append(f"${self.message_cost:.2f}")
             if self.io.esc_listener:
                 info.append("esc to interrupt")
-            return f"{activity.rstrip('.…')}… ({' · '.join(info)})" if info else activity + "…"
+            return Activity(activity, tuple(info))
 
         return text
 

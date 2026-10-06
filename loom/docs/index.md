@@ -38,10 +38,10 @@ loom --model gpt-4o --api-key openai=<key>
 loom --model gemini-3.1 --api-key gemini=<key>
 ```
 
-At the `agent>` prompt:
+At the `>` prompt:
 
 ```
-agent> add a --verbose flag that logs each request, with a test
+> add a --verbose flag that logs each request, with a test
 ```
 
 Loom finds the code, shows each edit and command for you to approve, runs the tests and
@@ -58,6 +58,7 @@ loom. Put project rules the model should always follow in a `LOOM.md` file.
 - [mcp.md](mcp.md): giving the agent tools from MCP servers
 - [custom-commands.md](custom-commands.md): your own `/commands` from Markdown files
 - [hooks.md](hooks.md): shell commands that run before or after the agent's tools
+- [terminal.md](terminal.md): the terminal itself: the launch banner, the `/` palette, pickers, the effort slider, and themes
 - [usage.md](usage.md): adding files, chat modes, images, web pages, watch mode, voice
 - [commands.md](commands.md): every in-chat `/command`
 - [models.md](models.md): choosing a model and setting API keys

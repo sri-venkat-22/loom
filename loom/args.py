@@ -328,14 +328,32 @@ def get_parser(default_config_files, git_root):
     group.add_argument(
         "--dark-mode",
         action="store_true",
-        help="Use colors suitable for a dark terminal background (default: False)",
+        help="Use the loom-dark theme, for a dark terminal background (default: False)",
         default=False,
     )
     group.add_argument(
         "--light-mode",
         action="store_true",
-        help="Use colors suitable for a light terminal background (default: False)",
+        help="Use the loom-light theme, for a light terminal background (default: False)",
         default=False,
+    )
+    group.add_argument(
+        "--theme",
+        metavar="THEME",
+        default=None,
+        help=(
+            "The terminal's theme: loom-dark, loom-light or a theme file, on top of"
+            " ~/.loom/theme.toml and .loom/theme.toml (default: loom-dark)"
+        ),
+    ).complete = shtab.FILE
+    group.add_argument(
+        "--animation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable/disable the terminal's animations: the launch intro, the shimmer while"
+            " loom works and the effort slider's sweep (default: True)"
+        ),
     )
     group.add_argument(
         "--pretty",
@@ -351,8 +369,8 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--user-input-color",
-        default="#00cc00",
-        help="Set the color for user input (default: #00cc00)",
+        default=None,
+        help="Set the color for user input (default: the terminal's text color)",
     )
     group.add_argument(
         "--tool-output-color",
@@ -361,18 +379,18 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--tool-error-color",
-        default="#FF2222",
-        help="Set the color for tool error messages (default: #FF2222)",
+        default=None,
+        help="Set the color for tool error messages (default: the theme's fail color)",
     )
     group.add_argument(
         "--tool-warning-color",
-        default="#FFA500",
-        help="Set the color for tool warning messages (default: #FFA500)",
+        default=None,
+        help="Set the color for tool warning messages (default: the theme's accent color)",
     )
     group.add_argument(
         "--assistant-output-color",
-        default="#0088ff",
-        help="Set the color for assistant output (default: #0088ff)",
+        default=None,
+        help="Set the color for assistant output (default: the terminal's text color)",
     )
     group.add_argument(
         "--completion-menu-color",
@@ -409,11 +427,11 @@ def get_parser(default_config_files, git_root):
     )
     group.add_argument(
         "--code-theme",
-        default="default",
+        default=None,
         help=(
-            "Set the markdown code theme (default: default, other options include monokai,"
-            " solarized-dark, solarized-light, or a Pygments builtin style,"
-            " see https://pygments.org/styles for available themes)"
+            "Set the markdown code theme (default: the theme's, gruvbox-dark or gruvbox-light;"
+            " other options include monokai, solarized-dark, solarized-light, or a Pygments"
+            " builtin style, see https://pygments.org/styles for available themes)"
         ),
     )
     group.add_argument(

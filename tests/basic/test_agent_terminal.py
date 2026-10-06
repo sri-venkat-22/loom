@@ -234,10 +234,16 @@ class TestTodos(unittest.TestCase):
         coder = make_coder()
         coder.request_started = time.time() - 5
         coder.todos[:] = TODOS_END
-        self.assertEqual(coder.get_spinner_text()(), "Running the tests… (5s)")
+        self.assertEqual(str(coder.get_spinner_text()()), "Running the tests… (5s)")
         coder.todos[:] = []
         coder.io.esc_listener = MagicMock()
-        self.assertEqual(coder.get_spinner_text()(), "Working… (5s · esc to interrupt)")
+        self.assertEqual(str(coder.get_spinner_text()()), "Working… (5s · esc to interrupt)")
+        # From the second step on, the step and what the request has cost so far
+        coder.agent_step = 3
+        coder.message_cost = 0.042
+        self.assertEqual(
+            str(coder.get_spinner_text()()), "Working… (5s · step 3 · $0.04 · esc to interrupt)"
+        )
 
     def test_parse_todos(self):
         parsed = tools.parse_todos(

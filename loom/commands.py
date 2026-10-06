@@ -25,6 +25,9 @@ from loom.repo import ANY_GIT_ERROR
 from loom.run_cmd import run_cmd
 from loom.scrape import Scraper, install_playwright
 from loom.sessions import Session, SessionError, list_sessions
+from loom.tui import palette
+from loom.tui.banner import key_available
+from loom.tui.widgets import Option, Stop
 from loom.utils import format_tokens, is_image_file
 
 from .dump import dump  # noqa: F401
@@ -129,9 +132,12 @@ class Commands:
         "Switch the Main Model to a new LLM"
 
         model_name = args.strip()
+        if not model_name and self.fancy():
+            model_name = self.pick_model()
+            if not model_name:
+                return
         if not model_name:
-            announcements = "\n".join(self.coder.get_announcements())
-            self.io.tool_output(announcements)
+            self.coder.show_announcements()
             return
 
         model = models.Model(
@@ -151,6 +157,47 @@ class Commands:
             new_edit_format = model.edit_format
 
         raise SwitchCoder(main_model=model, edit_format=new_edit_format)
+
+    def fancy(self):
+        """Whether the terminal can show pickers (a real InputOutput in a terminal)."""
+        return getattr(self.io, "fancy", False) is True
+
+    def model_choices(self):
+        """(model name, label, what it is) for /model's picker: the models in use, then
+        the aliases whose provider has a key on this machine."""
+        main = self.coder.main_model
+        res = [(main.name, main.name, "the model in use")]
+        seen = {main.name}
+        for model, what in (
+            (main.weak_model, "the weak model: cheaper, for commit messages and summaries"),
+            (main.editor_model, "the editor model, for architect mode's edits"),
+        ):
+            if model and model.name not in seen:
+                res.append((model.name, model.name, what))
+                seen.add(model.name)
+        for alias, name in models.MODEL_ALIASES.items():
+            if name not in seen and key_available(name):
+                res.append((name, alias, name))
+                seen.add(name)
+        return res
+
+    def pick_model(self):
+        """Ask which model to switch to; returns its name, or None to stay."""
+        choices = self.model_choices()
+        options = [Option(label, detail=what) for _name, label, what in choices]
+        picked = self.io.ask_select(
+            "Switch to which model? For one not listed, use /model NAME.",
+            options,
+            0,
+            cancel=-1,
+            hint="↑/↓ to move · Enter to switch · Esc to stay",
+        )
+        if picked is None or picked < 0 or picked == 0:
+            self.io.answered("Switch model", "stayed on " + self.coder.main_model.name, "dim")
+            return None
+        name = choices[picked][0]
+        self.io.answered("Switch model", f"{name}, for this session", "accent")
+        return name
 
     def cmd_editor_model(self, args):
         "Switch the Editor Model to a new LLM"
@@ -390,7 +437,11 @@ class Commands:
         elif len(matching_commands) > 1:
             self.io.tool_error(f"Ambiguous command: {', '.join(matching_commands)}")
         else:
-            self.io.tool_error(f"Invalid command: {first_word}")
+            close = palette.suggest(first_word, self.get_commands())
+            meant = f", did you mean {close}?" if close else "."
+            self.io.tool_error(
+                f"Invalid command: {first_word}{meant} Nothing was sent to the model."
+            )
 
     def run_custom_command(self, name, path, source, args):
         """Expand a custom command into the message to send."""
@@ -1380,6 +1431,17 @@ class Commands:
             self.io.tool_output(f"  {file}")
 
     def basic_help(self):
+        if self.fancy():
+            for line in palette.help_lines(
+                self.io.theme, palette.entries(self), self.io.console.width
+            ):
+                self.io._print_text(line)
+            self.io.console.print()
+            self.io.tool_output("Use `/help <question>` to ask questions about how to use loom.")
+            self.io.tool_output(
+                "Add your own commands as Markdown files in .loom/commands or ~/.loom/commands."
+            )
+            return
         commands = sorted(self.get_builtin_commands())
         pad = max(len(cmd) for cmd in commands)
         pad = "{cmd:" + str(pad) + "}"
@@ -1792,6 +1854,10 @@ class Commands:
                 orchestrator.run()
             elif sub == "back":
                 name, _, feedback = rest.partition(" ")
+                if not name and self.fancy():
+                    name = self.pick_phase(orchestrator)
+                    if not name:
+                        return
                 if not name:
                     self.io.tool_error(
                         "Name the phase to go back to: /project back PHASE [FEEDBACK]"
@@ -2358,10 +2424,7 @@ class Commands:
             )
 
         self.io.tool_output()
-
-        # Output announcements
-        announcements = "\n".join(self.coder.get_announcements())
-        self.io.tool_output(announcements)
+        self.coder.show_announcements()
 
     def cmd_reasoning_effort(self, args):
         "Set the reasoning effort level (values: number or low/medium/high depending on model)"
@@ -2381,10 +2444,123 @@ class Commands:
         reasoning_value = model.get_reasoning_effort()
         self.io.tool_output(f"Set reasoning effort to {reasoning_value}")
         self.io.tool_output()
+        self.coder.show_announcements()
 
-        # Output announcements
-        announcements = "\n".join(self.coder.get_announcements())
-        self.io.tool_output(announcements)
+    def pick_phase(self, orchestrator):
+        """Ask which /project phase to go back to, saying for each how it stands and what
+        going back redoes. Returns its key, or None to stay."""
+        from loom.phases import PHASES
+
+        state = orchestrator.state
+        current = state.current
+        last = current.number if current else len(PHASES)
+        phases = PHASES[:last]
+        theme = self.io.theme
+        options = []
+        for phase in phases:
+            data = state.phase_data(phase.key)
+            status = orchestrator.status_label(phase)
+            when = data.get("approved") or data.get("finished")
+            if when and data["status"] == "approved":
+                status += f" {ago(when)}"
+            later = [
+                other.title
+                for other in PHASES[phase.number :]
+                if state.status(other.key) != "pending"
+            ]
+            redo = f"redoes the {phase.document_title}"
+            if later:
+                redo += f", and {', '.join(later)} after it"
+            options.append(
+                Option(f"{theme.glyph(phase.key)} {phase.title}", detail=f"{status} · {redo}")
+            )
+        picked = self.io.ask_select(
+            "Go back to which phase?",
+            options,
+            len(options) - 1,
+            cancel=-1,
+            hint="↑/↓ to move · Enter to go back · Esc to stay",
+        )
+        if picked is None or picked < 0:
+            self.io.answered("Go back", "stayed", "dim")
+            return None
+        return phases[picked].key
+
+    def cmd_cost(self, args):
+        "Show what this session, its sub-agents and the /project phases have cost"
+        self.io.cost_report(self.cost_sections())
+
+    def cost_sections(self):
+        """/cost's sections: [(title, [(glyph, label, cost)])], this session's, then the
+        project's, every run of each phase, when there is one."""
+        coder = self.coder
+        session = getattr(coder, "session", None)
+        tasks = [task for task in (getattr(session, "tasks", None) or []) if task.child]
+        delegated = sum(task.cost for task in tasks)
+        rows = [("tool", "this conversation", max(coder.total_cost - delegated, 0.0))]
+        if tasks:
+            rows.append(
+                ("running", f"{len(tasks)} sub-agent task" + "s" * (len(tasks) != 1), delegated)
+            )
+        sections = [(f"this session with {coder.main_model.name}", rows)]
+
+        from loom.memory import ProjectDB
+        from loom.orchestrator import ProjectState, TransitionError
+        from loom.phases import PHASES
+
+        db = ProjectDB(coder.root)
+        state = None
+        if db.exists():
+            try:
+                state = ProjectState.load(coder.root, db)
+            except TransitionError:
+                state = None
+        if state:
+            phases = [
+                (phase.key, phase.title, state.metrics(phase.key)["cost"]) for phase in PHASES
+            ]
+            sections.append(("the project, every run of each phase", phases))
+        return sections
+
+    def cmd_effort(self, args):
+        "Trade speed against thoroughness: how long the model thinks before it answers"
+        model = self.coder.main_model
+        levels = effort_levels(model)
+        if not levels:
+            self.io.tool_output(
+                f"{model.name} has no thinking setting loom knows how to change. To set one"
+                " anyway, use /think-tokens or /reasoning-effort."
+            )
+            return
+        names = [level[0] for level in levels]
+        current = effort_index(model, levels)
+
+        choice = args.strip().lower()
+        if choice:
+            if choice not in names:
+                self.io.tool_error(f"Use one of: {', '.join(names)}.")
+                return
+            index = names.index(choice)
+        elif self.fancy():
+            stops = [Stop(name, detail) for name, _kind, _value, detail in levels]
+            index = self.io.effort_slider(stops, current)
+            if index is None:
+                self.io.answered("Effort", f"unchanged, {names[current]}", "dim")
+                return
+        else:
+            self.io.tool_output(f"Effort: {names[current]} ({levels[current][3]}).")
+            self.io.tool_output(f"Set it with /effort {' | '.join(names)}.")
+            return
+
+        name, kind, value, detail = levels[index]
+        if kind == "thinking_tokens":
+            model.set_thinking_tokens(value)
+        else:
+            model.set_reasoning_effort(value)
+        if self.fancy():
+            self.io.answered("Effort", f"{name}: {detail}", "accent")
+        else:
+            self.io.tool_output(f"Effort set to {name}: {detail}.")
 
     def cmd_copy_context(self, args=None):
         """Copy the current chat context as markdown, suitable to paste into a web UI"""
@@ -2429,6 +2605,67 @@ Just show me the edits I need to make.
             )
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
+
+
+# The effort slider's stops for models with a thinking budget, Faster to Smarter. The
+# budget counts towards the reply's max_tokens, which for some models is 32k, so the top
+# stop leaves room for the answer.
+THINKING_LEVELS = (
+    ("low", "2k", "up to 2k thinking tokens: quick answers"),
+    ("medium", "4k", "up to 4k thinking tokens"),
+    ("high", "8k", "up to 8k thinking tokens"),
+    ("xhigh", "16k", "up to 16k thinking tokens"),
+    ("max", "24k", "up to 24k thinking tokens: the most thorough, and the slowest"),
+)
+# And for models with a reasoning effort
+REASONING_LEVELS = (
+    ("low", "low", "reasoning effort low: quick answers"),
+    ("medium", "medium", "reasoning effort medium"),
+    ("high", "high", "reasoning effort high: the most thorough, and the slowest"),
+)
+
+
+def ago(when):
+    """An ISO time as how long ago it was, like 12m ago."""
+    from datetime import datetime
+
+    try:
+        seconds = (datetime.now() - datetime.fromisoformat(when)).total_seconds()
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 60:
+        return "just now"
+    for size, unit in ((86400, "d"), (3600, "h"), (60, "m")):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit} ago"
+    return ""
+
+
+def effort_levels(model):
+    """The /effort slider's stops for model, as (name, setting, value, what it means):
+    a thinking budget, a reasoning effort, or none."""
+    accepts = model.accepts_settings or []
+    if "thinking_tokens" in accepts:
+        return [(name, "thinking_tokens", value, what) for name, value, what in THINKING_LEVELS]
+    if "reasoning_effort" in accepts:
+        return [(name, "reasoning_effort", value, what) for name, value, what in REASONING_LEVELS]
+    return []
+
+
+def effort_index(model, levels):
+    """Which of levels model is set to: the nearest one, or medium when it isn't set."""
+    kind = levels[0][1]
+    if kind == "thinking_tokens":
+        budget = model.get_raw_thinking_tokens()
+        if budget:
+            sizes = [model.parse_token_value(value) for _, _, value, _ in levels]
+            return min(range(len(sizes)), key=lambda num: abs(sizes[num] - budget))
+    else:
+        effort = model.get_reasoning_effort()
+        values = [value for _, _, value, _ in levels]
+        if effort in values:
+            return values.index(effort)
+    return 1
 
 
 def expand_subdir(file_path):

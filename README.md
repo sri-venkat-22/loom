@@ -12,6 +12,7 @@ Loom lets you pair program with LLMs to start a new project or build on your exi
 
 - **In your browser too** — `loom --web` gives you the same loom in a Claude-Code-style web UI, with inline diffs you accept with `y`, project checkpoints, a file tree and an editor. See [the web UI](#web-ui).
 - **Works as an agent** — ask for a change and the model finds the code, edits it, runs your tests and fixes what breaks, asking before each edit and command. See [the agent docs](loom/docs/agent.md).
+- **A terminal drawn for you** — a launch banner that says where your key came from, a `/` palette that filters as you type, arrow-key pickers for every question, a live status line, an `/effort` slider and `/cost` bars, all in a warm theme you can change in `.loom/theme.toml`. See [the terminal](loom/docs/terminal.md).
 - **Permissions you control** — approve each action, accept edits automatically, or plan read-only; allow trusted commands like `bash(pytest*)`.
 - **Project memory** — put standing instructions in a `LOOM.md` file and they apply to every request.
 - **Sessions** — `loom --continue` picks up your last conversation, and long tasks compact themselves instead of overflowing the context window. See [sessions](loom/docs/sessions.md).

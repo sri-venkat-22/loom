@@ -40,6 +40,8 @@ from loom.permissions import SETTINGS_FILE, Permissions
 from loom.repo import ANY_GIT_ERROR, GitRepo
 from loom.report import report_uncaught_exceptions
 from loom.sessions import SESSIONS_DIR, Session, SessionError
+from loom.tui import theme as tui_theme
+from loom.tui.banner import note_key_source, short_path
 from loom.versioncheck import check_version, install_from_main_branch, install_upgrade
 from loom.watch import FileWatcher
 
@@ -517,9 +519,12 @@ def load_credentials_file(fname):
         print(f"Error loading {fname}: expected a JSON object of NAME: value pairs")
         return False
 
+    names = []
     for name, value in data.items():
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)) and isinstance(value, str):
             os.environ[name] = value
+            names.append(name)
+    note_key_source(names, short_path(Path(fname).resolve()))
     return True
 
 
@@ -551,6 +556,8 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
             if Path(fname).exists():
                 load_dotenv(fname, override=True, encoding=encoding)
                 loaded.append(fname)
+                names = dotenv_values(fname, encoding=encoding)
+                note_key_source(names, short_path(fname))
         except OSError as e:
             print(f"OSError loading {fname}: {e}")
         except Exception as e:
@@ -701,19 +708,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     if args.timeout:
         models.request_timeout = args.timeout
 
-    if args.dark_mode:
-        args.user_input_color = "#32FF32"
-        args.tool_error_color = "#FF3333"
-        args.tool_warning_color = "#FFFF00"
-        args.assistant_output_color = "#00FFFF"
-        args.code_theme = "monokai"
-
-    if args.light_mode:
-        args.user_input_color = "green"
-        args.tool_error_color = "red"
-        args.tool_warning_color = "#FFA500"
-        args.assistant_output_color = "blue"
-        args.code_theme = "default"
+    theme, theme_error = load_terminal_theme(args, git_root)
+    args.code_theme = args.code_theme or theme.code_theme
 
     if return_coder and args.yes_always is None:
         args.yes_always = True
@@ -754,6 +750,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             multiline_mode=args.multiline,
             notifications=args.notifications,
             notifications_command=args.notifications_command,
+            theme=theme,
+            animation=args.animation,
         )
 
     io = get_io(args.pretty)
@@ -764,6 +762,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             raise err
         io = get_io(False)
         io.tool_warning("Terminal does not support pretty output (UnicodeDecodeError)")
+
+    # Spinners and the like draw with the terminal's theme too
+    if isinstance(getattr(io, "theme", None), tui_theme.Theme):
+        tui_theme.set_current(io.theme)
+    if theme_error:
+        io.tool_error(f"{theme_error} Using the built-in {theme.name} theme instead.")
 
     # Process any environment variables set via --set-env
     if args.set_env:
@@ -783,6 +787,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
                 provider, key = api_setting.split("=", 1)
                 env_var = f"{provider.strip().upper()}_API_KEY"
                 os.environ[env_var] = key.strip()
+                note_key_source([env_var], "--api-key")
             except ValueError:
                 io.tool_error(f"Invalid --api-key format: {api_setting}")
                 io.tool_output("Format should be: provider=key")
@@ -790,9 +795,11 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     if args.anthropic_api_key:
         os.environ["ANTHROPIC_API_KEY"] = args.anthropic_api_key
+        note_key_source(["ANTHROPIC_API_KEY"], "--anthropic-api-key")
 
     if args.openai_api_key:
         os.environ["OPENAI_API_KEY"] = args.openai_api_key
+        note_key_source(["OPENAI_API_KEY"], "--openai-api-key")
 
     # Handle deprecated model shortcut args
     handle_deprecated_model_args(args, io)
@@ -1315,7 +1322,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         analytics.event("copy-paste mode")
         ClipboardWatcher(coder.io, verbose=args.verbose)
 
-    coder.show_announcements()
+    coder.show_announcements(intro=not session.messages)
     if session.messages:
         coder.show_session_recap()
 
@@ -1463,6 +1470,26 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
             if switch.kwargs.get("show_announcements") is not False:
                 coder.show_announcements()
+
+
+def load_terminal_theme(args, git_root):
+    """The terminal's theme (loom/tui/theme.py) for --theme, --light-mode and the theme
+    files, and the error that kept a theme file from being used, or None."""
+    name = path = None
+    if args.theme:
+        if args.theme in tui_theme.BUILTIN:
+            name = args.theme
+        else:
+            path = args.theme
+    elif args.light_mode:
+        name = "loom-light"
+    elif args.dark_mode:
+        name = "loom-dark"
+    try:
+        return tui_theme.load_theme(git_root or Path.cwd(), name=name, path=path), None
+    except tui_theme.ThemeError as err:
+        builtin = name if name in tui_theme.BUILTIN else "loom-dark"
+        return tui_theme.Theme(tui_theme.BUILTIN[builtin]), str(err)
 
 
 def get_session(args, io, root):

@@ -6,7 +6,7 @@ report, so the main agent's context stays small. Several sub-agents started in o
 run at once.
 
 ```
-agent> Use parallel explore tasks to map how loom's permissions, hooks and MCP client fit together, then summarize.
+> Use parallel explore tasks to map how loom's permissions, hooks and MCP client fit together, then summarize.
 I'll launch three explore tasks in parallel — one on permissions, one on hooks, one on the MCP client — plus a
 fourth on how they're wired into the agent's tool-call flow.
 
@@ -191,7 +191,7 @@ questions and your answers, its report, its numbers and its whole conversation w
 model. `/tasks` lists this conversation's tasks, and `/tasks N` shows one:
 
 ```
-agent> /tasks
+> /tasks
   #  Status       Agent    Tokens   Time  Description
   1  done         explore    241k    40s  Map permissions system
   2  done         explore    244k    45s  Map hooks system
@@ -199,7 +199,7 @@ agent> /tasks
   4  done         explore    346k    49s  Map tool-call integration flow
 
 Show one's transcript with /tasks N.
-agent> /tasks 3
+> /tasks 3
 ● Task 3(Map MCP client system)
   ⎿  explore · done · 12 tool uses · 129k tokens · $0.15 · 27s · bedrock/global.moonshotai.kimi-k3
 

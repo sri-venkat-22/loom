@@ -6,7 +6,7 @@ its own: a GitHub server lets it read issues and open pull requests, a database 
 lets it query your schema, a browser server lets it check a page.
 
 ```
-agent> what's the latest issue about the parser?
+> what's the latest issue about the parser?
 ● github - search_issues (MCP)(repo: "me/parser", query: "parser")
 Use the github MCP tool search_issues? (Y)es/(N)o/(A)lways: always allow this tool (saved to .loom.permissions.json) [Yes]:
   ⎿  #214 Parser drops trailing comments (open)
@@ -76,7 +76,7 @@ writing layouts from scratch.
 3. Start loom. The announcements show `MCP: stitch (15 tools)`.
 
 ```
-agent> design a landing page for my bakery, warm and hand-made, with the menu and opening hours
+> design a landing page for my bakery, warm and hand-made, with the menu and opening hours
 ● stitch - create_project (MCP)(title: "Crumb & Co.")
 ● stitch - generate_screen_from_text (MCP)(projectId: "4044680601076201931", prompt: "A warm, hand-made…", deviceType: "DESKTOP")
 ● Stitch(site/index.html)

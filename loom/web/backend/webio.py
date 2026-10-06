@@ -258,6 +258,8 @@ class WebIO(InputOutput):
         abs_read_only_fnames=None,
         edit_format=None,
         cycle_mode=None,
+        mode=None,
+        status=None,
     ):
         if not self.web.started:
             return super().get_input(
@@ -268,6 +270,8 @@ class WebIO(InputOutput):
                 abs_read_only_fnames,
                 edit_format,
                 cycle_mode,
+                mode=mode,
+                status=status,
             )
         self.end_tool()
         self.web.end_turn()

@@ -19,82 +19,35 @@ import time
 
 from rich.console import Console
 
+from loom.tui import theme as tui_theme
+from loom.tui.paint import ansi
+from loom.tui.status import status_line
+
 
 class Spinner:
     """
-    Minimal spinner that scans a single marker back and forth across a line.
+    A spinner and the line beside it, repainted in place while loom waits.
 
-    The animation is pre-rendered into a list of frames.  If the terminal
-    cannot display unicode the frames are converted to plain ASCII.
+    Its frames, colours and pace come from the theme (loom/tui/theme.py): blocks filling
+    up by default, ASCII where unicode can't be shown, and nothing at all when the output
+    isn't a terminal. The line shows after half a second, so quick waits don't flicker.
     """
 
     last_frame_idx = 0  # Class variable to store the last frame index
 
-    def __init__(self, text: str, width: int = 7):
+    def __init__(self, text, width: int = 7):
+        # text is a string, an Activity (loom/tui/status.py), or a function returning
+        # either, for a line that changes, like an elapsed time
         self.text = text
         self.start_time = time.time()
         self.last_update = 0.0
         self.visible = False
         self.is_tty = sys.stdout.isatty()
         self.console = Console()
-
-        # Pre-render the animation frames using pure ASCII so they will
-        # always display, even on very limited terminals.
-        ascii_frames = [
-            "#=        ",  # C1 C2 space(8)
-            "=#        ",  # C2 C1 space(8)
-            " =#       ",  # space(1) C2 C1 space(7)
-            "  =#      ",  # space(2) C2 C1 space(6)
-            "   =#     ",  # space(3) C2 C1 space(5)
-            "    =#    ",  # space(4) C2 C1 space(4)
-            "     =#   ",  # space(5) C2 C1 space(3)
-            "      =#  ",  # space(6) C2 C1 space(2)
-            "       =# ",  # space(7) C2 C1 space(1)
-            "        =#",  # space(8) C2 C1
-            "        #=",  # space(8) C1 C2
-            "       #= ",  # space(7) C1 C2 space(1)
-            "      #=  ",  # space(6) C1 C2 space(2)
-            "     #=   ",  # space(5) C1 C2 space(3)
-            "    #=    ",  # space(4) C1 C2 space(4)
-            "   #=     ",  # space(3) C1 C2 space(5)
-            "  #=      ",  # space(2) C1 C2 space(6)
-            " #=       ",  # space(1) C1 C2 space(7)
-        ]
-
-        self.unicode_palette = "░█"
-        xlate_from, xlate_to = ("=#", self.unicode_palette)
-
-        # If unicode is supported, swap the ASCII chars for nicer glyphs.
-        if self._supports_unicode():
-            translation_table = str.maketrans(xlate_from, xlate_to)
-            frames = [f.translate(translation_table) for f in ascii_frames]
-            self.scan_char = xlate_to[xlate_from.find("#")]
-        else:
-            frames = ascii_frames
-            self.scan_char = "#"
-
-        # Bounce the scanner back and forth.
-        self.frames = frames
-        self.frame_idx = Spinner.last_frame_idx  # Initialize from class variable
-        self.width = len(frames[0]) - 2  # number of chars between the brackets
-        self.animation_len = len(frames[0])
-        self.last_display_len = 0  # Length of the last spinner line (frame + text)
-
-    def _supports_unicode(self) -> bool:
-        if not self.is_tty:
-            return False
-        try:
-            out = self.unicode_palette
-            out += "\b" * len(self.unicode_palette)
-            out += " " * len(self.unicode_palette)
-            out += "\b" * len(self.unicode_palette)
-            sys.stdout.write(out)
-            sys.stdout.flush()
-            return True
-        except UnicodeEncodeError:
-            return False
-        except Exception:
-            return False
+        self.theme = tui_theme.current()
+        self.frames = self.theme.spinner_frames
+        self.frame_idx = Spinner.last_frame_idx % len(self.frames)
+        self.last_display_len = 0  # Width of the last line shown
 
     def _next_frame(self) -> str:
         frame = self.frames[self.frame_idx]
@@ -102,7 +55,12 @@ class Spinner:
         Spinner.last_frame_idx = self.frame_idx  # Update class variable
         return frame
 
-    def step(self, text: str = None) -> None:
+    def render(self, frame=None, now=None):
+        """The line as it would show now, as rich Text."""
+        text = self.text() if callable(self.text) else self.text
+        return status_line(self.theme, frame or self.frames[self.frame_idx], text, now)
+
+    def step(self, text=None) -> None:
         if text is not None:
             self.text = text
 
@@ -113,53 +71,24 @@ class Spinner:
         if not self.visible and now - self.start_time >= 0.5:
             self.visible = True
             self.last_update = 0.0
-            if self.is_tty:
-                self.console.show_cursor(False)
+            self.console.show_cursor(False)
 
-        if not self.visible or now - self.last_update < 0.1:
+        if not self.visible or now - self.last_update < self.theme.frame_interval:
             return
 
         self.last_update = now
-        frame_str = self._next_frame()
+        line = self.render(self._next_frame(), now)
 
-        # Determine the maximum width for the spinner line
-        # Subtract 2 as requested, to leave a margin or prevent cursor wrapping issues
-        max_spinner_width = self.console.width - 2
-        if max_spinner_width < 0:  # Handle extremely narrow terminals
-            max_spinner_width = 0
+        # One screen line: leave a margin so the cursor never wraps
+        max_width = max(self.console.width - 2, 0)
+        line.truncate(max_width, overflow="ellipsis")
+        width = line.cell_len
 
-        # The text can be a function, for a line that changes, like an elapsed time
-        text = self.text() if callable(self.text) else self.text
-        current_text_payload = f" {text}"
-        line_to_display = f"{frame_str}{current_text_payload}"
-
-        # Truncate the line if it's too long for the console width
-        if len(line_to_display) > max_spinner_width:
-            line_to_display = line_to_display[:max_spinner_width]
-
-        len_line_to_display = len(line_to_display)
-
-        # Calculate padding to clear any remnants from a longer previous line
-        padding_to_clear = " " * max(0, self.last_display_len - len_line_to_display)
-
-        # Write the spinner frame, text, and any necessary clearing spaces
-        sys.stdout.write(f"\r{line_to_display}{padding_to_clear}")
-        self.last_display_len = len_line_to_display
-
-        # Calculate number of backspaces to position cursor at the scanner character
-        scan_char_abs_pos = frame_str.find(self.scan_char)
-
-        # Total characters written to the line (frame + text + padding)
-        total_chars_written_on_line = len_line_to_display + len(padding_to_clear)
-
-        # num_backspaces will be non-positive if scan_char_abs_pos is beyond
-        # total_chars_written_on_line (e.g., if the scan char itself was truncated).
-        # (e.g., if the scan char itself was truncated).
-        # In such cases, (effectively) 0 backspaces are written,
-        # and the cursor stays at the end of the line.
-        num_backspaces = total_chars_written_on_line - scan_char_abs_pos
-        sys.stdout.write("\b" * num_backspaces)
+        # Spaces clear what's left of a longer previous line
+        padding = " " * max(0, self.last_display_len - width)
+        sys.stdout.write("\r" + ansi(line, self.theme.caps.color) + padding + "\r")
         sys.stdout.flush()
+        self.last_display_len = width
 
     def end(self) -> None:
         if self.visible and self.is_tty:
@@ -173,9 +102,10 @@ class Spinner:
 class WaitingSpinner:
     """Background spinner that can be started/stopped safely."""
 
-    def __init__(self, text: str = "Waiting for LLM", delay: float = 0.15):
+    def __init__(self, text: str = "Waiting for LLM", delay: float = None):
         self.spinner = Spinner(text)
-        self.delay = delay
+        # The theme's pace, so the shimmer moves smoothly
+        self.delay = delay or self.spinner.theme.frame_interval
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._spin, daemon=True)
 

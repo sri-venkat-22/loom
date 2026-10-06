@@ -622,11 +622,91 @@ class Coder:
         for lang, cmd in lint_cmds.items():
             self.linter.set_linter(lang, cmd)
 
-    def show_announcements(self):
-        bold = True
-        for line in self.get_announcements():
-            self.io.tool_output(line, bold=bold)
-            bold = False
+    def get_banner_info(self):
+        """What the banner says (loom/tui/banner.py): the facts of get_announcements, for
+        the terminal to draw."""
+        from loom.tui.banner import BannerInfo, format_context, key_source, model_parts
+
+        main_model = self.main_model
+        name, provider = model_parts(main_model)
+        effort = None
+        if main_model.get_thinking_tokens():
+            effort = f"{main_model.get_thinking_tokens()} think tokens"
+        if main_model.get_reasoning_effort():
+            effort = f"reasoning {main_model.get_reasoning_effort()}"
+
+        details = []
+        warnings = []
+        if main_model.weak_model is not main_model:
+            details.append(f"weak model {main_model.weak_model.name}")
+        if self.edit_format == "architect":
+            details.append(f"editor model {main_model.editor_model.name}")
+        if self.add_cache_headers or main_model.caches_by_default:
+            details.append("prompt cache")
+
+        if self.repo:
+            num_files = len(self.repo.get_tracked_files())
+            repo = f"git repo, {num_files:,} files"
+            if num_files > 1000:
+                warnings.append(
+                    f"A large repo: consider --subtree-only and .loomignore ({urls.large_repos})"
+                )
+        else:
+            repo = "no git repo"
+
+        map_tokens = self.repo_map.max_map_tokens if self.repo_map else 0
+        if map_tokens > 0:
+            details.append(f"repo-map {format_context(map_tokens)} tokens")
+            if map_tokens > main_model.get_repo_map_tokens() * 2:
+                warnings.append(
+                    f"--map-tokens over {int(main_model.get_repo_map_tokens() * 2)} is not"
+                    " recommended: too much irrelevant code can confuse the model"
+                )
+        else:
+            details.append("repo-map off")
+
+        for fname in self.get_project_memory_files():
+            details.append(f"memory {self.get_project_memory_name(fname)}")
+        for label, fnames in (
+            ("in the chat", self.get_inchat_relative_files()),
+            ("read-only", [self.get_rel_fname(fname) for fname in self.abs_read_only_fnames]),
+        ):
+            if fnames:
+                more = f" +{len(fnames) - 3} more" if len(fnames) > 3 else ""
+                details.append(f"{label}: {', '.join(sorted(fnames)[:3])}{more}")
+
+        if self.done_messages:
+            if self.session.messages:
+                updated = self.session.data.get("updated", "")[:16].replace("T", " ")
+                details.append(f"continuing conversation {self.session.id} from {updated}")
+            else:
+                details.append("restored the previous conversation")
+
+        return BannerInfo(
+            version=__version__,
+            model=name,
+            provider=provider,
+            context=main_model.info.get("max_input_tokens"),
+            mode=self.edit_format,
+            effort=effort,
+            cwd=str(self.root),
+            repo=repo,
+            key=key_source(main_model),
+            details=details,
+            warnings=warnings,
+        )
+
+    def show_announcements(self, intro=False):
+        """Say who loom is talking to and where: the banner in a terminal, the
+        announcements' lines anywhere else. intro, at launch, plays the wordmark first and
+        ends with what to type."""
+        self.io.show_banner(
+            self.get_banner_info(),
+            self.get_announcements(),
+            intro=intro,
+            edit_format=self.edit_format,
+            can_cycle=self.get_mode_cycler() is not None,
+        )
 
     def add_rel_fname(self, rel_fname):
         self.abs_fnames.add(self.abs_root_path(rel_fname))
@@ -984,11 +1064,28 @@ class Coder:
             self.abs_read_only_fnames,
             edit_format=self.get_prompt_label(),
             cycle_mode=self.get_mode_cycler(),
+            mode=self.get_prompt_mode if self.get_prompt_mode() else None,
+            status=self.get_prompt_status,
         )
 
     def get_prompt_label(self):
         """Shown before the > of the input prompt."""
         return "" if self.edit_format == self.main_model.edit_format else self.edit_format
+
+    def get_prompt_mode(self):
+        """The permission mode the prompt's toolbar shows in its colour, or None."""
+        return None
+
+    def get_prompt_status(self):
+        """What the prompt's toolbar shows at its right: the model, and what this session
+        has cost so far."""
+        from loom.tui.banner import model_parts
+
+        name, _provider = model_parts(self.main_model)
+        cost = self.total_cost
+        if cost:
+            return f"{name} · ${cost:.2f}" if cost >= 0.01 else f"{name} · ${cost:.4f}"
+        return name
 
     def get_mode_cycler(self):
         """A function for Shift-Tab to call, which switches mode and returns the new prompt
@@ -1159,9 +1256,19 @@ class Coder:
         return inp
 
     def get_spinner_text(self):
-        """Shown next to the spinner while waiting for the model: a string, or a function
-        returning one."""
-        return "Waiting for " + self.main_model.name
+        """Shown next to the spinner while waiting for the model: a string or an Activity
+        (loom/tui/status.py), or a function returning one."""
+        from loom.tui.banner import model_parts
+        from loom.tui.status import Activity, format_elapsed
+
+        name, _provider = model_parts(self.main_model)
+        started = time.time()
+
+        def text():
+            waited = time.time() - started
+            return Activity(f"Waiting for {name}", (format_elapsed(waited),) if waited >= 1 else ())
+
+        return text
 
     def keyboard_interrupt(self):
         # Ensure cursor is visible on exit

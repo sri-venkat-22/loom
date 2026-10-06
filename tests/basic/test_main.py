@@ -400,9 +400,10 @@ class TestMain(TestCase):
             main(["--dark-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
             # Ensure InputOutput was called
             MockInputOutput.assert_called_once()
-            # Check if the code_theme setting is for dark mode
+            # Check if the code_theme setting is for dark mode: loom-dark's
             _, kwargs = MockInputOutput.call_args
-            self.assertEqual(kwargs["code_theme"], "monokai")
+            self.assertEqual(kwargs["code_theme"], "gruvbox-dark")
+            self.assertEqual(kwargs["theme"].name, "loom-dark")
 
     def test_light_mode_sets_code_theme(self):
         # Mock InputOutput to capture the configuration
@@ -411,9 +412,10 @@ class TestMain(TestCase):
             main(["--light-mode", "--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
             # Ensure InputOutput was called
             MockInputOutput.assert_called_once()
-            # Check if the code_theme setting is for light mode
+            # Check if the code_theme setting is for light mode: loom-light's
             _, kwargs = MockInputOutput.call_args
-            self.assertEqual(kwargs["code_theme"], "default")
+            self.assertEqual(kwargs["code_theme"], "gruvbox-light")
+            self.assertEqual(kwargs["theme"].name, "loom-light")
 
     def create_env_file(self, file_name, content):
         env_file_path = Path(self.tempdir) / file_name
@@ -421,7 +423,7 @@ class TestMain(TestCase):
         return env_file_path
 
     def test_env_file_flag_sets_automatic_variable(self):
-        env_file_path = self.create_env_file(".env.test", "LOOM_DARK_MODE=True")
+        env_file_path = self.create_env_file(".env.test", "LOOM_LIGHT_MODE=True")
         with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
@@ -431,21 +433,21 @@ class TestMain(TestCase):
                 output=DummyOutput(),
             )
             MockInputOutput.assert_called_once()
-            # Check if the color settings are for dark mode
+            # Check if the color settings are for light mode
             _, kwargs = MockInputOutput.call_args
-            self.assertEqual(kwargs["code_theme"], "monokai")
+            self.assertEqual(kwargs["code_theme"], "gruvbox-light")
 
     def test_default_env_file_sets_automatic_variable(self):
-        self.create_env_file(".env", "LOOM_DARK_MODE=True")
+        self.create_env_file(".env", "LOOM_LIGHT_MODE=True")
         with patch("loom.main.InputOutput") as MockInputOutput:
             MockInputOutput.return_value.get_input.return_value = None
             MockInputOutput.return_value.get_input.confirm_ask = True
             main(["--no-git", "--exit"], input=DummyInput(), output=DummyOutput())
             # Ensure InputOutput was called
             MockInputOutput.assert_called_once()
-            # Check if the color settings are for dark mode
+            # Check if the color settings are for light mode
             _, kwargs = MockInputOutput.call_args
-            self.assertEqual(kwargs["code_theme"], "monokai")
+            self.assertEqual(kwargs["code_theme"], "gruvbox-light")
 
     def test_false_vals_in_env_file(self):
         self.create_env_file(".env", "LOOM_SHOW_DIFFS=off")

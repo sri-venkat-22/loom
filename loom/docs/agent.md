@@ -4,7 +4,7 @@ By default loom works as an agent. You describe what you want, and the model exp
 the project, edits files and runs commands itself, in a loop, until the job is done:
 
 ```
-agent> fix the failing test
+> fix the failing test
 ● Bash(python -m pytest -q)
 Run this command? (Y)es/(N)o/(A)lways: always allow this command (saved to .loom.permissions.json)/(B)ypass permissions: stop asking for the rest of this session [Yes]: a
   ⎿  FAILED tests/test_stats.py::test_mean - assert 2.0 == 2.5
@@ -193,8 +193,10 @@ accept-edits mode.
 ### Modes
 
 Pick a mode with `--permission-mode`, switch with `/permissions <mode>`, or press
-Shift-Tab at the prompt to cycle through them. The prompt shows the mode, like
-`agent plan>`.
+Shift-Tab at the prompt to cycle through them. The toolbar under the prompt shows the
+mode in a colour of its own, like `⏵⏵ plan mode on`, so a Shift-Tab that lands somewhere
+unexpected is plain to see. Where loom can't draw the toolbar (a dumb terminal), the
+prompt shows the mode instead, like `agent plan>`.
 
 - **ask** (default): edits and commands ask first.
 - **accept-edits**: edits inside the project are applied without asking. Commands still
@@ -284,7 +286,7 @@ risks and how it will check the result. You approve it, edit it or send it back,
 it's approved the agent carries it out in the same request:
 
 ```
-agent plan> add a --verbose flag to the CLI
+> add a --verbose flag to the CLI
 ● Grep("argparse")
   ⎿  Found 3 matches in 1 file
 ● Read(mathutils/cli.py)
@@ -352,7 +354,7 @@ mode, since its agents write documents and code. [Hooks](hooks.md) see the tool 
 The agent can look things up: `web_search` finds pages, and `web_fetch` reads one.
 
 ```
-agent> what's the latest version of FastAPI and what changed?
+> what's the latest version of FastAPI and what changed?
 ● WebSearch("latest FastAPI version release 2026")
   ⎿  5 results
 ● WebFetch(github.com)

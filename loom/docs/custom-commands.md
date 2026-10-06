@@ -18,7 +18,7 @@ List each problem with its file and line, most serious first. Don't edit any fil
 ```
 
 ```
-agent> /review error handling
+> /review error handling
 ● Bash(git diff HEAD)
   ⎿  ...
 ```

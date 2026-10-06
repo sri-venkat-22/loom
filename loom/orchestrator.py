@@ -548,14 +548,24 @@ class Orchestrator:
         state.start(phase.key)
         state.save()
 
-        self.io.rule()
-        self.io.tool_output(
-            (
-                f"Phase {phase.number}/{len(PHASES)}: {phase.title}. The {phase.agent} is writing"
-                f" {phase.document}."
-            ),
-            bold=True,
+        plain = (
+            f"Phase {phase.number}/{len(PHASES)}: {phase.title}. The {phase.agent} is writing"
+            f" {phase.document}."
         )
+        if getattr(self.io, "fancy", False) is True:
+            inputs = [PHASES_BY_KEY[key].document_title for key in phase.inputs]
+            right = f"from the {' and '.join(inputs)} " if inputs else ""
+            self.io.phase_banner(
+                phase.number,
+                len(PHASES),
+                phase.key,
+                phase.title,
+                f"{right}→ {phase.document}",
+                plain,
+            )
+        else:
+            self.io.rule()
+            self.io.tool_output(plain, bold=True)
         if phase.key == "building":
             self.apply_skeleton()
             from loom.parallel import ParallelBuilding
@@ -1432,34 +1442,11 @@ class Orchestrator:
             text = ", ".join(parts)
             self.io.tool_output(f"  {text[0].upper()}{text[1:]}")
         current = state.current
-        marks = dict(pending="○", running="●", review="◆", approved="✓")
-        labels = dict(
-            pending="pending",
-            running="interrupted",
-            review="waiting for review",
-            approved="approved",
-        )
-        width = max(len(phase.title) for phase in PHASES)
-        rows = []
-        for phase in PHASES:
-            data = state.phase_data(phase.key)
-            status = data["status"]
-            label = labels[status]
-            if status == "pending" and data.get("stale"):
-                label = "to redo"
-            if data.get("verdict"):
-                label += f", {data['verdict']}"
-            pointer = "▶" if phase is current else " "
-            line = f"{pointer} {marks[status]} {phase.number}. {phase.title:<{width}}  "
-            line += f"{phase.produces:<16}  "
-            rows.append((line, label, state.metrics(phase.key)))
-        label_width = max(len(label) for _, label, _ in rows)
-        for line, label, metrics in rows:
-            if metrics["runs"]:
-                line += f"{label:<{label_width}}  {describe_metrics(metrics)}"
-            else:
-                line += label
-            self.io.tool_output(line.rstrip())
+        if getattr(self.io, "fancy", False) is True:
+            self.show_status_rows(current)
+        else:
+            self.show_status_lines(current)
+
         from loom.parallel import describe_packages
 
         packages = describe_packages(state)
@@ -1489,6 +1476,89 @@ class Orchestrator:
                 self.io.tool_output(f"Next: {current.title}. Run it with /project run.")
         else:
             self.io.tool_output("The project is complete.")
+
+    def status_label(self, phase):
+        """What /project status says about phase, like "approved, GO"."""
+        data = self.state.phase_data(phase.key)
+        status = data["status"]
+        label = dict(
+            pending="pending",
+            running="interrupted",
+            review="waiting for review",
+            approved="approved",
+        )[status]
+        if status == "pending" and data.get("stale"):
+            label = "to redo"
+        if data.get("verdict"):
+            label += f", {data['verdict']}"
+        return label
+
+    def show_status_rows(self, current):
+        """/project status in a terminal: the wordmark filling with gold as phases are
+        approved, then a row per phase with its glyph and how it stands."""
+        from rich.text import Text
+
+        from loom.tui.logo import wordmark_fill
+
+        t = self.io.theme
+        state = self.state
+        done = sum(1 for phase in PHASES if state.status(phase.key) == "approved")
+        for row in wordmark_fill(t, done / len(PHASES)):
+            self.io._print_text(row, no_wrap=True, overflow="crop")
+        self.io.console.print()
+
+        looks = dict(
+            pending=("queued", "faint"),
+            running=("running", "accent"),
+            review=("review", "accent"),
+            approved=("ok", "ok"),
+        )
+        width = max(len(phase.title) for phase in PHASES)
+        labels = [self.status_label(phase) for phase in PHASES]
+        label_width = max(len(label) for label in labels)
+        for phase, label in zip(PHASES, labels):
+            data = state.phase_data(phase.key)
+            glyph, color = looks[data["status"]]
+            if data["status"] == "pending" and data.get("stale"):
+                glyph, color = "cached", "info"
+            lit = phase is current or data["status"] == "approved"
+            row = Text()
+            row.append(
+                f"{t.glyph('selected') if phase is current else ' '} ", style=t.style("accent")
+            )
+            row.append(f"{t.glyph(glyph)} ", style=t.style(color))
+            row.append(f"{t.glyph(phase.key)} ", style=t.style("accent" if lit else "faint"))
+            row.append(
+                f"{phase.number}. {phase.title:<{width}}  ",
+                style=t.style("fg", bold=phase is current),
+            )
+            row.append(f"{phase.produces:<16}  ", style=t.style("dim"))
+            row.append(f"{label:<{label_width}}  ", style=t.style(color))
+            metrics = state.metrics(phase.key)
+            if metrics["runs"]:
+                row.append(describe_metrics(metrics), style=t.style("faint"))
+            self.io._print_text(row, no_wrap=True, overflow="ellipsis")
+            self.io.append_chat_history(row.plain, linebreak=True, blockquote=True)
+
+    def show_status_lines(self, current):
+        state = self.state
+        marks = dict(pending="○", running="●", review="◆", approved="✓")
+        width = max(len(phase.title) for phase in PHASES)
+        rows = []
+        for phase in PHASES:
+            status = state.phase_data(phase.key)["status"]
+            label = self.status_label(phase)
+            pointer = "▶" if phase is current else " "
+            line = f"{pointer} {marks[status]} {phase.number}. {phase.title:<{width}}  "
+            line += f"{phase.produces:<16}  "
+            rows.append((line, label, state.metrics(phase.key)))
+        label_width = max(len(label) for _, label, _ in rows)
+        for line, label, metrics in rows:
+            if metrics["runs"]:
+                line += f"{label:<{label_width}}  {describe_metrics(metrics)}"
+            else:
+                line += label
+            self.io.tool_output(line.rstrip())
 
     def write_report(self, fmt, out=None, summary=False):
         """Write the project's report (see loom/project_report.py) as fmt, at out or at

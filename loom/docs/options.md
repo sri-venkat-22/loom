@@ -27,6 +27,7 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--restore-chat-history | --no-restore-chat-history]
             [--continue] [--resume] [--sessions | --no-sessions]
             [--llm-history-file] [--dark-mode] [--light-mode]
+            [--theme] [--animation | --no-animation]
             [--pretty | --no-pretty] [--stream | --no-stream]
             [--user-input-color] [--tool-output-color]
             [--tool-error-color] [--tool-warning-color]
@@ -312,14 +313,26 @@ Environment variable: `LOOM_LLM_HISTORY_FILE`
 ## Output settings:
 
 ### `--dark-mode`
-Use colors suitable for a dark terminal background (default: False)  
+Use the loom-dark theme, for a dark terminal background (default: False)  
 Default: False  
 Environment variable: `LOOM_DARK_MODE`  
 
 ### `--light-mode`
-Use colors suitable for a light terminal background (default: False)  
+Use the loom-light theme, for a light terminal background (default: False)  
 Default: False  
 Environment variable: `LOOM_LIGHT_MODE`  
+
+### `--theme THEME`
+The terminal's theme: loom-dark, loom-light or a theme file, on top of ~/.loom/theme.toml and .loom/theme.toml (default: loom-dark)  
+Environment variable: `LOOM_THEME`  
+
+### `--animation`
+Enable/disable the terminal's animations: the launch intro, the shimmer while loom works and the effort slider's sweep (default: True)  
+Default: True  
+Environment variable: `LOOM_ANIMATION`  
+Aliases:
+  - `--animation`
+  - `--no-animation`
 
 ### `--pretty`
 Enable/disable pretty, colorized output (default: True)  
@@ -338,8 +351,7 @@ Aliases:
   - `--no-stream`
 
 ### `--user-input-color VALUE`
-Set the color for user input (default: #00cc00)  
-Default: #00cc00  
+Set the color for user input (default: the terminal's text color)  
 Environment variable: `LOOM_USER_INPUT_COLOR`  
 
 ### `--tool-output-color VALUE`
@@ -347,18 +359,15 @@ Set the color for tool output (default: None)
 Environment variable: `LOOM_TOOL_OUTPUT_COLOR`  
 
 ### `--tool-error-color VALUE`
-Set the color for tool error messages (default: #FF2222)  
-Default: #FF2222  
+Set the color for tool error messages (default: the theme's fail color)  
 Environment variable: `LOOM_TOOL_ERROR_COLOR`  
 
 ### `--tool-warning-color VALUE`
-Set the color for tool warning messages (default: #FFA500)  
-Default: #FFA500  
+Set the color for tool warning messages (default: the theme's accent color)  
 Environment variable: `LOOM_TOOL_WARNING_COLOR`  
 
 ### `--assistant-output-color VALUE`
-Set the color for assistant output (default: #0088ff)  
-Default: #0088ff  
+Set the color for assistant output (default: the terminal's text color)  
 Environment variable: `LOOM_ASSISTANT_OUTPUT_COLOR`  
 
 ### `--completion-menu-color COLOR`
@@ -378,8 +387,7 @@ Set the background color for the current item in the completion menu (default: t
 Environment variable: `LOOM_COMPLETION_MENU_CURRENT_BG_COLOR`  
 
 ### `--code-theme VALUE`
-Set the markdown code theme (default: default, other options include monokai, solarized-dark, solarized-light, or a Pygments builtin style, see https://pygments.org/styles for available themes)  
-Default: default  
+Set the markdown code theme (default: the theme's, gruvbox-dark or gruvbox-light; other options include monokai, solarized-dark, solarized-light, or a Pygments builtin style, see https://pygments.org/styles for available themes)  
 Environment variable: `LOOM_CODE_THEME`  
 
 ### `--show-diffs`

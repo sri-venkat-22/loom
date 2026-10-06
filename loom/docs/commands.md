@@ -19,11 +19,13 @@ Type these at the loom prompt. Commands can be abbreviated to any unique prefix,
 | `/context` | Enter context mode to see surrounding code context. If no prompt provided, switches to context mode. |
 | `/copy` | Copy the last assistant message to the clipboard |
 | `/copy-context` | Copy the current chat context as markdown, suitable to paste into a web UI |
+| `/cost` | Show what this session, its sub-agents and the /project phases have cost |
 | `/diff` | Display the diff of changes since the last message |
 | `/drop` | Remove files from the chat session to free up context space |
 | `/edit` | Alias for /editor: Open an editor to write a prompt |
 | `/editor` | Open an editor to write a prompt |
 | `/editor-model` | Switch the Editor Model to a new LLM |
+| `/effort` | Trade speed against thoroughness: how long the model thinks before it answers |
 | `/exit` | Exit the application |
 | `/git` | Run a git command (output excluded from chat) |
 | `/help` | Ask questions about loom |
