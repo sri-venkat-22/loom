@@ -297,10 +297,6 @@ def main():
     directory = args.directory
     print(f"Watching source files in {directory}...")
 
-    # Example ignore function that ignores files with "test" in the name
-    def ignore_test_files(path):
-        return "test" in path.name.lower()
-
     watcher = FileWatcher(directory, gitignores=args.gitignore)
     try:
         watcher.start()

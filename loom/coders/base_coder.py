@@ -65,10 +65,6 @@ class UnknownEditFormat(ValueError):
         )
 
 
-class MissingAPIKeyError(ValueError):
-    pass
-
-
 class FinishReasonLength(Exception):
     pass
 
@@ -2565,20 +2561,11 @@ class Coder:
         files = [self.get_rel_fname(fname) for fname in self.abs_fnames]
         return sorted(set(files))
 
-    def is_file_safe(self, fname):
-        try:
-            return Path(self.abs_root_path(fname)).is_file()
-        except OSError:
-            return
-
     def get_all_relative_files(self):
         if self.repo:
             files = self.repo.get_tracked_files()
         else:
             files = self.get_inchat_relative_files()
-
-        # This is quite slow in large repos
-        # files = [fname for fname in files if self.is_file_safe(fname)]
 
         return sorted(set(files))
 

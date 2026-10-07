@@ -225,11 +225,6 @@ class MarkdownStream:
         rest = Text.from_ansi(rest)
         self.live.update(rest)
 
-    def find_minimal_suffix(self, text, match_lines=50):
-        """
-        Splits text into chunks on blank lines "\n\n".
-        """
-
 
 if __name__ == "__main__":
     with open("loom/io.py", "r") as f:

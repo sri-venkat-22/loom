@@ -132,14 +132,6 @@ def numbered_diff_lines(diff):
     return res
 
 
-def count_diff_changes(diff):
-    """(added lines, removed lines) in a unified diff."""
-    lines = numbered_diff_lines(diff)
-    added = sum(1 for line in lines if line and line[1] == "+")
-    removed = sum(1 for line in lines if line and line[1] == "-")
-    return added, removed
-
-
 class CommandCompletionException(Exception):
     """Raised when a command should use the normal autocompleter instead of
     command-specific completion."""
@@ -1026,11 +1018,6 @@ class InputOutput:
                 self.tool_output(subject, bold=True)
 
         style = self._get_style()
-
-        def is_valid_response(text):
-            if not text:
-                return True
-            return text.lower() in valid_responses
 
         if self.yes is True:
             res = "n" if explicit_yes_required else "y"

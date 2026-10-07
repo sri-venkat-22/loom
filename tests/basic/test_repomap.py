@@ -323,8 +323,6 @@ class TestRepoMapAllLanguages(unittest.TestCase):
     def test_language_python(self):
         self._test_language_repo_map("python", "py", "Person")
 
-    # "ql": ("ql", "greet"), # not supported in tsl-pack (yet?)
-
     def test_language_ruby(self):
         self._test_language_repo_map("ruby", "rb", "greet")
 

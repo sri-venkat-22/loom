@@ -1,5 +1,4 @@
 import difflib
-from itertools import groupby
 from pathlib import Path
 
 from ..dump import dump  # noqa: F401
@@ -142,10 +141,6 @@ def do_replace(fname, content, hunk):
     new_content = apply_hunk(content, hunk)
     if new_content:
         return new_content
-
-
-def collapse_repeats(s):
-    return "".join(k for k, g in groupby(s))
 
 
 def apply_hunk(content, hunk):

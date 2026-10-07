@@ -14,8 +14,6 @@ from .udiff_coder import UnifiedDiffCoder
 from .udiff_simple import UnifiedDiffSimpleCoder
 from .wholefile_coder import WholeFileCoder
 
-# from .single_wholefile_func_coder import SingleWholeFileFunctionCoder
-
 __all__ = [
     HelpCoder,
     AskCoder,
@@ -26,7 +24,6 @@ __all__ = [
     PatchCoder,
     UnifiedDiffCoder,
     UnifiedDiffSimpleCoder,
-    #    SingleWholeFileFunctionCoder,
     ArchitectCoder,
     EditorEditBlockCoder,
     EditorWholeFileCoder,

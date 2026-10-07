@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from loom import tools
 from loom.esc import EscListener, clean_typed_text
-from loom.io import InputOutput, count_diff_changes, numbered_diff_lines
+from loom.io import InputOutput, numbered_diff_lines
 from loom.llm import litellm
 from loom.permissions import Permissions
 from loom.utils import GitTemporaryDirectory
@@ -146,7 +146,6 @@ class TestCompactDisplay(unittest.TestCase):
         # A removed line starting with -- isn't mistaken for a file header
         self.assertIn((18, "+", "-- 18"), lines)
         self.assertIn(None, lines)  # the gap between the two hunks
-        self.assertEqual(count_diff_changes(diff), (2, 2))
 
     def test_summaries(self):
         self.assertEqual(
