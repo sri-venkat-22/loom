@@ -2,6 +2,7 @@
 
 ### main branch
 
+- Removed the old Streamlit browser UI (`--gui`) and the `browser` extra; use `loom --web`.
 - `/project new IDEA` takes an idea through six phases, each run by its own agent with
   its own prompt, a limited tool set and a document it produces: Idea Check (idea
   report), Planning (PRD), Design (architecture document), Building (the code, written by

@@ -21,3 +21,9 @@ tmp.benchmarks/
 
 # loom --web's frontend dependencies (its build, loom/web/static, is committed)
 loom/web/frontend/node_modules/
+
+# Kept locally, not part of the repository
+.claude/worktrees/
+docs/learn/
+loom/gui.py
+benchmark/

@@ -328,15 +328,6 @@ def check_gitignore(git_root, io, ask=True):
             io.tool_output(f"  {pattern}")
 
 
-def check_streamlit_install(io):
-    return utils.check_pip_install_extra(
-        io,
-        "streamlit",
-        "You need to install the loom browser feature",
-        utils.loom_extra("browser"),
-    )
-
-
 def check_web_install(io):
     return utils.check_pip_install_extra(
         io,
@@ -358,68 +349,6 @@ def start_web(io, args):
     io.tool_output(f"loom is running at {url}")
     io.tool_output("Chat in your browser. Press ^C twice here to stop loom.")
     return True
-
-
-def write_streamlit_credentials():
-    from streamlit.file_util import get_streamlit_file_path
-
-    # Streamlit asks for an email address on its first run; an empty one in its
-    # credentials file skips that prompt.
-
-    credential_path = Path(get_streamlit_file_path()) / "credentials.toml"
-    if not os.path.exists(credential_path):
-        empty_creds = '[general]\nemail = ""\n'
-
-        os.makedirs(os.path.dirname(credential_path), exist_ok=True)
-        with open(credential_path, "w") as f:
-            f.write(empty_creds)
-    else:
-        print("Streamlit credentials already exist.")
-
-
-def launch_gui(args):
-    from streamlit.web import cli
-
-    from loom import gui
-
-    print()
-    print("CONTROL-C to exit...")
-
-    # Necessary so streamlit does not prompt the user for an email address.
-    write_streamlit_credentials()
-
-    target = gui.__file__
-
-    st_args = ["run", target]
-
-    st_args += [
-        "--browser.gatherUsageStats=false",
-        "--runner.magicEnabled=false",
-        "--server.runOnSave=false",
-    ]
-
-    # Release builds run Streamlit without development mode or a file watcher
-    is_dev = "-dev" in str(__version__)
-
-    if is_dev:
-        print("Watching for file changes.")
-    else:
-        st_args += [
-            "--global.developmentMode=false",
-            "--server.fileWatcherType=none",
-            "--client.toolbarMode=viewer",  # minimal?
-        ]
-
-    st_args += ["--"] + args
-
-    cli.main(st_args)
-
-    # from click.testing import CliRunner
-    # runner = CliRunner()
-    # from streamlit.web import bootstrap
-    # bootstrap.load_config_options(flag_options={})
-    # cli.main_run(target, args)
-    # sys.argv = ['streamlit', 'run', '--'] + args
 
 
 def parse_lint_cmds(lint_cmds, io):
@@ -842,22 +771,9 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     analytics.event("launched")
 
-    if args.web and args.gui:
-        io.tool_error("--web can't be used with --gui.")
-        return 1
-
     if args.web and not return_coder and not check_web_install(io):
         analytics.event("exit", reason="Web server not installed")
         return 1
-
-    if args.gui and not return_coder:
-        if not check_streamlit_install(io):
-            analytics.event("exit", reason="Streamlit not installed")
-            return
-        analytics.event("gui session")
-        launch_gui(argv)
-        analytics.event("exit", reason="GUI session ended")
-        return
 
     if args.verbose:
         for fname in loaded_dotenvs:
@@ -1541,7 +1457,7 @@ def add_session_files(session, root, fnames, read_only_fnames, io=None):
 
 def use_agent(args, main_model):
     """Whether to default to the agent, when no edit format was chosen."""
-    if not args.agent or args.copy_paste or args.apply or args.apply_clipboard_edits or args.gui:
+    if not args.agent or args.copy_paste or args.apply or args.apply_clipboard_edits:
         return False
     return main_model.info.get("supports_function_calling") is True
 

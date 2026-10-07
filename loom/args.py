@@ -869,12 +869,6 @@ def get_parser(default_config_files, git_root):
         ),
     ).complete = shtab.FILE
     group.add_argument(
-        "--gui",
-        action=argparse.BooleanOptionalAction,
-        help="Run loom's older Streamlit GUI in your browser (default: False)",
-        default=False,
-    )
-    group.add_argument(
         "--web",
         action="store_true",
         help="Chat with loom in your browser, served on 127.0.0.1 (default: False)",

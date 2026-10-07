@@ -69,8 +69,8 @@ usage: loom [-h] [--model] [--openai-api-key] [--anthropic-api-key]
             [--check-update | --no-check-update]
             [--show-release-notes | --no-show-release-notes]
             [--install-main-branch] [--upgrade] [--version]
-            [--message] [--message-file] [--gui | --no-gui] [--web]
-            [--port] [--browser | --no-browser]
+            [--message] [--message-file] [--web] [--port]
+            [--browser | --no-browser]
             [--copy-paste | --no-copy-paste] [--apply]
             [--apply-clipboard-edits] [--exit] [--show-repo-map]
             [--show-prompts] [--voice-format] [--voice-language]
@@ -766,14 +766,6 @@ Environment variable: `LOOM_MESSAGE_FILE`
 Aliases:
   - `--message-file MESSAGE_FILE`
   - `-f MESSAGE_FILE`
-
-### `--gui`
-Run loom's older Streamlit GUI in your browser (default: False)  
-Default: False  
-Environment variable: `LOOM_GUI`  
-Aliases:
-  - `--gui`
-  - `--no-gui`
 
 ### `--web`
 Chat with loom in your browser, served on 127.0.0.1 (default: False)  

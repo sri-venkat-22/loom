@@ -11,12 +11,6 @@ Please submit bug reports and feature requests as GitHub issues. This
 helps us to keep track of them and discuss potential solutions or
 enhancements.
 
-## LLM Benchmark Results
-
-See the [benchmark README](benchmark/README.md)
-for information on running loom's code editing benchmarks.
-
-
 ## Pull Requests
 
 We appreciate your pull requests. For small changes, feel free to
