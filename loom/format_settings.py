@@ -1,11 +1,26 @@
+# Options whose whole value is a secret, and options whose values are NAME=secret pairs
+SECRET_OPTIONS = ("openai_api_key", "anthropic_api_key", "analytics_posthog_project_api_key")
+PAIR_OPTIONS = ("api_key", "set_env")
+
+
+def mask(value):
+    return f"...{value[-4:]}" if len(value) > 8 else "..."
+
+
 def scrub_sensitive_info(args, text):
-    # Replace sensitive information with last 4 characters
-    if text and args.openai_api_key:
-        last_4 = args.openai_api_key[-4:]
-        text = text.replace(args.openai_api_key, f"...{last_4}")
-    if text and args.anthropic_api_key:
-        last_4 = args.anthropic_api_key[-4:]
-        text = text.replace(args.anthropic_api_key, f"...{last_4}")
+    """Mask the API keys and --set-env values in text, like a command line or a settings
+    dump, keeping only the last 4 characters of long values."""
+    if not text:
+        return text
+    for name in SECRET_OPTIONS:
+        value = getattr(args, name, None)
+        if value:
+            text = text.replace(value, mask(value))
+    for name in PAIR_OPTIONS:
+        for setting in getattr(args, name, None) or []:
+            key, sep, value = str(setting).partition("=")
+            if sep and value.strip():
+                text = text.replace(setting, f"{key}={mask(value.strip())}")
     return text
 
 
