@@ -49,12 +49,13 @@ auto-test: true
 
 A `.loom.conf.yml` or `.env` in the project comes with the repo, so before running
 commands it sets (`lint-cmd`, `test-cmd`, `load`, `notifications-command`, `editor`)
-loom asks:
+loom asks, together with the project's other settings that need approval
+([config.md](config.md#where-loom-looks-for-files)):
 
 ```
-lint-cmd: python: ruff check
-test-cmd: pytest -q
-Run the commands set in this project's .loom.conf.yml? (Y)es/(N)o/(A)lways: trust them in this project [Yes]:
+.loom.conf.yml: lint-cmd: python: ruff check
+.loom.conf.yml: test-cmd: pytest -q
+Use the settings in this project's .loom.conf.yml? (Y)es/(N)o/(A)lways: trust them in this project [Yes]:
 ```
 
 **Always** remembers them in `~/.loom/config-approvals.json` until they change. **No**,

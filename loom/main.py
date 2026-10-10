@@ -63,13 +63,46 @@ def check_config_files_for_yes(config_files):
     return found
 
 
-# Options that make loom run a command: lint and test commands run after the agent's edits,
-# --load runs slash commands (like /run) at startup
-PROJECT_COMMAND_OPTIONS = ("lint_cmd", "test_cmd", "load", "notifications_command", "editor")
+# Options a repo's own config (a .loom.conf.yml or LOOM_* variables in a .env in the project)
+# may set without asking: they only change how loom looks or works inside the project. Any
+# other option from a project file waits for the user's approval, since it could run commands
+# (lint-cmd, test-cmd, load, editor), loosen permissions (permission-mode, yes-always), send
+# requests or keys elsewhere (openai-api-base, set-env, verify-ssl) or write outside the
+# project (chat-history-file). Deny by default: a new option is asked about until it's
+# added here.
+PROJECT_SAFE_OPTIONS = frozenset("""
+    model weak_model editor_model alias opus sonnet haiku 4 4o mini 4_turbo 35turbo deepseek
+    o1_mini o1_preview openai_api_key anthropic_api_key api_key reasoning_effort
+    thinking_tokens timeout edit_format editor_edit_format auto_accept_architect
+    show_model_warnings check_model_accepts_settings max_chat_history_tokens cache_prompts
+    cache_keepalive_pings map_tokens map_refresh map_multiplier_no_files restore_chat_history
+    dark_mode light_mode pretty stream user_input_color tool_output_color tool_error_color
+    tool_warning_color assistant_output_color completion_menu_color completion_menu_bg_color
+    completion_menu_current_color completion_menu_current_bg_color code_theme show_diffs git
+    gitignore add_gitignore_files loomignore subtree_only auto_commits dirty_commits
+    attribute_author attribute_committer attribute_commit_message_author
+    attribute_commit_message_committer attribute_co_authored_by git_commit_verify
+    commit_prompt dry_run skip_sanity_check_repo agent agent_diffs checkpoint_steps
+    web_tools web_search subagents subagent_max_steps subagent_budget max_parallel_tasks
+    subagent_model project_memory auto_compact mcp hooks build_retries build_workers
+    build_budget auto_lint auto_test check_update show_release_notes port browser
+    voice_format voice_language voice_input_device disable_playwright vim chat_language
+    commit_language verbose encoding line_endings suggest_shell_commands fancy_input
+    multiline notifications detect_urls
+    """.split())
 
-# Options a repo mustn't set for itself, since they let loom act without asking: allow
-# rules, MCP config files whose servers loom starts, and the command options
-PROJECT_GATED_OPTIONS = ("allow", "mcp_config") + PROJECT_COMMAND_OPTIONS
+# Variables a project's .env may set without asking: API keys, and loom's own LOOM_*
+# settings, whose options are checked like the ones in a .loom.conf.yml. Any other variable
+# could send requests elsewhere (ANTHROPIC_BASE_URL, HTTPS_PROXY), change what programs run
+# (GIT_EXTERNAL_DIFF, GIT_CONFIG_*, PYTHONPATH) or turn off checks (SSL_CERT_FILE), so it
+# waits for the user's approval.
+PROJECT_SAFE_ENV = re.compile(r"[A-Z][A-Z0-9_]*_API_KEY|LOOM_[A-Z0-9_]+")
+
+# Settings that hold a secret, so the approval question doesn't print them
+SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH", re.IGNORECASE)
+
+MODEL_SETTINGS_FILE = ".loom.model.settings.yml"
+MODEL_METADATA_FILE = ".loom.model.metadata.json"
 
 
 def config_approvals_file():
@@ -83,17 +116,33 @@ def safe_resolve(fname):
         return Path(fname)
 
 
-def project_sourced_options(parser, args, loaded_dotenvs):
-    """{option: file} for the PROJECT_GATED_OPTIONS whose value came with the repo: from a
-    .loom.conf.yml or .env found in the project, rather than the command line, the
-    environment, --config or the user's own files in their home directory."""
+def trusted_env_files(trusted=()):
+    """The .env files that are the user's own, rather than the project's: the ones in their
+    home directory, and those they named on the command line (trusted)."""
+    home = Path.home()
+    files = {safe_resolve(home / ".env"), safe_resolve(home / ".loom" / "oauth-keys.env")}
+    return files | {safe_resolve(fname) for fname in trusted}
+
+
+def command_line_value(argv, option):
+    """The value of --option in argv, given as "--option value" or "--option=value", or None"""
+    for i, arg in enumerate(argv):
+        if arg == option and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith(option + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def project_sourced_options(parser, args, loaded_dotenvs, trusted_dotenvs=()):
+    """{option: file} for the options outside PROJECT_SAFE_OPTIONS whose value came with the
+    repo: from a .loom.conf.yml or .env found in the project, rather than the command line,
+    the environment, --config or the user's own files in their home directory."""
     home = Path.home()
     trusted = {
         safe_resolve(home / ".loom.conf.yml"),
-        safe_resolve(home / ".env"),
-        safe_resolve(home / ".loom" / "oauth-keys.env"),
         safe_resolve(home / ".loom" / "credentials.json"),
-    }
+    } | trusted_env_files(trusted_dotenvs)
     if args.config:
         trusted.add(safe_resolve(args.config))
 
@@ -102,7 +151,7 @@ def project_sourced_options(parser, args, loaded_dotenvs):
         kind, _, fname = source.partition("|")
         for key, (action, _value) in settings.items():
             dest = action.dest if action else None
-            if dest not in PROJECT_GATED_OPTIONS:
+            if dest is None or dest in PROJECT_SAFE_OPTIONS:
                 continue
             if kind == "config_file" and safe_resolve(fname) not in trusted:
                 res[dest] = fname
@@ -119,15 +168,54 @@ def project_sourced_options(parser, args, loaded_dotenvs):
     return res
 
 
-def approve_project_commands(io, parser, args, project_options, root):
-    """Ask before using the PROJECT_COMMAND_OPTIONS that came with the repo, and remember
-    "always" in ~/.loom/config-approvals.json until they change. Declined options go back
-    to their defaults. Returns the declined options."""
-    gated = [dest for dest in PROJECT_COMMAND_OPTIONS if dest in project_options]
-    if not gated:
-        return []
-    settings = {dest: getattr(args, dest) for dest in gated}
-    digest = hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
+def project_model_files(git_root, argv):
+    """The model settings and metadata files loom would read from the project (the git root
+    or the current directory), rather than from the home directory or the command line."""
+    files = []
+    for name, option in (
+        (MODEL_SETTINGS_FILE, "--model-settings-file"),
+        (MODEL_METADATA_FILE, "--model-metadata-file"),
+    ):
+        trusted = {safe_resolve(Path.home() / name)}
+        given = command_line_value(argv, option)
+        if given:
+            trusted.add(safe_resolve(given))
+        for fname in generate_search_path_list(name, git_root, None):
+            if Path(fname).is_file() and safe_resolve(fname) not in trusted:
+                files.append(fname)
+    return list(dict.fromkeys(files))
+
+
+def file_digest(fname):
+    try:
+        return hashlib.sha256(Path(fname).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def shown_setting(name, value):
+    """name=value for the approval question, with a secret value masked"""
+    value = str(value)
+    if SECRET_NAME.search(name):
+        value = f"...{value[-4:]}" if len(value) > 8 else "..."
+    return f"{name}={value}"
+
+
+def approve_project_settings(io, held_options, held_env, model_files, root):
+    """Ask before using what came with the repo and isn't safe to use unasked:
+    held_options {option: (value, file)} outside PROJECT_SAFE_OPTIONS, held_env
+    {file: {name: value}} from its .env files, and model_files, its model settings and
+    metadata files. "Always" is remembered in ~/.loom/config-approvals.json until any of
+    them change. Returns whether the user approved them."""
+    if not held_options and not held_env and not model_files:
+        return True
+
+    settings = dict(
+        options={dest: value for dest, (value, _fname) in held_options.items()},
+        env=held_env,
+        files={str(fname): file_digest(fname) for fname in model_files},
+    )
+    digest = hashlib.sha256(json.dumps(settings, sort_keys=True, default=str).encode()).hexdigest()
     key = str(safe_resolve(root))
     try:
         approvals = json.loads(config_approvals_file().read_text(encoding="utf-8"))
@@ -135,15 +223,33 @@ def approve_project_commands(io, parser, args, project_options, root):
     except (OSError, ValueError):
         approvals = {}
     if approvals.get(key) == digest:
-        return []
+        return True
 
     lines = []
-    for dest, value in settings.items():
+    sources = set()
+    for dest, (value, fname) in held_options.items():
+        sources.add(Path(fname).name)
         for item in value if isinstance(value, list) else [value]:
-            lines.append(f"{dest.replace('_', '-')}: {item}")
-    sources = sorted({Path(project_options[dest]).name for dest in gated})
+            name, sep, rest = str(item).partition("=")
+            if dest in ("set_env", "api_key") and sep:
+                item = shown_setting(name, rest)
+            elif SECRET_NAME.search(dest):
+                item = shown_setting("", item)[1:]
+            lines.append(f"{Path(fname).name}: {dest.replace('_', '-')}: {item}")
+    for fname, env in held_env.items():
+        sources.add(Path(fname).name)
+        for name, value in env.items():
+            lines.append(f"{Path(fname).name}: {shown_setting(name, value)}")
+    for fname in model_files:
+        sources.add(Path(fname).name)
+        lines.append(f"{Path(fname).name}: model settings for loom to use")
+
+    io.tool_warning(
+        "This project's settings can run commands, send your API requests and keys elsewhere,"
+        " or turn off loom's permission questions."
+    )
     answer = io.permission_ask(
-        f"Run the commands set in this project's {' and '.join(sources)}?",
+        f"Use the settings in this project's {' and '.join(sorted(sources))}?",
         subject="\n".join(lines),
         always="trust them in this project",
         explicit_yes_required=True,
@@ -158,21 +264,12 @@ def approve_project_commands(io, parser, args, project_options, root):
         except OSError as err:
             io.tool_warning(f"Unable to save the approval to {config_approvals_file()}: {err}")
     if answer in ("yes", "always"):
-        return []
+        return True
 
-    for dest in gated:
-        setattr(args, dest, parser.get_default(dest))
-    if "test_cmd" in gated:
-        args.auto_test = False
-    if "notifications_command" in gated:
-        io.notifications_command = (
-            io.get_default_notification_command() if io.notifications else None
-        )
     io.tool_output(
-        f"loom won't use {', '.join(dest.replace('_', '-') for dest in gated)} from the project"
-        " this session; it asks again next time."
+        "loom won't use these settings from the project this session; it asks again next time."
     )
-    return gated
+    return False
 
 
 def get_git_root():
@@ -408,10 +505,12 @@ def generate_search_path_list(default_file, git_root, command_line_file):
     return files
 
 
-def register_models(git_root, model_settings_fname, io, verbose=False):
+def register_models(git_root, model_settings_fname, io, verbose=False, skip=()):
+    """Load the model settings files, except the ones in skip"""
     model_settings_files = generate_search_path_list(
-        ".loom.model.settings.yml", git_root, model_settings_fname
+        MODEL_SETTINGS_FILE, git_root, model_settings_fname
     )
+    model_settings_files = [fname for fname in model_settings_files if fname not in skip]
 
     try:
         files_loaded = models.register_models(model_settings_files)
@@ -452,7 +551,12 @@ def load_credentials_file(fname):
     return True
 
 
-def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
+def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8", trusted=()):
+    """Put the variables in ~/.loom/credentials.json and the .env files into the environment.
+    The user's own .env files (see trusted_env_files) are loaded whole. From the project's
+    .env files only API keys and LOOM_* settings are (PROJECT_SAFE_ENV): the other variables
+    are held back for the user to approve. Returns (the files loaded, the held back variables
+    as {file: {name: value}})."""
     # Standard .env file search path
     dotenv_files = generate_search_path_list(
         ".env",
@@ -475,28 +579,43 @@ def load_dotenv_files(git_root, dotenv_fname, encoding="utf-8"):
     if credentials_file.exists() and load_credentials_file(credentials_file):
         loaded.append(str(credentials_file.resolve()))
 
+    users_own = trusted_env_files(trusted)
+    held = {}
     for fname in dotenv_files:
         try:
-            if Path(fname).exists():
+            if not Path(fname).exists():
+                continue
+            if safe_resolve(fname) in users_own:
                 load_dotenv(fname, override=True, encoding=encoding)
-                loaded.append(fname)
+            else:
+                for name, value in dotenv_values(fname, encoding=encoding).items():
+                    if value is None:
+                        continue
+                    if PROJECT_SAFE_ENV.fullmatch(name):
+                        os.environ[name] = value
+                    else:
+                        held.setdefault(fname, {})[name] = value
+            loaded.append(fname)
         except OSError as e:
             print(f"OSError loading {fname}: {e}")
         except Exception as e:
             print(f"Error loading {fname}: {e}")
-    return loaded
+    return loaded, held
 
 
-def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
+def register_litellm_models(git_root, model_metadata_fname, io, verbose=False, skip=()):
+    """Load the model metadata files, except the ones in skip"""
     model_metadata_files = []
 
     # Add the resource file path
     resource_metadata = importlib_resources.files("loom.resources").joinpath("model-metadata.json")
     model_metadata_files.append(str(resource_metadata))
 
-    model_metadata_files += generate_search_path_list(
-        ".loom.model.metadata.json", git_root, model_metadata_fname
-    )
+    model_metadata_files += [
+        fname
+        for fname in generate_search_path_list(MODEL_METADATA_FILE, git_root, model_metadata_fname)
+        if fname not in skip
+    ]
 
     try:
         model_metadata_files_loaded = models.register_litellm_models(model_metadata_files)
@@ -507,6 +626,17 @@ def register_litellm_models(git_root, model_metadata_fname, io, verbose=False):
     except Exception as e:
         io.tool_error(f"Error loading model metadata models: {e}")
         return 1
+
+
+def disable_ssl_verification():
+    import httpx
+
+    os.environ["SSL_VERIFY"] = ""
+    litellm._load_litellm()
+    litellm._lazy_module.client_session = httpx.Client(verify=False)
+    litellm._lazy_module.aclient_session = httpx.AsyncClient(verify=False)
+    # Set verify_ssl on the model_info_manager
+    models.model_info_manager.set_verify_ssl(False)
 
 
 def sanity_check_repo(repo, io):
@@ -597,12 +727,32 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     args, unknown = parser.parse_known_args(argv)
 
-    # Load the .env file specified in the arguments
-    loaded_dotenvs = load_dotenv_files(git_root, args.env_file, args.encoding)
+    # Load the .env files: the project's own, except for API keys and LOOM_* settings, wait
+    # for the user's approval below. One named on the command line is the user's own.
+    cli_env_file = command_line_value(argv, "--env-file")
+    trusted_dotenvs = [cli_env_file] if cli_env_file else []
+    env_file = args.env_file
+    loaded_dotenvs, held_env = load_dotenv_files(
+        git_root, env_file, args.encoding, trusted=trusted_dotenvs
+    )
 
     # Parse again to include any arguments that might have been defined in .env
     args = parser.parse_args(argv)
-    project_options = project_sourced_options(parser, args, loaded_dotenvs)
+    project_options = project_sourced_options(parser, args, loaded_dotenvs, trusted_dotenvs)
+
+    # Until the user approves them, the options the project set that aren't safe keep their
+    # defaults. Allow rules and MCP configs have their own approval (Permissions, McpManager).
+    held_options = {
+        dest: (getattr(args, dest), fname)
+        for dest, fname in project_options.items()
+        if dest not in ("allow", "mcp_config")
+    }
+    for dest in held_options:
+        setattr(args, dest, parser.get_default(dest))
+    model_files = project_model_files(git_root, argv)
+    for dest in ("model_settings_file", "model_metadata_file"):
+        if held_options.get(dest, (None,))[0]:
+            model_files.append(str(safe_resolve(held_options[dest][0])))
 
     if args.shell_completions:
         # Ensure parser.prog is set for shtab, though it should be by default
@@ -618,14 +768,7 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         print("Analytics have been permanently disabled.")
 
     if not args.verify_ssl:
-        import httpx
-
-        os.environ["SSL_VERIFY"] = ""
-        litellm._load_litellm()
-        litellm._lazy_module.client_session = httpx.Client(verify=False)
-        litellm._lazy_module.aclient_session = httpx.AsyncClient(verify=False)
-        # Set verify_ssl on the model_info_manager
-        models.model_info_manager.set_verify_ssl(False)
+        disable_ssl_verification()
 
     if args.timeout:
         models.request_timeout = args.timeout
@@ -693,6 +836,23 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             raise err
         io = get_io(False)
         io.tool_warning("Terminal does not support pretty output (UnicodeDecodeError)")
+
+    # Before anything runs git or sends a request, ask about the project's settings that
+    # could act without asking
+    skipped_model_files = set(model_files)
+    if approve_project_settings(io, held_options, held_env, model_files, git_root or os.getcwd()):
+        skipped_model_files = set()
+        for dest, (value, _fname) in held_options.items():
+            setattr(args, dest, value)
+        if held_env:
+            # Load them all again in order, so later files still override earlier ones
+            load_dotenv_files(git_root, env_file, args.encoding, trusted=loaded_dotenvs)
+        if held_options:
+            io = get_io(io.pretty)
+            if not args.verify_ssl:
+                disable_ssl_verification()
+    elif "test_cmd" in held_options:
+        args.auto_test = False
 
     # Process any environment variables set via --set-env
     if args.set_env:
@@ -856,8 +1016,12 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
     is_first_run = is_first_run_of_new_version(io, verbose=args.verbose)
     check_and_load_imports(io, is_first_run, verbose=args.verbose)
 
-    register_models(git_root, args.model_settings_file, io, verbose=args.verbose)
-    register_litellm_models(git_root, args.model_metadata_file, io, verbose=args.verbose)
+    register_models(
+        git_root, args.model_settings_file, io, verbose=args.verbose, skip=skipped_model_files
+    )
+    register_litellm_models(
+        git_root, args.model_metadata_file, io, verbose=args.verbose, skip=skipped_model_files
+    )
 
     if args.list_models:
         models.print_matching_models(io, args.list_models)
@@ -985,7 +1149,6 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             val = json.dumps(val, indent=4)
             io.tool_output(f"{attr.name}: {val}")
 
-    approve_project_commands(io, parser, args, project_options, git_root or os.getcwd())
     lint_cmds = parse_lint_cmds(args.lint_cmd, io)
     if lint_cmds is None:
         analytics.event("exit", reason="Invalid lint command format")

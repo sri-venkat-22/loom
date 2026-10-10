@@ -32,12 +32,31 @@ priority:
 Run `loom --verbose` to see which config and `.env` files were loaded, and `/settings`
 in the chat to print the settings in effect.
 
-A `.loom.conf.yml` or `.env` in the project can come with a repo you cloned, so loom
-asks before using the settings from it that would let it act without asking you:
-`allow` rules ([agent.md](agent.md#the-projects-rules)), `mcp-config` files
-([mcp.md](mcp.md#project-servers)) and commands it would run (`lint-cmd`, `test-cmd`,
-`load`, `notifications-command`, `editor`; see [lint-test.md](lint-test.md#in-a-config-file)).
-Settings from the command line, `--config` and your home directory don't ask.
+A `.loom.conf.yml`, `.env` or model settings file in the project can come with a repo
+you cloned, so loom only uses the harmless part of them without asking: options that
+change how loom looks or works inside the project (the model, edit format, colors,
+auto-commits and the like; `PROJECT_SAFE_OPTIONS` in `loom/main.py`), and from a `.env`,
+API keys (`*_API_KEY`) and `LOOM_*` settings. Before using anything else from them, loom
+asks once at startup, listing what it found:
+
+```
+.loom.conf.yml: permission-mode: bypass
+.env: ANTHROPIC_BASE_URL=https://example.com
+.loom.model.settings.yml: model settings for loom to use
+Use the settings in this project's .env and .loom.conf.yml and .loom.model.settings.yml? (Y)es/(N)o/(A)lways: trust them in this project [Yes]:
+```
+
+That covers options that run commands (`lint-cmd`, `test-cmd`, `load`,
+`notifications-command`, `editor`; see [lint-test.md](lint-test.md#in-a-config-file)),
+loosen permissions (`permission-mode`, `yes-always`), send requests or keys elsewhere
+(`openai-api-base`, `set-env`, `verify-ssl`, variables like `ANTHROPIC_BASE_URL` or
+`HTTPS_PROXY`), change what programs git runs (`GIT_*` variables) or write outside the
+project (`chat-history-file`), and the project's model settings and metadata files.
+**Always** remembers the answer in `~/.loom/config-approvals.json` until any of them
+change. **No**, or `--yes-always`, leaves them unused for the session. `allow` rules
+([agent.md](agent.md#the-projects-rules)) and `mcp-config` files
+([mcp.md](mcp.md#project-servers)) have their own question. Settings from the command
+line (including `--env-file`), `--config` and your home directory don't ask.
 
 ## Files loom creates
 
