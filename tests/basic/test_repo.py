@@ -128,6 +128,35 @@ class TestRepo(unittest.TestCase):
             diffs = git_repo.diff_commits(False, "HEAD~1", "HEAD")
             self.assertIn("two", diffs)
 
+    @unittest.skipIf(platform.system() == "Windows", "The marker program is a shell script")
+    def test_diffs_never_run_an_external_diff_program(self):
+        # GIT_EXTERNAL_DIFF (from the environment, or a repo's .env) names a program git runs
+        # for every diff; loom's own diffs must not run it
+        with GitTemporaryDirectory() as tmp:
+            marker = Path(tmp) / "ran"
+            program = Path(tmp) / "extdiff.sh"
+            program.write_text(f"#!/bin/sh\ntouch {marker}\n")
+            program.chmod(0o755)
+
+            repo = git.Repo()
+            fname = Path("foo.txt")
+            fname.write_text("one\n")
+            repo.git.add(str(fname))
+            repo.git.commit("-m", "initial")
+            fname.write_text("two\n")
+            repo.git.add(str(fname))
+            repo.git.commit("-m", "second")
+            fname.write_text("three\n")
+
+            git_repo = GitRepo(InputOutput(), None, ".")
+            with patch.dict(os.environ, {"GIT_EXTERNAL_DIFF": str(program)}):
+                diffs = git_repo.get_diffs()
+                commit_diffs = git_repo.diff_commits(False, "HEAD~1", "HEAD")
+
+            self.assertFalse(marker.exists())
+            self.assertIn("three", diffs)
+            self.assertIn("two", commit_diffs)
+
     @patch("loom.models.Model.simple_send_with_retries")
     def test_get_commit_message(self, mock_send):
         mock_send.side_effect = ["", "a good commit message"]

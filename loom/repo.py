@@ -401,14 +401,15 @@ class GitRepo:
                 diffs += f"Added {fname}\n"
 
         try:
+            # --no-ext-diff: never run a GIT_EXTERNAL_DIFF program, which a repo's .env can name
             if current_branch_has_commits:
-                args = ["HEAD", "--"] + list(fnames)
+                args = ["--no-ext-diff", "HEAD", "--"] + list(fnames)
                 diffs += self.repo.git.diff(*args, stdout_as_string=False).decode(
                     self.io.encoding, "replace"
                 )
                 return diffs
 
-            wd_args = ["--"] + list(fnames)
+            wd_args = ["--no-ext-diff", "--"] + list(fnames)
             index_args = ["--cached"] + wd_args
 
             diffs += self.repo.git.diff(*index_args, stdout_as_string=False).decode(
@@ -423,7 +424,7 @@ class GitRepo:
             self.io.tool_error(f"Unable to diff: {err}")
 
     def diff_commits(self, pretty, from_commit, to_commit):
-        args = []
+        args = ["--no-ext-diff"]
         if pretty:
             args += ["--color"]
         else:

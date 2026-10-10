@@ -426,7 +426,7 @@ class TestDrivenBuilding:
             return []
         found = []
         try:
-            diff = self.git.git.diff("-U0", "--no-color", commit, "--")
+            diff = self.git.git.diff("-U0", "--no-color", "--no-ext-diff", commit, "--")
             untracked = self.git.git.ls_files("--others", "--exclude-standard").splitlines()
         except ANY_GIT_ERROR:
             return []
