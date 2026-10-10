@@ -205,6 +205,14 @@ class TestInputOutput(unittest.TestCase):
         self.assertTrue(result)
         mock_input.assert_not_called()
 
+    @patch("builtins.input", side_effect=EOFError)
+    def test_confirm_ask_answers_no_on_eof(self, mock_input):
+        # A closed or piped stdin mustn't approve anything, like permission_ask
+        io = InputOutput(pretty=False, fancy_input=False)
+        self.assertFalse(io.confirm_ask("Run shell command?", explicit_yes_required=True))
+        self.assertFalse(io.confirm_ask("Install playwright?", default="y"))
+        self.assertEqual(io.permission_ask("Run `ls`?"), "no")
+
     @patch("builtins.input")
     def test_confirm_ask_with_group(self, mock_input):
         io = InputOutput(pretty=False, fancy_input=False)

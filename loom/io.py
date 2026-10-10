@@ -1058,8 +1058,9 @@ class InputOutput:
                     else:
                         res = input(question)
                 except EOFError:
-                    # Treat EOF (Ctrl+D) as if the user pressed Enter
-                    res = default
+                    # EOF (Ctrl+D, or a closed or piped stdin) is a no, like in
+                    # permission_ask: nothing gets approved without an answer
+                    res = "n"
                     break
 
                 if not res:
