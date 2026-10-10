@@ -656,6 +656,34 @@ class TestAtomicWriteText(unittest.TestCase):
             # No stray temp files left behind
             self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["file.txt"])
 
+    @unittest.skipIf(os.name == "nt", "Windows has no POSIX file modes")
+    def test_write_text_keeps_the_file_mode(self):
+        import stat
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "run.sh"
+            script.write_text("#!/bin/sh\n", encoding="utf-8")
+            script.chmod(0o755)
+            io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+            io.write_text(str(script), "#!/bin/sh\necho hi\n")
+            self.assertEqual(stat.S_IMODE(script.stat().st_mode), 0o755)
+
+    @unittest.skipIf(os.name == "nt", "Windows has no POSIX file modes")
+    def test_write_text_creates_files_with_the_umask_mode(self):
+        import stat
+        import tempfile
+
+        old_umask = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "new.txt"
+                io = InputOutput(yes=True, pretty=False, encoding="utf-8")
+                io.write_text(str(path), "new\n")
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+        finally:
+            os.umask(old_umask)
+
     def test_a_file_open_elsewhere_on_windows_is_written_in_place(self):
         import tempfile
 

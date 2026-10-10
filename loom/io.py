@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -48,6 +49,19 @@ from .utils import is_image_file
 
 # Constants
 NOTIFICATION_MESSAGE = "Loom is waiting for your input"
+
+
+def file_mode_for(filename):
+    """The mode a rewrite of filename should keep: its current mode, or for a new file the
+    usual mode of new files (0o666 less the umask)."""
+    try:
+        return stat.S_IMODE(os.stat(filename).st_mode)
+    except OSError:
+        # The umask can only be read by setting it. The probe value is the strictest one, so
+        # a file another thread creates meanwhile is never more open than intended.
+        umask = os.umask(0o077)
+        os.umask(umask)
+        return 0o666 & ~umask
 
 
 def ensure_hash_prefix(color):
@@ -583,6 +597,8 @@ class InputOutput:
 
         filename = str(filename)
         dirname = os.path.dirname(filename) or "."
+        # mkstemp creates the temp file 0600, which os.replace would give the destination
+        mode = file_mode_for(filename)
         delay = initial_delay
         for attempt in range(max_retries):
             tmp = None
@@ -593,6 +609,10 @@ class InputOutput:
                 try:
                     with os.fdopen(fd, "wb") as f:
                         f.write(data)
+                    try:
+                        os.chmod(tmp, mode)
+                    except OSError:
+                        pass
                 except Exception:
                     try:
                         os.unlink(tmp)
