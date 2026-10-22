@@ -241,17 +241,17 @@ Loom finds the code, shows each edit and command for approval, runs the tests an
 ## 🔁 How the agent works
 
 ```mermaid
-flowchart LR
-    U([You describe a change]) --> E[Explore<br/>grep · glob · read]
-    E --> P{Permission<br/>gate}
-    P -->|approved| A[Act<br/>edit · write · bash]
+flowchart TD
+    U([You describe a change]) --> E[Explore: grep, glob, read]
+    E -. broad searches .-> S[[Sub-agents in parallel]]
+    S -. short reports .-> E
+    E --> P{Permission gate}
     P -->|refused| U
-    A --> L[Lint & test]
+    P -->|approved| A[Act: edit, write, bash]
+    A --> L[Lint and test]
     L -->|failures| E
     L -->|green| C[(Git commit)]
     C --> R([Report back])
-    E -. broad search .-> S[[Sub-agents<br/>in parallel]]
-    S -. short reports .-> E
 ```
 
 <details>
@@ -389,18 +389,21 @@ agent> /project new --template fastapi-react A web app where students swap used 
 ```
 
 ```mermaid
-flowchart LR
-    I["1 · Idea Check<br/>GO / NO-GO"] --> PL["2 · Planning<br/>PRD"]
-    PL --> D["3 · Design<br/>architecture + work plan"]
-    D --> B["4 · Building<br/>code"]
-    B --> T["5 · Testing<br/>PASS / FAIL"]
+flowchart TD
+    subgraph think [" Think "]
+        direction LR
+        I["1 · Idea Check<br/>GO / NO-GO"] --> PL["2 · Planning<br/>PRD"] --> D["3 · Design<br/>architecture + work plan"]
+    end
+    subgraph make [" Build and ship "]
+        direction LR
+        B["4 · Building<br/>code"] --> T["5 · Testing<br/>PASS / FAIL"] --> L["6 · Launch<br/>deploy files"]
+    end
+    D --> B
     T -->|FAIL: send back| B
-    T --> L["6 · Launch<br/>deploy files"]
     L --> S(["/project ship"])
-    M[("Shared memory<br/>SQLite + ChromaDB")] -.-> I & PL & D & B & T & L
 ```
 
-Each phase is its own agent with its own prompt, tools and the files it may write — Testing can only write tests, so it reports bugs instead of hiding them; Launch can only write deployment files. After every phase Loom stops at a **checkpoint**: **(A)pprove**, **(E)dit** the document, or **(R)eject** with feedback.
+Each phase is its own agent with its own prompt, tools and the files it may write — Testing can only write tests, so it reports bugs instead of hiding them; Launch can only write deployment files. After every phase Loom stops at a **checkpoint**: **(A)pprove**, **(E)dit** the document, or **(R)eject** with feedback. Every agent shares a project memory (SQLite + ChromaDB) of decisions and documents.
 
 <details>
 <summary><b>🧪 Test-driven Building</b> — <code>/project new --tdd</code></summary>
@@ -417,21 +420,10 @@ Edits to locked tests are refused, tampered tests are restored, and new `skip`/`
 
 The architecture document ends with a YAML work plan of packages, each with the files it `owns`, its tests and dependencies. With more than one package, Building becomes:
 
-```mermaid
-flowchart LR
-    SC[Scaffold<br/>shared interfaces] --> W1
-    subgraph W1 [Wave 1]
-      direction TB
-      A[core<br/>.loom/worktrees/core]
-      B2[web<br/>.loom/worktrees/web]
-    end
-    W1 --> W2
-    subgraph W2 [Wave 2]
-      C[cli<br/>depends on core]
-    end
-    W2 --> MG[Merge one at a time<br/>Integrator resolves conflicts]
-    MG --> IN[Integration<br/>full test suite]
-```
+1. **Scaffold** — one agent writes the shared manifests, layout and interfaces, and commits them.
+2. **Waves of builders** — packages with no dependencies go first, each in its own worktree (`.loom/worktrees/<id>`) on its own branch, writing only its own files.
+3. **Merge** — packages merge one at a time; the Integrator agent resolves conflicts.
+4. **Integration** — a last agent runs the whole test suite and fixes what's broken between packages.
 
 Up to `--build-workers` builders (3 by default) work at once, each on its own branch and allowed to write only its own package. An interrupted build resumes with only the packages not merged yet.
 
